@@ -46,3 +46,21 @@ func TestRunSandboxedCommandReturnsExecutionError(t *testing.T) {
 		t.Fatal("expected command execution error")
 	}
 }
+
+func TestRunSandboxedCommandNormalizesWhitespace(t *testing.T) {
+	output, err := RunSandboxedCommand("echo hello")
+	if err != nil {
+		t.Fatalf("unexpected error running echo: %v", err)
+	}
+	if strings.Contains(output, "\r") {
+		t.Errorf("output still contains carriage return (\\r): %q", output)
+	}
+	if strings.HasPrefix(output, " ") || strings.HasPrefix(output, "\n") ||
+		strings.HasSuffix(output, " ") || strings.HasSuffix(output, "\n") {
+		t.Errorf("output has leading or trailing whitespace: %q", output)
+	}
+	if output != "hello" {
+		t.Errorf("expected %q, got %q", "hello", output)
+	}
+}
+

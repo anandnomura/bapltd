@@ -48,5 +48,6 @@ func RunSandboxedCommand(cmdStr string) (string, error) {
 	cmd.Env = append(os.Environ(), fmt.Sprintf("CORP_OBO_TOKEN=%s", InjectedOBOToken))
 
 	output, err := cmd.CombinedOutput()
-	return string(output), err
+	cleanOutput := strings.TrimSpace(strings.ReplaceAll(string(output), "\r\n", "\n"))
+	return cleanOutput, err
 }
