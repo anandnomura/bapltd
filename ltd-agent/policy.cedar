@@ -5,18 +5,23 @@
 // Context:   { executable: String, full_command: String }
 
 // 1. Permit Policy:
-// Allows Action::"Execute" if context.executable is in ["pytest", "npm", "mvn", "git", "ls"]
+// Allows Action::"Execute" for standard developer toolchains, initialization, and build commands:
 permit (
     principal == Agent::"Local",
     action == Action::"Execute",
     resource == Command::"CLI"
 ) when {
-    ["pytest", "npm", "mvn", "git", "ls"].contains(context.executable)
+    [
+        "pytest", "python", "python3", "py", "pip", "pip3",
+        "go", "npm", "npx", "yarn", "pnpm", "node",
+        "mvn", "gradle", "cargo", "git",
+        "ls", "dir", "mkdir", "echo", "pwd", "cat"
+    ].contains(context.executable)
 };
 
 // 2. Forbid Policy:
 // Strict forbid overriding permit if context.full_command contains any forbidden substrings:
-// "curl", "wget", "nc", "ssh", "~/.aws", ".env"
+// Credentials, sensitive config files, and unauthorized network egress utilities.
 forbid (
     principal == Agent::"Local",
     action == Action::"Execute",
@@ -26,6 +31,9 @@ forbid (
     context.full_command like "*wget*" ||
     context.full_command like "*nc*" ||
     context.full_command like "*ssh*" ||
+    context.full_command like "*socat*" ||
     context.full_command like "*~/.aws*" ||
-    context.full_command like "*.env*"
+    context.full_command like "*.env*" ||
+    context.full_command like "*.ssh*"
 };
+

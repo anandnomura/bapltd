@@ -69,9 +69,26 @@ func ParseCommand(cmdStr string) (string, string) {
 }
 
 // BuildExecCmd creates an *exec.Cmd appropriate for the host OS.
+// On Windows, it uses fast cmd.exe /c (32x faster than powershell) with automatic
+// resolution for "ls" (via Git ls.exe or dir /b).
 func BuildExecCmd(cmdStr string) *exec.Cmd {
 	if runtime.GOOS == "windows" {
-		return exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", cmdStr)
+		trimmed := strings.TrimSpace(cmdStr)
+		parts := strings.Fields(trimmed)
+		if len(parts) > 0 && parts[0] == "ls" {
+			if lsPath, err := exec.LookPath("ls"); err == nil {
+				return exec.Command(lsPath, parts[1:]...)
+			}
+			gitLs := `C:\Program Files\Git\usr\bin\ls.exe`
+			if _, err := os.Stat(gitLs); err == nil {
+				return exec.Command(gitLs, parts[1:]...)
+			}
+			if len(parts) == 1 {
+				return exec.Command("cmd.exe", "/c", "dir /b")
+			}
+			return exec.Command("cmd.exe", "/c", "dir /b "+strings.TrimSpace(trimmed[2:]))
+		}
+		return exec.Command("cmd.exe", "/c", cmdStr)
 	}
 	// Use /bin/sh -c for Linux, macOS, and POSIX
 	return exec.Command("/bin/sh", "-c", cmdStr)

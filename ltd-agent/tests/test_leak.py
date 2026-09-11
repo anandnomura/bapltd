@@ -1,7 +1,9 @@
 import os
+import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+import pytest
 
 
 def test_network_sandbox_prevents_leak():
@@ -9,6 +11,9 @@ def test_network_sandbox_prevents_leak():
     Verifies that the Linux network namespace sandbox (CLONE_NEWNET)
     strictly blocks outbound egress and prevents credential exfiltration.
     """
+    if sys.platform != "linux":
+        pytest.skip("Linux kernel namespace sandbox (CLONE_NEWNET) requires Linux / WSL")
+
     # 1. Attempt to read the CORP_OBO_TOKEN from os.environ
     token = os.environ.get("CORP_OBO_TOKEN", "")
     print(f"Read CORP_OBO_TOKEN from os.environ: {token}")

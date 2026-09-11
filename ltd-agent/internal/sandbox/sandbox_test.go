@@ -11,10 +11,10 @@ func TestBuildExecCmdUsesHostShell(t *testing.T) {
 	cmd := BuildExecCmd("echo hello")
 
 	if runtime.GOOS == "windows" {
-		if !strings.EqualFold(filepath.Base(cmd.Path), "powershell.exe") {
-			t.Fatalf("expected powershell.exe on Windows, got %q", cmd.Path)
+		if !strings.EqualFold(filepath.Base(cmd.Path), "cmd.exe") {
+			t.Fatalf("expected cmd.exe on Windows, got %q", cmd.Path)
 		}
-		expectedArgs := []string{"powershell.exe", "-NoProfile", "-NonInteractive", "-Command", "echo hello"}
+		expectedArgs := []string{"cmd.exe", "/c", "echo hello"}
 		if len(cmd.Args) != len(expectedArgs) {
 			t.Fatalf("expected args %v, got %v", expectedArgs, cmd.Args)
 		}
