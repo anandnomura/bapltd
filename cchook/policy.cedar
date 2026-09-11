@@ -15,6 +15,7 @@ permit (
         "pytest", "python", "python3", "py", "pip", "pip3",
         "go", "npm", "npx", "yarn", "pnpm", "node",
         "mvn", "gradle", "cargo", "git",
+        "java", "javac",
         "ls", "dir", "mkdir", "echo", "pwd", "cat", "type", "printenv",
         "cmd", "powershell", "pwsh",
         "grep", "findstr", "head", "tail", "wc", "sort", "uniq", "more"
@@ -25,7 +26,7 @@ permit (
 // Strict forbid overriding permit for:
 // - Exfiltration utilities: curl, wget, nc, ssh, socat, PowerShell web cmdlets
 // - Sensitive credential directories: ~/.aws, .ssh
-// - Dumping secret content from environment/credential files (e.g. cat .env, type .env)
+// - Any tampering, copying, renaming, or dumping of .env credential files
 forbid (
     principal == Agent::"Local",
     action == Action::"Execute",
@@ -44,16 +45,26 @@ forbid (
     context.full_command like "*DownloadFile*" ||
     context.full_command like "*~/.aws*" ||
     context.full_command like "*.ssh*" ||
-    context.full_command like "*cat*.env*" ||
-    context.full_command like "*type*.env*" ||
-    context.full_command like "*head*.env*" ||
-    context.full_command like "*tail*.env*" ||
-    context.full_command like "*grep*.env*" ||
-    context.full_command like "*findstr*.env*" ||
-    context.full_command like "*more*.env*" ||
-    context.full_command like "*Get-Content*.env*" ||
-    context.full_command like "*gc *.env*" ||
-    context.full_command like "*<*.env*"
+    (
+        context.full_command like "*.env*" &&
+        (
+            !(context.executable == "ls" || context.executable == "dir") ||
+            context.full_command like "*cat*" ||
+            context.full_command like "*type*" ||
+            context.full_command like "*more*" ||
+            context.full_command like "*head*" ||
+            context.full_command like "*tail*" ||
+            context.full_command like "*grep*" ||
+            context.full_command like "*findstr*" ||
+            context.full_command like "*ren*" ||
+            context.full_command like "*move*" ||
+            context.full_command like "*mv*" ||
+            context.full_command like "*cp*" ||
+            context.full_command like "*copy*" ||
+            context.full_command like "*>*" ||
+            context.full_command like "*|*"
+        )
+    )
 };
 
 

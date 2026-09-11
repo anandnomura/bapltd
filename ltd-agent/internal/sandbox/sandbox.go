@@ -12,11 +12,38 @@ import (
 // InjectedOBOToken is the corporate on-behalf-of token injected into the sandboxed process.
 const InjectedOBOToken = "mock_secret_token_123"
 
+// CleanCommandString normalizes shell escaping and strips outer wrapping quotes
+// so commands like 'java -Dapp="Foo Bar" -version' or "git status" parse cleanly.
+func CleanCommandString(s string) string {
+	s = strings.TrimSpace(s)
+	// Strip shell escaping artifacts (e.g. \"cmd, \ cmd, ^cmd)
+	s = strings.TrimLeft(s, "\\^ \t")
+	s = strings.TrimRight(s, "\\^ \t")
+	s = strings.TrimSpace(s)
+
+	// Strip outer single quotes if user wrapped the whole command in single quotes
+	if strings.HasPrefix(s, "'") && strings.HasSuffix(s, "'") && len(s) >= 2 {
+		s = strings.TrimSpace(s[1 : len(s)-1])
+	}
+
+	// Strip outer double quotes if user wrapped the whole command in double quotes
+	if strings.HasPrefix(s, "\"") && strings.HasSuffix(s, "\"") && len(s) >= 2 {
+		inner := strings.TrimSpace(s[1 : len(s)-1])
+		if !strings.HasPrefix(inner, "\"") {
+			parts := strings.Fields(inner)
+			if len(parts) > 1 {
+				s = inner
+			}
+		}
+	}
+	return s
+}
+
 // ParseCommand parses a raw command line string into an executable name and its arguments string.
 // It normalizes quoted paths, directory paths, file extensions (e.g., C:\...\pytest.exe -> pytest),
 // and recognizes Python module invocations (e.g., python -m pytest -> pytest).
 func ParseCommand(cmdStr string) (string, string) {
-	trimmed := strings.TrimSpace(cmdStr)
+	trimmed := CleanCommandString(cmdStr)
 	if trimmed == "" {
 		return "", ""
 	}
@@ -50,6 +77,9 @@ func ParseCommand(cmdStr string) (string, string) {
 	normalized := strings.ReplaceAll(rawExec, "\\", "/")
 	base := path.Base(normalized)
 
+	// Strip shell escape artifacts or quotes (e.g. \"git, \git, ^git)
+	base = strings.Trim(base, "\"'\\^")
+
 	// Strip .exe extension (case-insensitive)
 	lower := strings.ToLower(base)
 	if strings.HasSuffix(lower, ".exe") {
@@ -81,8 +111,8 @@ func ParseCommand(cmdStr string) (string, string) {
 // On Windows, it uses fast cmd.exe /c (32x faster than powershell) with automatic
 // resolution for "ls", shell operators (pipes, chaining, redirection), and dev tools.
 func BuildExecCmd(cmdStr string) *exec.Cmd {
+	trimmed := CleanCommandString(cmdStr)
 	if runtime.GOOS == "windows" {
-		trimmed := strings.TrimSpace(cmdStr)
 		parts := strings.Fields(trimmed)
 
 		// Direct invocation of powershell or cmd
@@ -121,7 +151,7 @@ func BuildExecCmd(cmdStr string) *exec.Cmd {
 				return exec.Command(gitPe, parts[1:]...)
 			}
 		}
-		return exec.Command("cmd.exe", "/c", cmdStr)
+		return exec.Command("cmd.exe", "/c", trimmed)
 	}
 	// Use /bin/sh -c for Linux, macOS, and POSIX
 	return exec.Command("/bin/sh", "-c", cmdStr)

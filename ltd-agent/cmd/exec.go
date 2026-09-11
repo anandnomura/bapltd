@@ -33,8 +33,18 @@ func RunExec(args []string) {
 		exitWithResponse(resp, 1, *jsonFlag, *rawFlag)
 	}
 
-	// Join all remaining args as the shell command string
-	fullCommand := strings.Join(cmdArgs, " ")
+	// Join all remaining args as the shell command string, preserving quotes for arguments with spaces
+	var fullCommand string
+	if len(cmdArgs) == 1 {
+		fullCommand = strings.TrimSpace(cmdArgs[0])
+	} else {
+		var parts []string
+		for _, arg := range cmdArgs {
+			parts = append(parts, quoteArg(arg))
+		}
+		fullCommand = strings.Join(parts, " ")
+	}
+	fullCommand = sandbox.CleanCommandString(fullCommand)
 
 	// 1. Initialize Cedar authorizer
 	authorizer, err := authz.NewAuthorizer(*policyPath)
@@ -118,3 +128,14 @@ func printJSONAndExit(resp types.ExecResponse, code int) {
 	_ = enc.Encode(resp)
 	os.Exit(code)
 }
+
+func quoteArg(arg string) string {
+	if strings.HasPrefix(arg, "\"") && strings.HasSuffix(arg, "\"") && len(arg) >= 2 {
+		return arg
+	}
+	if strings.ContainsAny(arg, " \t\r\n") {
+		return `"` + arg + `"`
+	}
+	return arg
+}
+

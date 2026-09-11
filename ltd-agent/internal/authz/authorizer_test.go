@@ -185,6 +185,8 @@ func TestRealPolicyCedarFile(t *testing.T) {
 		{"cmd", "cmd /c dir"},
 		{"powershell", "powershell -Command Get-Process"},
 		{"grep", "grep -i 'test' file.txt"},
+		{"java", "java -version"},
+		{"java", "java -cp \"lib/*;bin\" com.example.Main"},
 	}
 
 	for _, tc := range allowedDevTools {
@@ -219,6 +221,12 @@ func TestRealPolicyCedarFile(t *testing.T) {
 		{"grep", "grep SECRET .env", "grep .env"},
 		{"findstr", "findstr KEY .env", "findstr .env"},
 		{"powershell", "powershell -Command Get-Content .env", "powershell Get-Content .env"},
+		{"powershell", "powershell -Command Move-Item .env junk; Get-Content junk", "powershell Move-Item .env"},
+		{"powershell", "powershell -Command Copy-Item .env junk; Get-Content junk", "powershell Copy-Item .env"},
+		{"cmd", "cmd /c ren .env junk && type junk", "cmd ren .env"},
+		{"cmd", "cmd /c copy .env junk && type junk", "cmd copy .env"},
+		{"python", "python -c 'import shutil; shutil.copy(\".env\", \"junk\")'", "python copy .env"},
+		{"ls", "ls -la .env > leak.txt", "redirection of .env metadata"},
 		{"echo", "echo hello && cat .env", "chained cat .env"},
 		{"git", "git status && type .env", "chained type .env"},
 		{"cat", "cat ~/.ssh/id_rsa", ".ssh"},

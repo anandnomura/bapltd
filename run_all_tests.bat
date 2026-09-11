@@ -61,6 +61,9 @@ set "TEST_CMD=git --version" & set "TEST_LBL=Git version inspection" & call :run
 set "TEST_CMD=go version" & set "TEST_LBL=Go runtime inspection" & call :run_test_allow
 set "TEST_CMD=python --version" & set "TEST_LBL=Python runtime inspection" & call :run_test_allow
 set "TEST_CMD=printenv CORP_OBO_TOKEN" & set "TEST_LBL=Injected OBO token inspection" & call :run_test_allow
+set "TEST_CMD=ls -al | grep -i test" & set "TEST_LBL=Piped execution [ls -al | grep]" & call :run_test_allow
+set "TEST_CMD=git log -n 1 --oneline" & set "TEST_LBL=Git log with flags" & call :run_test_allow
+set "TEST_CMD=java -version" & set "TEST_LBL=Java runtime inspection" & call :run_test_allow
 
 :: Test metadata inspection on .env
 echo MOCK_ENV_FILE=1 > .env
@@ -79,6 +82,9 @@ set "TEST_CMD=ls ~/.aws/config" & set "TEST_LBL=Sensitive cloud directory: ~/.aw
 set "TEST_CMD=cat ~/.ssh/id_rsa" & set "TEST_LBL=Sensitive private key: ~/.ssh" & call :run_test_deny
 set "TEST_CMD=cat .env" & set "TEST_LBL=Secret content disclosure: cat .env" & call :run_test_deny
 set "TEST_CMD=type .env" & set "TEST_LBL=Secret content disclosure: type .env" & call :run_test_deny
+set "TEST_CMD=powershell -Command Move-Item .env junk" & set "TEST_LBL=Evasive rename bypass: Move-Item .env" & call :run_test_deny
+set "TEST_CMD=cmd /c ren .env junk" & set "TEST_LBL=Evasive rename bypass: ren .env" & call :run_test_deny
+set "TEST_CMD=ls -la .env > leak.txt" & set "TEST_LBL=Redirection leak: .env > leak.txt" & call :run_test_deny
 set "TEST_CMD=rm -rf /" & set "TEST_LBL=Destructive command: rm -rf /" & call :run_test_deny
 
 :: -----------------------------------------------------------------------------
