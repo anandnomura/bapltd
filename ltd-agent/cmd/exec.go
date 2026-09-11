@@ -66,11 +66,15 @@ func RunExec(args []string) {
 	}
 
 	// 4. Execute sandboxed command (allowed by Cedar)
-	output, _ := sandbox.RunSandboxedCommand(fullCommand)
+	output, execErr := sandbox.RunSandboxedCommand(fullCommand)
 
 	resp := types.ExecResponse{
 		Allowed: true,
 		Output:  output,
+	}
+	if execErr != nil {
+		resp.Reason = fmt.Sprintf("Command execution failed: %v", execErr)
+		printJSONAndExit(resp, 1)
 	}
 	printJSONAndExit(resp, 0)
 }
@@ -81,4 +85,3 @@ func printJSONAndExit(resp types.ExecResponse, code int) {
 	_ = enc.Encode(resp)
 	os.Exit(code)
 }
-

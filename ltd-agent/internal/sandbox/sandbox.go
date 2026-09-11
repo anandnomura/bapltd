@@ -30,8 +30,7 @@ func ParseCommand(cmdStr string) (string, string) {
 // BuildExecCmd creates an *exec.Cmd appropriate for the host OS.
 func BuildExecCmd(cmdStr string) *exec.Cmd {
 	if runtime.GOOS == "windows" {
-		// Use cmd.exe /c for Windows shell commands
-		return exec.Command("cmd.exe", "/c", cmdStr)
+		return exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", cmdStr)
 	}
 	// Use /bin/sh -c for Linux, macOS, and POSIX
 	return exec.Command("/bin/sh", "-c", cmdStr)
@@ -51,4 +50,3 @@ func RunSandboxedCommand(cmdStr string) (string, error) {
 	output, err := cmd.CombinedOutput()
 	return string(output), err
 }
-
