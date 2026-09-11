@@ -64,3 +64,46 @@ func TestRunSandboxedCommandNormalizesWhitespace(t *testing.T) {
 	}
 }
 
+func TestCleanOutput(t *testing.T) {
+	input := "\r\n\r\nline1   \r\n\r\n\r\nline2\t  \r\n\r\n"
+	expected := "line1\n\nline2"
+	got := CleanOutput(input)
+	if got != expected {
+		t.Errorf("CleanOutput mismatch:\nexpected: %q\ngot:      %q", expected, got)
+	}
+}
+
+func TestParseCommandNormalization(t *testing.T) {
+	tests := []struct {
+		input        string
+		expectedExec string
+		expectedArgs string
+	}{
+		{"pytest -s tests/test_leak.py", "pytest", "-s tests/test_leak.py"},
+		{"pytest.exe -v", "pytest", "-v"},
+		{`C:\Python312\Scripts\pytest.exe -s tests/test_leak.py`, "pytest", "-s tests/test_leak.py"},
+		{`"C:\Program Files\Python\Scripts\pytest.exe" -v`, "pytest", "-v"},
+		{"/usr/local/bin/pytest -q", "pytest", "-q"},
+		{"/c/users/appdata/roaming/script/pytest -s test.py", "pytest", "-s test.py"},
+		{"./venv/bin/pytest tests/", "pytest", "tests/"},
+		{"python -m pytest tests/test_leak.py", "pytest", "-m pytest tests/test_leak.py"},
+		{"python3 -m pytest -s test.py", "pytest", "-m pytest -s test.py"},
+		{"py -m pytest -s test.py", "pytest", "-m pytest -s test.py"},
+		{`"C:\Python312\python.exe" -m pytest -v`, "pytest", "-m pytest -v"},
+		{"git status", "git", "status"},
+		{`"C:\Program Files\Git\bin\git.exe" status`, "git", "status"},
+	}
+
+	for _, tc := range tests {
+		exec, args := ParseCommand(tc.input)
+		if exec != tc.expectedExec {
+			t.Errorf("for input %q, expected executable %q, got %q", tc.input, tc.expectedExec, exec)
+		}
+		if args != tc.expectedArgs {
+			t.Errorf("for input %q, expected args %q, got %q", tc.input, tc.expectedArgs, args)
+		}
+	}
+}
+
+
+

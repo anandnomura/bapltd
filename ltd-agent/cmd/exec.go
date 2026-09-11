@@ -16,6 +16,8 @@ import (
 func RunExec(args []string) {
 	fs := flag.NewFlagSet("exec", flag.ContinueOnError)
 	policyPath := fs.String("policy", "", "Path to policy.cedar file (defaults to ./policy.cedar)")
+	jsonFlag := fs.Bool("json", false, "Output in JSON format (default: auto-detect TTY)")
+	rawFlag := fs.Bool("raw", false, "Force output in raw text format")
 
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintf(os.Stderr, "Error parsing arguments: %v\n", err)
@@ -28,7 +30,7 @@ func RunExec(args []string) {
 			Allowed: false,
 			Reason:  "No command provided to exec. Usage: ltd-agent exec <shell_command>",
 		}
-		printJSONAndExit(resp, 1)
+		exitWithResponse(resp, 1, *jsonFlag, *rawFlag)
 	}
 
 	// Join all remaining args as the shell command string
@@ -41,7 +43,7 @@ func RunExec(args []string) {
 			Allowed: false,
 			Reason:  fmt.Sprintf("Failed to load Cedar policy: %v", err),
 		}
-		printJSONAndExit(resp, 1)
+		exitWithResponse(resp, 1, *jsonFlag, *rawFlag)
 	}
 
 	// 2. Parse command for Cedar context
@@ -54,7 +56,7 @@ func RunExec(args []string) {
 			Allowed: false,
 			Reason:  fmt.Sprintf("Error during Cedar policy evaluation: %v", err),
 		}
-		printJSONAndExit(resp, 1)
+		exitWithResponse(resp, 1, *jsonFlag, *rawFlag)
 	}
 
 	if !allowed {
@@ -62,7 +64,7 @@ func RunExec(args []string) {
 			Allowed: false,
 			Reason:  reason,
 		}
-		printJSONAndExit(resp, 1)
+		exitWithResponse(resp, 1, *jsonFlag, *rawFlag)
 	}
 
 	// 4. Execute sandboxed command (allowed by Cedar)
@@ -74,9 +76,40 @@ func RunExec(args []string) {
 	}
 	if execErr != nil {
 		resp.Reason = fmt.Sprintf("Command execution failed: %v", execErr)
-		printJSONAndExit(resp, 1)
+		exitWithResponse(resp, 1, *jsonFlag, *rawFlag)
 	}
-	printJSONAndExit(resp, 0)
+	exitWithResponse(resp, 0, *jsonFlag, *rawFlag)
+}
+
+func isTerminal(f *os.File) bool {
+	stat, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return (stat.Mode() & os.ModeCharDevice) != 0
+}
+
+func exitWithResponse(resp types.ExecResponse, code int, forceJSON, forceRaw bool) {
+	outputJSON := forceJSON || (!forceRaw && !isTerminal(os.Stdout))
+
+	if outputJSON {
+		printJSONAndExit(resp, code)
+		return
+	}
+
+	// Human-friendly / beautified output (what `jq -r .output` does)
+	if !resp.Allowed {
+		fmt.Fprintf(os.Stderr, "[DENIED] %s\n", resp.Reason)
+		os.Exit(code)
+	}
+
+	if resp.Output != "" {
+		fmt.Println(resp.Output)
+	}
+	if resp.Reason != "" {
+		fmt.Fprintf(os.Stderr, "[ERROR] %s\n", resp.Reason)
+	}
+	os.Exit(code)
 }
 
 func printJSONAndExit(resp types.ExecResponse, code int) {
