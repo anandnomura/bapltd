@@ -1,0 +1,11 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "command": ".claude/hooks/interceptor.sh"
+      }
+    ]
+  }
+}
+
