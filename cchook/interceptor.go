@@ -69,8 +69,8 @@ func main() {
 	}
 	ltdBin := findBinary(binName)
 
-	// 3. Execute ltd-agent exec "$command"
-	cmd := exec.Command(ltdBin, "exec", command)
+	// 3. Execute ltd-agent exec --json "$command"
+	cmd := exec.Command(ltdBin, "exec", "--json", command)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

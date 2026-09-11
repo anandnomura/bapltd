@@ -65,16 +65,40 @@ func ParseCommand(cmdStr string) (string, string) {
 		}
 	}
 
+	// If invoked via "cmd /c <command>" or "cmd.exe /c <command>", evaluate inner command
+	if baseLower == "cmd" {
+		argParts := strings.Fields(args)
+		if len(argParts) >= 2 && (strings.EqualFold(argParts[0], "/c") || strings.EqualFold(argParts[0], "/k")) {
+			innerCmd := strings.TrimSpace(args[len(argParts[0]):])
+			return ParseCommand(innerCmd)
+		}
+	}
+
 	return strings.ToLower(base), args
 }
 
 // BuildExecCmd creates an *exec.Cmd appropriate for the host OS.
 // On Windows, it uses fast cmd.exe /c (32x faster than powershell) with automatic
-// resolution for "ls" (via Git ls.exe or dir /b).
+// resolution for "ls", shell operators (pipes, chaining, redirection), and dev tools.
 func BuildExecCmd(cmdStr string) *exec.Cmd {
 	if runtime.GOOS == "windows" {
 		trimmed := strings.TrimSpace(cmdStr)
 		parts := strings.Fields(trimmed)
+
+		// Direct invocation of powershell or cmd
+		if len(parts) > 0 && (parts[0] == "powershell" || parts[0] == "powershell.exe" || parts[0] == "pwsh") {
+			return exec.Command(parts[0], parts[1:]...)
+		}
+		if len(parts) > 0 && (parts[0] == "cmd" || parts[0] == "cmd.exe") {
+			return exec.Command("cmd.exe", parts[1:]...)
+		}
+
+		// If command uses shell features (pipes, chaining, redirection), execute via cmd.exe /c
+		if strings.ContainsAny(trimmed, "|&><;") {
+			return exec.Command("cmd.exe", "/c", trimmed)
+		}
+
+		// Fast direct resolution for "ls"
 		if len(parts) > 0 && parts[0] == "ls" {
 			if lsPath, err := exec.LookPath("ls"); err == nil {
 				return exec.Command(lsPath, parts[1:]...)
@@ -87,6 +111,15 @@ func BuildExecCmd(cmdStr string) *exec.Cmd {
 				return exec.Command("cmd.exe", "/c", "dir /b")
 			}
 			return exec.Command("cmd.exe", "/c", "dir /b "+strings.TrimSpace(trimmed[2:]))
+		}
+		if len(parts) > 0 && parts[0] == "printenv" {
+			if pePath, err := exec.LookPath("printenv"); err == nil {
+				return exec.Command(pePath, parts[1:]...)
+			}
+			gitPe := `C:\Program Files\Git\usr\bin\printenv.exe`
+			if _, err := os.Stat(gitPe); err == nil {
+				return exec.Command(gitPe, parts[1:]...)
+			}
 		}
 		return exec.Command("cmd.exe", "/c", cmdStr)
 	}
@@ -117,8 +150,23 @@ func RunSandboxedCommand(cmdStr string) (string, error) {
 	// Apply platform-specific sandbox attributes
 	ConfigureSandbox(cmd)
 
+	// Prepare environment
+	env := os.Environ()
+	if runtime.GOOS == "windows" {
+		// Ensure standard utilities from Git (ls, grep, head, tail, etc.) are reachable in cmd.exe
+		gitUsrBin := `C:\Program Files\Git\usr\bin`
+		if _, err := os.Stat(gitUsrBin); err == nil {
+			for i, e := range env {
+				if strings.HasPrefix(strings.ToUpper(e), "PATH=") {
+					env[i] = e + ";" + gitUsrBin
+					break
+				}
+			}
+		}
+	}
+
 	// Inject CORP_OBO_TOKEN environment variable
-	cmd.Env = append(os.Environ(), fmt.Sprintf("CORP_OBO_TOKEN=%s", InjectedOBOToken))
+	cmd.Env = append(env, fmt.Sprintf("CORP_OBO_TOKEN=%s", InjectedOBOToken))
 
 	output, err := cmd.CombinedOutput()
 	return CleanOutput(string(output)), err
