@@ -17,7 +17,7 @@ permit (
         "mvn", "gradle", "cargo", "git",
         "java", "javac",
         "ls", "dir", "mkdir", "echo", "pwd", "cat", "type", "printenv",
-        "cmd", "powershell", "pwsh",
+        "cmd", "powershell", "pwsh", "bash", "sh", "zsh",
         "grep", "findstr", "head", "tail", "wc", "sort", "uniq", "more"
     ].contains(context.executable)
 };
@@ -43,6 +43,8 @@ forbid (
     context.full_command like "*irm *" ||
     context.full_command like "*DownloadString*" ||
     context.full_command like "*DownloadFile*" ||
+    context.full_command like "*certutil*" ||
+    context.full_command like "*bitsadmin*" ||
     context.full_command like "*~/.aws*" ||
     context.full_command like "*.ssh*" ||
     (

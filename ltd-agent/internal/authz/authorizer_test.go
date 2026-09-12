@@ -248,8 +248,8 @@ func TestRealPolicyCedarFile(t *testing.T) {
 		fullCommand string
 	}{
 		{"rm", "rm -rf /"},
-		{"bash", "bash -c 'whoami'"},
-		{"sh", "sh script.sh"},
+		{"perl", "perl script.pl"},
+		{"ruby", "ruby script.rb"},
 	}
 
 	for _, tc := range deniedTools {
