@@ -55,14 +55,19 @@ func main() {
 		os.Exit(1)
 	}
 
-	// 3. Resolve ltd-agent executable
-	binName := "ltd-agent"
+	// 3. Resolve bapedge (LTD) or ltd-agent executable
+	binName := "bapedge"
+	fallbackName := "ltd-agent"
 	if runtime.GOOS == "windows" {
-		binName = "ltd-agent.exe"
+		binName = "bapedge.exe"
+		fallbackName = "ltd-agent.exe"
 	}
 	ltdBin := findBinary(binName)
+	if _, err := os.Stat(ltdBin); err != nil {
+		ltdBin = findBinary(fallbackName)
+	}
 
-	// 4. Execute ltd-agent exec --source copilot --json "$command"
+	// 4. Execute bapedge exec --source copilot --json "$command"
 	cmd := exec.Command(ltdBin, "exec", "--source", "copilot", "--json", command)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -105,6 +110,8 @@ func findBinary(name string) string {
 	// 2. Look in parent directories (e.g. ../ltd-agent.exe, ../ltd-agent/ltd-agent.exe)
 	candidates := []string{
 		filepath.Join("..", name),
+		filepath.Join("..", "bap-edge", name),
+		filepath.Join("bap-edge", name),
 		filepath.Join("..", "ltd-agent", name),
 		filepath.Join("ltd-agent", name),
 		filepath.Join("cchook", name),

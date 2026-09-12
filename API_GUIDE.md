@@ -1,0 +1,525 @@
+# BAP Control Plane (`bapcontrolplane`) REST API Guide
+
+This document is the complete REST API specification for **`bapcontrolplane`**, the central Bounded Authority Plane governance service.
+
+`bapcontrolplane` is **strictly API-based (no UI)**. All endpoints accept and return JSON. The registration flow is designed for frictionless self-service onboarding: app owners can pre-register unauthenticated or with standard service tokens, receive a single-use high-entropy One-Time Code (OTC), and edge brokers (**`bapedge`**, the Local Trusted Daemon) authenticate and enroll by consuming the OTC alongside cryptographic binary attestation.
+
+---
+
+## 1. Quick Reference: Endpoints Table
+
+| Method | Endpoint | Description | Auth Required |
+| :--- | :--- | :--- | :--- |
+| `GET` | `/api/v1/health` | Service liveness & health check | None |
+| `POST` | `/api/v1/agents/pre-register` | Pre-register agent/fleet & mint OTC or fleet token | None (Self-Service) |
+| `POST` | `/api/v1/agents/register` | Edge LTD enrollment, binary attestation & SPIFFE SVID | One-Time Code / Fleet Token |
+| `GET` | `/api/v1/agents` | List all registered agents and attestation status | None |
+| `POST` | `/api/v1/grants/acquire` | Mint short-lived OBO JWT authority grants (with SPIFFE ID) | Attested Agent ID |
+| `POST` | `/api/v1/grants/consume` | Downstream PEP atomic grant consumption | Bearer Token |
+| `GET` | `/api/v1/policy/bundle` | Get current authoritative Cedar policy & schema | None |
+| `POST` | `/api/v1/policy/sync` | Edge LTD policy synchronization & directives | None |
+| `POST` | `/api/v1/audit/ingest` | Central ingestion for edge audit logs | None |
+| `GET` | `/api/v1/audit/events` | Inspect central tamper-evident audit chain | None |
+| `POST` | `/api/v1/agents/revoke` | Emergency kill-switch revoking a specific agent instance | None |
+| `POST` | `/api/v1/apps/revoke` | Emergency kill-switch revoking an entire fleet/app | None |
+| `POST` | `/api/v1/instances/heartbeat`| Edge agent instance liveness heartbeat | Agent ID |
+
+---
+
+## 2. Server Startup & HTTPS/TLS Configuration
+
+Compile and start the BAP Control Plane daemon:
+```cmd
+cd bap-controlplane
+go build -o bapcontrolplane.exe ./cmd/server
+```
+
+### Standard HTTP (Development / Internal Mesh)
+```cmd
+.\bapcontrolplane.exe -port 8080 -ttl 30 -trust-domain bap.internal
+```
+
+### Secure HTTPS / TLS (Production or Automated Dev TLS)
+```cmd
+# Automatic self-signed TLS generation (exports controlplane-cert.pem for clients):
+.\bapcontrolplane.exe -port 8443 -tls-auto -trust-domain bap.internal
+
+# Custom production certificates:
+.\bapcontrolplane.exe -port 8443 -tls -tls-cert /path/to/cert.pem -tls-key /path/to/key.pem -trust-domain bap.internal
+```
+
+---
+
+## 3. Endpoints Detail
+
+### 3.1. Health Check
+Checks if `ltd-service` is healthy and ready.
+- **Method**: `GET`
+- **Path**: `/api/v1/health`
+- **Example Request**:
+  ```bash
+  curl -s http://localhost:8080/api/v1/health
+  ```
+- **Example Response** (`200 OK`):
+  ```json
+  {
+    "service": "ltd-service-control-plane",
+    "status": "ok"
+  }
+  ```
+
+---
+
+### 3.2. Pre-Register Agent (Mint One-Time Code)
+App owners self-register an agent definition. Generates a short-lived, high-entropy single-use registration code (`LTD-OTC-XXXX-XXXX`).
+- **Method**: `POST`
+- **Path**: `/api/v1/agents/pre-register`
+- **Request Body**:
+  ```json
+  {
+    "app_id": "payments-worker",
+    "owner_email": "alice@company.internal",
+    "agent_name": "BillingReconciler",
+    "env_profile": "production",
+    "allowed_binary_hashes": [
+      "4e75b1590ef4ac3a871ba7ed2075f32d7a4cfbad773e700b583fcb4643d709fb"
+    ],
+    "permitted_scopes": ["cli:exec", "billing:reconcile"],
+    "ttl_minutes": 15
+  }
+  ```
+  *Parameters:*
+  - `app_id` (string, required): Application identifier.
+  - `agent_name` (string, required): Descriptive name of agent.
+  - `owner_email` (string, optional): Owner contact email.
+  - `env_profile` (string, optional): `"production"` (strict hash whitelist) or `"development"` (TOFU / flexible). Default: `"development"`.
+  - `allowed_binary_hashes` (array of strings, required in prod): Authorized SHA-256 binary checksums.
+  - `permitted_scopes` (array of strings, optional): Scopes granted to this agent.
+  - `ttl_minutes` (int, optional): Expiry time for the one-time code in minutes (default 15).
+- **Example Request**:
+  ```bash
+  curl -s -X POST http://localhost:8080/api/v1/agents/pre-register \
+    -H "Content-Type: application/json" \
+    -d '{
+      "app_id": "payments-worker",
+      "owner_email": "alice@company.internal",
+      "agent_name": "BillingReconciler",
+      "env_profile": "development",
+      "permitted_scopes": ["cli:exec", "billing:read"]
+    }'
+  ```
+- **Example Response** (`201 Created`):
+  ```json
+  {
+    "agent_id": "agent-payments-worker-9fa1b402",
+    "one_time_code": "LTD-OTC-63523708-33895c03",
+    "expires_at": "2026-09-12T10:45:00Z"
+  }
+  ```
+
+---
+
+### 3.3. Edge Agent Registration & Attestation
+Called once by the edge agent to enroll. It consumes and burns the one-time code, validates the executing binary hash against the environment profile, and records host metadata.
+- **Method**: `POST`
+- **Path**: `/api/v1/agents/register`
+- **Request Body**:
+  ```json
+  {
+    "one_time_code": "LTD-OTC-63523708-33895c03",
+    "binary_hash": "4e75b1590ef4ac3a871ba7ed2075f32d7a4cfbad773e700b583fcb4643d709fb",
+    "hostname": "prod-node-04",
+    "os": "windows",
+    "arch": "amd64",
+    "public_key": ""
+  }
+  ```
+- **Example Request (CLI or curl)**:
+  ```bash
+  # Using ltd-agent CLI:
+  ltd-agent register --server http://localhost:8080 --code LTD-OTC-63523708-33895c03
+
+  # Or using raw curl:
+  curl -s -X POST http://localhost:8080/api/v1/agents/register \
+    -H "Content-Type: application/json" \
+    -d '{
+      "one_time_code": "LTD-OTC-63523708-33895c03",
+      "binary_hash": "4e75b1590ef4ac3a871ba7ed2075f32d7a4cfbad773e700b583fcb4643d709fb",
+      "hostname": "prod-node-04",
+      "os": "windows",
+      "arch": "amd64"
+    }'
+  ```
+- **Example Response** (`200 OK`):
+  ```json
+  {
+    "agent_id": "agent-payments-worker-9fa1b402",
+    "app_id": "payments-worker",
+    "status": "active",
+    "server_time": "2026-09-12T10:31:00Z",
+    "session_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+  }
+  ```
+- **Replay Protection**: Re-submitting an already-consumed OTC returns `401 Unauthorized`:
+  ```json
+  {"error": "Enrollment failed: one-time code has already been consumed (replay attempt blocked)"}
+  ```
+
+---
+
+### 3.4. List Registered Agents
+Lists all registered agents in the control plane state store.
+- **Method**: `GET`
+- **Path**: `/api/v1/agents`
+- **Example Request**:
+  ```bash
+  curl -s http://localhost:8080/api/v1/agents
+  ```
+- **Example Response** (`200 OK`):
+  ```json
+  {
+    "count": 1,
+    "agents": [
+      {
+        "agent_id": "agent-payments-worker-9fa1b402",
+        "app_id": "payments-worker",
+        "owner_email": "alice@company.internal",
+        "agent_name": "BillingReconciler",
+        "env_profile": "development",
+        "status": "active",
+        "enrolled_binary_hash": "4e75b1590ef4ac3a871ba7ed2075f32d7a4cfbad773e700b583fcb4643d709fb",
+        "hostname": "prod-node-04",
+        "os": "windows",
+        "arch": "amd64",
+        "created_at": "2026-09-12T10:30:00Z",
+        "enrolled_at": "2026-09-12T10:31:00Z"
+      }
+    ]
+  }
+  ```
+
+---
+
+### 3.5. Acquire Short-Lived Authority Grant
+Edge agent requests a signed, short-lived OBO JWT authority token (TTL 15–60 mins) bound to its attested binary hash and allowed scopes.
+- **Method**: `POST`
+- **Path**: `/api/v1/grants/acquire`
+- **Request Body**:
+  ```json
+  {
+    "agent_id": "agent-payments-worker-9fa1b402",
+    "binary_hash": "4e75b1590ef4ac3a871ba7ed2075f32d7a4cfbad773e700b583fcb4643d709fb",
+    "scopes": ["cli:exec"]
+  }
+  ```
+- **Example Response** (`200 OK`):
+  ```json
+  {
+    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJncmFudC03ZmQ5YjJkMSIsInN1YiI6ImFnZW50LXBheW1lbnRzLXdvcmtlci05ZmExYjQwMiIsImFwcF9pZCI6InBheW1lbnRzLXdvcmtlciIsInNjb3BlcyI6WyJjbGk6ZXhlYyJdLCJleHAiOjE3ODkxODA2NjB9...",
+    "token_type": "Bearer",
+    "expires_at": "2026-09-12T11:01:00Z",
+    "expires_in": 1800,
+    "scopes": ["cli:exec"]
+  }
+  ```
+
+---
+
+### 3.6. Consume Grant (Resource PEP / API Gateway Interface)
+Downstream API Gateways or resource PEPs validate and atomically consume a short-lived grant to prevent replay attacks and verify the target resource.
+- **Method**: `POST`
+- **Path**: `/api/v1/grants/consume`
+- **Request Body**:
+  ```json
+  {
+    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "resource": "cli:exec"
+  }
+  ```
+- **Example Response** (`200 OK`):
+  ```json
+  {
+    "consumed": true,
+    "grant_id": "grant-7fd9b2d1",
+    "agent_id": "agent-payments-worker-9fa1b402",
+    "app_id": "payments-worker",
+    "scopes": ["cli:exec"],
+    "expires_at": 1789180660
+  }
+  ```
+- **Replay Protection**: Subsequent consumption of the same grant ID returns `403 Forbidden`:
+  ```json
+  {"error": "Grant consumption failed: grant grant-7fd9b2d1 has already been consumed (replay blocked)"}
+  ```
+
+---
+
+### 3.7. Central Policy Bundle & Remote Sync
+Enables central security teams to distribute updated Cedar policies and schemas without touching edge agents.
+
+#### Get Active Bundle
+- **Method**: `GET`
+- **Path**: `/api/v1/policy/bundle`
+- **Example Response** (`200 OK`):
+  ```json
+  {
+    "version": 1,
+    "digest": "b8a91ec5f79b32e6...",
+    "policy_cedar": "permit(principal, action, resource);",
+    "schema_json": "{...}",
+    "kill_switch": false,
+    "updated_at": "2026-09-12T10:00:00Z"
+  }
+  ```
+
+#### Edge Sync Policy
+- **Method**: `POST`
+- **Path**: `/api/v1/policy/sync`
+- **Request Body**:
+  ```json
+  {
+    "agent_id": "agent-payments-worker-9fa1b402",
+    "installed_version": 1,
+    "installed_digest": "b8a91ec5f79b32e6..."
+  }
+  ```
+- **Responses by Directive**:
+  1. **Up-to-Date** (`CURRENT`):
+     ```json
+     {
+       "directive": "CURRENT"
+     }
+     ```
+  2. **Update Available** (`UPDATE_REQUIRED`):
+     ```json
+     {
+       "directive": "UPDATE_REQUIRED",
+       "bundle": {
+         "version": 2,
+         "digest": "c9b20...",
+         "policy_cedar": "permit(...) forbid(...);",
+         "schema_json": "{...}",
+         "kill_switch": false,
+         "updated_at": "2026-09-12T10:30:00Z"
+       }
+     }
+     ```
+  3. **Emergency Lock** (`KILL_SWITCH`):
+     ```json
+     {
+       "directive": "KILL_SWITCH",
+       "bundle": { "kill_switch": true }
+     }
+     ```
+
+---
+
+### 3.8. Central Audit Ingestion & Tamper-Evident Chain
+Edge agents stream their execution decisions and telemetry into the central control plane. Central storage cryptographically links records via SHA-256 hash chaining.
+
+#### Ingest Audit Events
+- **Method**: `POST`
+- **Path**: `/api/v1/audit/ingest`
+- **Request Body**: Single object or array of event objects:
+  ```json
+  [
+    {
+      "event_id": "ev-edge-001",
+      "timestamp": "2026-09-12T10:14:00Z",
+      "source": "claude-code",
+      "executable": "git",
+      "arguments": "status",
+      "full_command": "git status",
+      "decision": "allow",
+      "duration_ms": 35,
+      "exit_code": 0
+    },
+    {
+      "event_id": "ev-edge-002",
+      "timestamp": "2026-09-12T10:14:05Z",
+      "source": "claude-code",
+      "executable": "cat",
+      "arguments": ".env",
+      "full_command": "cat .env",
+      "decision": "deny",
+      "reason": "policy policy1",
+      "duration_ms": 2,
+      "exit_code": 1
+    }
+  ]
+  ```
+- **Example Response** (`200 OK`):
+  ```json
+  {
+    "ingested": 2,
+    "chain_valid": true
+  }
+  ```
+
+#### Inspect Central Audit Chain
+- **Method**: `GET`
+- **Path**: `/api/v1/audit/events`
+- **Example Response** (`200 OK`):
+  ```json
+  {
+    "count": 2,
+    "chain_status": "valid",
+    "events": [
+      {
+        "event_id": "ev-edge-001",
+        "timestamp": "2026-09-12T10:14:00Z",
+        "source": "claude-code",
+        "executable": "git",
+        "full_command": "git status",
+        "decision": "allow",
+        "exit_code": 0,
+        "previous_hash": "genesis-bapltd-control-plane",
+        "event_hash": "a59b34f8..."
+      },
+      {
+        "event_id": "ev-edge-002",
+        "timestamp": "2026-09-12T10:14:05Z",
+        "source": "claude-code",
+        "executable": "cat",
+        "full_command": "cat .env",
+        "decision": "deny",
+        "reason": "policy policy1",
+        "exit_code": 1,
+        "previous_hash": "a59b34f8...",
+        "event_hash": "f81c9a02..."
+      }
+    ]
+  }
+  ```
+
+---
+
+### 3.9. Remote Kill-Switch (Single Agent Revocation)
+Immediately marks a specific agent instance as `revoked`. Once revoked, all subsequent grant acquisitions are denied with `403 Forbidden`.
+- **Method**: `POST`
+- **Path**: `/api/v1/agents/revoke`
+- **Request Body**:
+  ```json
+  {
+    "agent_id": "agent-payments-worker-9fa1b402"
+  }
+  ```
+- **Example Response** (`200 OK`):
+  ```json
+  {
+    "agent_id": "agent-payments-worker-9fa1b402",
+    "status": "revoked",
+    "message": "Agent has been revoked. All subsequent grants will be denied."
+  }
+  ```
+
+---
+
+### 3.10. Fleet-Wide App Kill-Switch (Revoke All App Instances)
+Immediately revokes **all** active agent instances belonging to a target application (`app_id`).
+- **Method**: `POST`
+- **Path**: `/api/v1/apps/revoke`
+- **Request Body**:
+  ```json
+  {
+    "app_id": "payments-worker"
+  }
+  ```
+- **Example Response** (`200 OK`):
+  ```json
+  {
+    "app_id": "payments-worker",
+    "revoked_count": 5,
+    "status": "revoked"
+  }
+  ```
+
+---
+
+### 3.11. Instance Liveness Heartbeat
+Edge agent instances periodically send liveness heartbeats to maintain active status and update `last_heartbeat_at`.
+- **Method**: `POST`
+- **Path**: `/api/v1/instances/heartbeat`
+- **Request Body**:
+  ```json
+  {
+    "agent_id": "agent-payments-worker-9fa1b402-worker-01"
+  }
+  ```
+- **Example Response** (`200 OK`):
+  ```json
+  {
+    "agent_id": "agent-payments-worker-9fa1b402-worker-01",
+    "status": "alive",
+    "time": "2026-09-12T10:35:00Z"
+  }
+  ```
+
+---
+
+## 4. `bapedge` (LTD) CLI Reference & Offline Operation
+
+The edge daemon (`bapedge.exe`, backwards-compatible alias: `ltd-agent.exe`) provides direct CLI interfaces for enrollment, remote synchronization, zero-trust execution, and attestation.
+
+### 4.1. Edge Self-Enrollment (`bapedge register`)
+Computes the local executable's SHA-256 hash, submits hardware and OS telemetry alongside the One-Time Code or Fleet Token, enrolls the SPIFFE workload identity, and caches the initial Cedar policy bundle.
+```bash
+bapedge register --server <url> --code <OTC_OR_FLEET_TOKEN> [--instance-id <id>] [--ca-cert <path>] [--insecure]
+```
+- **Options**:
+  - `--server` (string, required): Central `bapcontrolplane` URL (e.g. `https://controlplane.company.internal:8443` or `http://localhost:8080`).
+  - `--code` (string, required): Registration token received during pre-registration (`LTD-OTC-XXXX-XXXX` for single agent, or `BAP-FLEET-XXXX-XXXX` for quota-based fleet).
+  - `--instance-id` (string, optional): Explicit instance identifier (e.g. `worker-prod-01`). Defaults to `<hostname>-<random_hex>`.
+  - `--ca-cert` (string, optional): Path to custom CA certificate PEM file to establish TLS trust for `bapcontrolplane`.
+  - `--insecure` (bool, optional): Skip TLS verification (development/test environments only).
+  - `--config` (string, optional): Local path to store enrolled credentials. Defaults to `~/.ltd/credentials.json`.
+- **Output**:
+  ```text
+  ==================================================
+    Bounded Authority Plane (BAP) Agent Enrolled!
+  ==================================================
+  Agent ID:      agent-payments-worker-9fa1b402-worker-01
+  App ID:        payments-worker
+  Instance ID:   worker-01
+  SPIFFE ID:     spiffe://bap.internal/app/payments-worker/instance/worker-01
+  Status:        active
+  Binary Hash:   f74e45ee7ca017e225b72a0107529469ae612c308ded4b0221c60e85ccdf9584
+  Credentials:   C:\Users\User\.ltd\credentials.json
+  Policy Synced: Version 1 (Cached in C:\Users\User\.ltd\policy)
+  ==================================================
+  ```
+- **Exit Codes**:
+  - `0`: Registration successful, SPIFFE ID assigned, policy bundle cached.
+  - `1`: Network failure, expired token, fleet quota exceeded, replay attempt, or binary hash mismatch.
+
+### 4.2. Central Policy Synchronization (`bapedge sync`)
+Synchronizes the local Cedar rules and schema with `bapcontrolplane`.
+```bash
+bapedge sync --server <url> [--policy-dir <path>]
+```
+- **Online Behavior**: Compares local digest and version. If the server has a newer bundle, downloads and writes `policy.cedar`, `schema.json`, and updates `policy-state.json`.
+- **Offline Behavior (Control Plane Outage)**: If `bapcontrolplane` is unreachable, `bapedge` detects the network partition, prints `[!] OFFLINE RESILIENCE ACTIVE`, and exits `0` with the prior cached settings intact.
+- **Persistent Emergency Lock**: If the server returns directive `KILL_SWITCH`, `bapedge` marks `kill_switch: true` in `policy-state.json`.
+
+### 4.3. Zero-Trust Command Execution (`bapedge exec`)
+Evaluates and executes commands through in-process Cedar authorization and sandboxing.
+```bash
+bapedge exec --raw "<command_string>" [--policy <file>] [--schema <file>]
+```
+- **Options**:
+  - `--raw` (string, required): Full shell command string to evaluate and execute.
+  - `--policy` (string, optional): Explicit path to `policy.cedar`. Defaults to `~/.ltd/policy/policy.cedar` or working directory.
+  - `--schema` (string, optional): Explicit path to `schema.json`.
+- **Exit Codes**:
+  - `0`: Authorized command executed successfully.
+  - `1`: Command denied by Cedar policy, emergency kill-switch active, or execution failure.
+
+### 4.4. Attestation Server & Client (`bapedge serve` / `bapedge attest`)
+Used for local peer process verification on Linux/Unix domain sockets (`SO_PEERCRED`):
+```bash
+# Start attestation server
+bapedge serve --socket /tmp/ltd.sock [--allowed-hash <sha256>]
+
+# Query attestation server
+bapedge attest --socket /tmp/ltd.sock
+```

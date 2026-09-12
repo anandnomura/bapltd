@@ -1,0 +1,279 @@
+package api
+
+import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"bap-controlplane/internal/authz"
+	"bap-controlplane/internal/otc"
+	"bap-controlplane/internal/registry"
+	"bap-controlplane/pkg/types"
+)
+
+func setupTestServer() *Server {
+	reg := registry.NewStore("bap.internal")
+	otcStore := otc.NewStore()
+	minter := authz.NewTokenMinter("unit-test-secret-key-1234567890", 15*time.Minute)
+	return NewServer(reg, otcStore, minter, nil, nil)
+}
+
+func TestAPIFullLifecycle(t *testing.T) {
+	srv := setupTestServer()
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	client := ts.Client()
+
+	// 1. Health check
+	resp, err := client.Get(ts.URL + "/api/v1/health")
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("health check failed: status %v, err %v", resp.StatusCode, err)
+	}
+
+	// 2. Pre-Register an Agent
+	preRegPayload := types.PreRegisterRequest{
+		AppID:               "finance-service",
+		OwnerEmail:          "alice@company.internal",
+		AgentName:           "BillingAgent",
+		EnvProfile:          types.ProfileProd,
+		AllowedBinaryHashes: []string{"known-good-binary-sha256"},
+		PermittedScopes:     []string{"billing:read", "cli:exec"},
+	}
+	body, _ := json.Marshal(preRegPayload)
+	resp, err = client.Post(ts.URL+"/api/v1/agents/pre-register", "application/json", bytes.NewReader(body))
+	if err != nil || resp.StatusCode != http.StatusCreated {
+		t.Fatalf("pre-register failed: status %v", resp.StatusCode)
+	}
+
+	var preRegResp types.PreRegisterResponse
+	_ = json.NewDecoder(resp.Body).Decode(&preRegResp)
+	if preRegResp.Code == "" || preRegResp.AgentID == "" {
+		t.Fatalf("invalid pre-register response: %+v", preRegResp)
+	}
+
+	// 3. Register Edge with Valid Hash and Valid Code -> Expect 200 OK
+	validReg := types.RegisterEdgeRequest{
+		Code:       preRegResp.Code,
+		BinaryHash: "known-good-binary-sha256",
+		Hostname:   "worker-01",
+		OS:         "windows",
+		Arch:       "amd64",
+	}
+	validBody, _ := json.Marshal(validReg)
+	resp, err = client.Post(ts.URL+"/api/v1/agents/register", "application/json", bytes.NewReader(validBody))
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK for valid registration, got: %d", resp.StatusCode)
+	}
+
+	var regResp types.RegisterEdgeResponse
+	_ = json.NewDecoder(resp.Body).Decode(&regResp)
+	if regResp.SessionToken == "" || regResp.AgentID != preRegResp.AgentID {
+		t.Fatalf("invalid registration response: %+v", regResp)
+	}
+
+	// 4. Replay Registration with already consumed code -> Expect 401 Unauthorized
+	resp, err = client.Post(ts.URL+"/api/v1/agents/register", "application/json", bytes.NewReader(validBody))
+	if err != nil || resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for replayed OTC, got: %d", resp.StatusCode)
+	}
+
+	// 5. Register with Wrong Hash in Prod -> Expect 403 Forbidden
+	// Pre-register another agent
+	preRegPayload2 := types.PreRegisterRequest{
+		AppID:               "finance-service-2",
+		OwnerEmail:          "bob@company.internal",
+		AgentName:           "BillingAgent2",
+		EnvProfile:          types.ProfileProd,
+		AllowedBinaryHashes: []string{"expected-hash"},
+	}
+	body2, _ := json.Marshal(preRegPayload2)
+	resp2, err := client.Post(ts.URL+"/api/v1/agents/pre-register", "application/json", bytes.NewReader(body2))
+	if err != nil || resp2.StatusCode != http.StatusCreated {
+		t.Fatalf("pre-register 2 failed: %v", resp2.StatusCode)
+	}
+	var preRegResp2 types.PreRegisterResponse
+	_ = json.NewDecoder(resp2.Body).Decode(&preRegResp2)
+
+	tamperedReg := types.RegisterEdgeRequest{
+		Code:       preRegResp2.Code,
+		BinaryHash: "evil-altered-binary-sha256",
+		Hostname:   "worker-02",
+		OS:         "windows",
+		Arch:       "amd64",
+	}
+	tamperedBody, _ := json.Marshal(tamperedReg)
+	resp, err = client.Post(ts.URL+"/api/v1/agents/register", "application/json", bytes.NewReader(tamperedBody))
+	if err != nil || resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected 403 Forbidden for bad hash, got: %d", resp.StatusCode)
+	}
+
+	// 6. Acquire Grant
+	grantReq := types.AcquireGrantRequest{
+		AgentID:    preRegResp.AgentID,
+		BinaryHash: "known-good-binary-sha256",
+	}
+	grantBody, _ := json.Marshal(grantReq)
+	resp, err = client.Post(ts.URL+"/api/v1/grants/acquire", "application/json", bytes.NewReader(grantBody))
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK for grant acquisition, got: %d", resp.StatusCode)
+	}
+	var grantAcqResp types.AcquireGrantResponse
+	_ = json.NewDecoder(resp.Body).Decode(&grantAcqResp)
+
+	// 6b. Consume Grant (Single-use) -> Expect 200 OK
+	consumeReq := map[string]string{"token": grantAcqResp.Token, "resource": "cli:exec"}
+	cBody, _ := json.Marshal(consumeReq)
+	resp, err = client.Post(ts.URL+"/api/v1/grants/consume", "application/json", bytes.NewReader(cBody))
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK for grant consumption, got: %d", resp.StatusCode)
+	}
+
+	// 6c. Consume again (Replay attack on grant) -> Expect 403 Forbidden
+	resp, err = client.Post(ts.URL+"/api/v1/grants/consume", "application/json", bytes.NewReader(cBody))
+	if err != nil || resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected 403 Forbidden on grant replay, got: %d", resp.StatusCode)
+	}
+
+	// 7. Policy Bundle and Sync
+	resp, err = client.Get(ts.URL + "/api/v1/policy/bundle")
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK for policy bundle, got: %d", resp.StatusCode)
+	}
+
+	syncReq := map[string]any{"agent_id": preRegResp.AgentID, "installed_version": 0}
+	syncBody, _ := json.Marshal(syncReq)
+	resp, err = client.Post(ts.URL+"/api/v1/policy/sync", "application/json", bytes.NewReader(syncBody))
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK for policy sync, got: %d", resp.StatusCode)
+	}
+
+	// 8. Audit Ingest and List
+	auditPayload := []map[string]any{
+		{
+			"event_id":     "audit-test-1",
+			"timestamp":    time.Now().UTC().Format(time.RFC3339),
+			"source":       "test-agent",
+			"executable":   "git",
+			"full_command": "git log",
+			"decision":     "allow",
+			"exit_code":    0,
+		},
+	}
+	auditBody, _ := json.Marshal(auditPayload)
+	resp, err = client.Post(ts.URL+"/api/v1/audit/ingest", "application/json", bytes.NewReader(auditBody))
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK for audit ingest, got: %d", resp.StatusCode)
+	}
+
+	resp, err = client.Get(ts.URL + "/api/v1/audit/events")
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK for audit list, got: %d", resp.StatusCode)
+	}
+
+	// 9. Revoke Agent (Kill switch)
+	revokeReq := map[string]string{"agent_id": preRegResp.AgentID}
+	revokeBody, _ := json.Marshal(revokeReq)
+	resp, err = client.Post(ts.URL+"/api/v1/agents/revoke", "application/json", bytes.NewReader(revokeBody))
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK for revocation, got: %d", resp.StatusCode)
+	}
+
+	// 10. Attempt grant after revocation -> Expect 403 Forbidden
+	resp, err = client.Post(ts.URL+"/api/v1/grants/acquire", "application/json", bytes.NewReader(grantBody))
+	if err != nil || resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected 403 Forbidden for revoked agent grant request, got: %d", resp.StatusCode)
+	}
+
+	// 11. Multi-Instance Fleet Enrollment & SPIFFE IDs
+	fleetPreReg := types.PreRegisterRequest{
+		AppID:               "fleet-service",
+		OwnerEmail:          "devops@company.internal",
+		AgentName:           "FleetWorker",
+		EnvProfile:          types.ProfileDev,
+		AllowedBinaryHashes: []string{"fleet-binary-hash"},
+		PermittedScopes:     []string{"cli:exec"},
+		MaxInstances:        3,
+	}
+	fleetBody, _ := json.Marshal(fleetPreReg)
+	resp, err = client.Post(ts.URL+"/api/v1/agents/pre-register", "application/json", bytes.NewReader(fleetBody))
+	if err != nil || resp.StatusCode != http.StatusCreated {
+		t.Fatalf("fleet pre-register failed: %v", resp.StatusCode)
+	}
+	var fleetPreResp types.PreRegisterResponse
+	_ = json.NewDecoder(resp.Body).Decode(&fleetPreResp)
+	if !strings.HasPrefix(fleetPreResp.Code, "BAP-FLEET-") {
+		t.Fatalf("expected BAP-FLEET- prefix for multi-instance OTC, got %q", fleetPreResp.Code)
+	}
+
+	// Enroll Instance 1
+	regInst1 := types.RegisterEdgeRequest{
+		Code:       fleetPreResp.Code,
+		BinaryHash: "fleet-binary-hash",
+		Hostname:   "worker-alpha",
+		InstanceID: "inst-001",
+	}
+	bodyInst1, _ := json.Marshal(regInst1)
+	resp, err = client.Post(ts.URL+"/api/v1/agents/register", "application/json", bytes.NewReader(bodyInst1))
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("instance 1 registration failed: %v", resp.StatusCode)
+	}
+	var respInst1 types.RegisterEdgeResponse
+	_ = json.NewDecoder(resp.Body).Decode(&respInst1)
+	if respInst1.SPIFFEID != "spiffe://bap.internal/app/fleet-service/instance/inst-001" {
+		t.Fatalf("unexpected SPIFFE ID for inst1: %q", respInst1.SPIFFEID)
+	}
+
+	// Enroll Instance 2 using same fleet token
+	regInst2 := types.RegisterEdgeRequest{
+		Code:       fleetPreResp.Code,
+		BinaryHash: "fleet-binary-hash",
+		Hostname:   "worker-beta",
+		InstanceID: "inst-002",
+	}
+	bodyInst2, _ := json.Marshal(regInst2)
+	resp, err = client.Post(ts.URL+"/api/v1/agents/register", "application/json", bytes.NewReader(bodyInst2))
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("instance 2 registration failed: %v", resp.StatusCode)
+	}
+	var respInst2 types.RegisterEdgeResponse
+	_ = json.NewDecoder(resp.Body).Decode(&respInst2)
+	if respInst2.SPIFFEID != "spiffe://bap.internal/app/fleet-service/instance/inst-002" {
+		t.Fatalf("unexpected SPIFFE ID for inst2: %q", respInst2.SPIFFEID)
+	}
+
+	// 12. Instance Heartbeat
+	hbReq := map[string]string{"agent_id": respInst1.AgentID}
+	hbBody, _ := json.Marshal(hbReq)
+	resp, err = client.Post(ts.URL+"/api/v1/instances/heartbeat", "application/json", bytes.NewReader(hbBody))
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("heartbeat failed: %v", resp.StatusCode)
+	}
+
+	// 13. App-Level Fleet Revocation (Kill-Switch)
+	appRevokeReq := map[string]string{"app_id": "fleet-service"}
+	appRevokeBody, _ := json.Marshal(appRevokeReq)
+	resp, err = client.Post(ts.URL+"/api/v1/apps/revoke", "application/json", bytes.NewReader(appRevokeBody))
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("app revocation failed: %v", resp.StatusCode)
+	}
+
+	// Both instances should now be blocked
+	grantReq1 := types.AcquireGrantRequest{AgentID: respInst1.AgentID, BinaryHash: "fleet-binary-hash"}
+	gBody1, _ := json.Marshal(grantReq1)
+	resp, err = client.Post(ts.URL+"/api/v1/grants/acquire", "application/json", bytes.NewReader(gBody1))
+	if err != nil || resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected 403 Forbidden for fleet-revoked instance 1, got %d", resp.StatusCode)
+	}
+
+	grantReq2 := types.AcquireGrantRequest{AgentID: respInst2.AgentID, BinaryHash: "fleet-binary-hash"}
+	gBody2, _ := json.Marshal(grantReq2)
+	resp, err = client.Post(ts.URL+"/api/v1/grants/acquire", "application/json", bytes.NewReader(gBody2))
+	if err != nil || resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected 403 Forbidden for fleet-revoked instance 2, got %d", resp.StatusCode)
+	}
+}

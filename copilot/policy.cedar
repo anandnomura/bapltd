@@ -49,12 +49,12 @@ forbid (
     context.full_command like "*&ssh*" ||
     context.full_command like "*;ssh*" ||
     context.full_command like "*socat*" ||
-    context.full_command like "*Invoke-WebRequest*" ||
-    context.full_command like "*Invoke-RestMethod*" ||
+    context.full_command like "*invoke-webrequest*" ||
+    context.full_command like "*invoke-restmethod*" ||
     context.full_command like "*iwr *" ||
     context.full_command like "*irm *" ||
-    context.full_command like "*DownloadString*" ||
-    context.full_command like "*DownloadFile*" ||
+    context.full_command like "*downloadstring*" ||
+    context.full_command like "*downloadfile*" ||
     context.full_command like "*certutil*" ||
     context.full_command like "*bitsadmin*" ||
     context.full_command like "*~/.aws*" ||

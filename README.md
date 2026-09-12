@@ -1,53 +1,64 @@
-# bapltd: Zero-Trust Execution Broker for AI Agents
+# BAP: Bounded Authority Plane for AI Agents
 
-`bapltd` (`ltd-agent`) is a high-performance, pure Go (no cgo) zero-trust execution broker designed for AI agents operating on Linux, WSL, macOS, and Windows. It secures tool executions for **Claude Code**, **GitHub Copilot**, and automated agent systems.
+**BAP** provides cryptographically bounded, zero-trust execution governance for AI agents such as **Claude Code**, **GitHub Copilot**, and automated workflow workers across Windows, Linux, WSL, and macOS.
+
+The architecture formally converges into two core components:
+1. **`bapedge`**: The **Local Trusted Daemon (LTD)** process running at the edge (developer laptops, CI/CD runners, and worker hosts). It acts as the local Zero-Trust Execution Broker and Policy Decision/Enforcement Point (PDP/PEP), evaluating Cedar policies, isolating processes, sanitizing outputs, injecting scoped OBO tokens, and generating audit logs. *(Legacy alias: `ltd-agent`)*.
+2. **`bapcontrolplane`**: The central server-side control plane managing the Agent Registry, self-service One-Time Code (OTC) registration, binary image attestation, short-lived OBO JWT grants, dynamic Cedar policy distribution, and centralized tamper-evident audit ingestion. *(Legacy alias: `ltd-service`)*.
 
 ---
 
 ## Architecture Overview
 
 ```text
-                           +-------------------------------+
-                           |    AI Agent (Claude / Copilot)|
-                           +---------------+---------------+
-                                           | Tool Call ("Bash", "Terminal")
-                                           v
-                           +---------------+---------------+
-                           |   Interceptor Hook / Wrapper  |
-                           |  (cchook / copilot / VS Code) |
-                           +---------------+---------------+
-                                           | Invokes ltd-agent exec --source <agent>
-                                           v
-                           +---------------+---------------+
-                           |    ltd-agent Execution Broker |
-                           |                               |
-                           |  1. Intelligent Normalization |
-                           |     - Strips shell artifacts  |
-                           |     - Preserves quoted spaces |
-                           |  2. Cedar Policy Engine       |
-                           |     - Whitelist Dev Tools     |
-                           |     - Strict Anti-Evasion     |
-                           +-------+---------------+-------+
-                                   |               |
-                           (Denied)|               |(Allowed)
-                                   v               v
-                        Exit 1 (JSON Error)   [Sandboxed Execution]
-                                              - Linux: CLONE_NEWUSER/PID/NS/NET
-                                              - Windows: Process Group Isolation
-                                                + 30-50ms fast cmd.exe runner
-                                              - Output sanitized (CRLF/spaces)
-                                              - Secret injected (CORP_OBO_TOKEN)
-                                              - Exit 0 (Output / JSON)
-                                   |               |
-                                   +-------+-------+
-                                           |
-                                           v
-                           +---------------+---------------+
-                           |   Structured Audit Logger     |
-                           |     (ltd-audit.jsonl)         |
-                           |  - Telemetry & Latency        |
-                           |  - Anomaly & Evasion Learning |
-                           +-------------------------------+
+                           +-------------------------------------+
+                           |      AI Agent (Claude / Copilot)    |
+                           +------------------+------------------+
+                                              | Tool Call ("Bash", "Terminal")
+                                              v
+                           +------------------+------------------+
+                           |     Interceptor Hook / Wrapper      |
+                           |    (cchook / copilot / VS Code)     |
+                           +------------------+------------------+
+                                              | Invokes bapedge exec --source <agent>
+                                              v
+                           +------------------+------------------+
+                           |  bapedge (Local Trusted Daemon - LTD)|
+                           |                                     |
+                           |  1. Intelligent Normalization       |
+                           |     - Strips shell artifacts        |
+                           |     - Preserves quoted spaces       |
+                           |  2. Cedar Policy Engine             |
+                           |     - Whitelist Dev Tools           |
+                           |     - Strict Anti-Evasion           |
+                           +---------+-----------------+---------+
+                                     |                 |
+                             (Denied)|                 |(Allowed)
+                                     v                 v
+                          Exit 1 (JSON Error)     [Sandboxed Execution]
+                                                  - Linux: Namespaces / cgroups
+                                                  - Windows: Job Object Isolation
+                                                    + 30-50ms fast cmd.exe runner
+                                                  - Output sanitized (CRLF/spaces)
+                                                  - Secret injected (CORP_OBO_TOKEN)
+                                                  - Exit 0 (Output / JSON)
+                                     |                 |
+                                     +--------+--------+
+                                              |
+                                              v
+                           +------------------+------------------+
+                           |     Local Structured Audit Log      |
+                           |         (ltd-audit.jsonl)           |
+                           +------------------+------------------+
+                                              | Stream to Control Plane
+                                              v
+                           +------------------+------------------+
+                           |        bapcontrolplane              |
+                           |  - Central Agent Registry & OTC     |
+                           |  - Binary SHA-256 Attestation       |
+                           |  - Dynamic Cedar Policy Sync        |
+                           |  - Tamper-Evident Hash Chain        |
+                           +-------------------------------------+
 ```
 
 ---
@@ -58,9 +69,16 @@ Compile natively or cross-compile for all operating systems (pure Go, `CGO_ENABL
 
 ### Windows (AMD64)
 ```cmd
-:: Build ltd-agent broker
-cd ltd-agent
-go build -o ltd-agent.exe .
+:: Build bap-edge broker (LTD)
+cd bap-edge
+go build -o bapedge.exe .
+copy /y bapedge.exe ltd-agent.exe >nul
+cd ..
+
+:: Build bap-controlplane
+cd bap-controlplane
+go build -o bapcontrolplane.exe ./cmd/server
+copy /y bapcontrolplane.exe ltd-service.exe >nul
 cd ..
 
 :: Build Claude Code interceptor
@@ -76,10 +94,17 @@ cd ..
 
 ### Linux / WSL (AMD64)
 ```bash
-# Build ltd-agent broker
-cd ltd-agent
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o ltd-agent .
-chmod +x ltd-agent
+# Build bap-edge broker
+cd bap-edge
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bapedge .
+chmod +x bapedge
+cp bapedge ltd-agent
+cd ..
+
+# Build bap-controlplane
+cd bap-controlplane
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bapcontrolplane ./cmd/server
+chmod +x bapcontrolplane
 cd ..
 
 # Build Claude Code interceptor
@@ -97,9 +122,9 @@ cd ..
 
 ### macOS (Darwin AMD64 / Apple Silicon ARM64)
 ```bash
-# Build ltd-agent broker for macOS
-cd ltd-agent
-CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o ltd-agent-darwin .
+# Build bap-edge broker for macOS
+cd bap-edge
+CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o bapedge-darwin .
 cd ..
 ```
 
@@ -110,19 +135,19 @@ cd ..
 ### Interactive CLI Execution (Direct Output)
 ```cmd
 :: Standard developer commands (permitted)
-ltd-agent\ltd-agent.exe exec "ls -al"
-ltd-agent\ltd-agent.exe exec "git status"
-ltd-agent\ltd-agent.exe exec "go version"
-ltd-agent\ltd-agent.exe exec "java -version"
-ltd-agent\ltd-agent.exe exec "python --version"
+bap-edge\bapedge.exe exec "ls -al"
+bap-edge\bapedge.exe exec "git status"
+bap-edge\bapedge.exe exec "go version"
+bap-edge\bapedge.exe exec "java -version"
+bap-edge\bapedge.exe exec "python --version"
 
 :: Commands with arguments containing spaces (automatically encoded)
-ltd-agent\ltd-agent.exe exec python -c "import sys; print(sys.argv[1])" "hello world"
-ltd-agent\ltd-agent.exe exec 'java -Dapp.name="My Custom App" -version'
+bap-edge\bapedge.exe exec python -c "import sys; print(sys.argv[1])" "hello world"
+bap-edge\bapedge.exe exec 'java -Dapp.name="My Custom App" -version'
 
 :: Chaining and pipes
-ltd-agent\ltd-agent.exe exec "echo hello && echo world"
-ltd-agent\ltd-agent.exe exec "ls -al | grep -i README"
+bap-edge\bapedge.exe exec "echo hello && echo world"
+bap-edge\bapedge.exe exec "ls -al | grep -i README"
 ```
 
 ### Output Format Flags
@@ -135,21 +160,24 @@ ltd-agent\ltd-agent.exe exec "ls -al | grep -i README"
 
 ## 3. Test Commands
 
-### Windows Automated 1-Click Test Suite (27 Checks)
-Run the root test suite to recompile, test unit code, verify policies, check anti-evasion, and validate hooks:
+### Windows Automated 1-Click Test Suite (41 Checks)
+Run the root test suite to recompile, test unit code, verify policies, check anti-evasion, validate hooks, and verify control plane offline resilience:
 ```cmd
 run_all_tests.bat
 ```
 Output:
 ```text
-Total Passed : 27
+Total Passed : 41
 Total Failed : 0
 [OVERALL STATUS] SUCCESS - All tests passed!
 ```
 
 ### Go Unit Tests
 ```cmd
-cd ltd-agent
+cd bap-edge
+go test -v ./...
+cd ..
+cd bap-controlplane
 go test -v ./...
 cd ..
 ```
@@ -282,4 +310,128 @@ Every execution is logged to `ltd-audit.jsonl` in JSON Lines format:
    ```
 3. **Detect Evasion Attempts**:
    Identify attempts to rename, copy, or redirect `.env` or exfiltrate credentials.
+
+---
+
+## 7. BAP Control Plane (`bapcontrolplane`) & Edge LTD Self-Registration
+
+While `bapedge` operates as the Local Trusted Daemon (LTD) on the edge, the central **BAP Control Plane** (`bapcontrolplane`) manages the **Agent Registry**, **One-Time Code (OTC) Enrollment**, **Binary Image Attestation**, **Short-Lived Authority Grants**, and **Dynamic Cedar Policy Synchronization**.
+
+```text
+  [Central Infra: bapcontrolplane]
+          |
+          | 1. App Owner Pre-Registers Agent (AppID, Scope, Env Profile)
+          v
+    Generates Single-Use OTC ("LTD-OTC-XXXX-XXXX", TTL 15m)
+          |
+          | 2. App Owner hands OTC to edge LTD
+          v
+  [Edge: bapedge register --server <url> --code <OTC>]
+          |
+          | 3. Computes executing binary SHA-256 hash & host info
+          v
+  [Central Infra: bapcontrolplane]
+          |
+          | 4. Single-Use Verification: Burns OTC immediately (prevents replay)
+          | 5. Binary Image Attestation:
+          |    - Production: Strict SHA-256 whitelist matching CI/CD artifacts
+          |    - Development: Trust-On-First-Use (TOFU) or dev whitelists
+          v
+  Enrolls Agent in Registry & Mints Initial JWT Session Token
+          |
+          | 6. Acquire Short-Lived Grants (/api/v1/grants/acquire)
+          v
+  Cryptographically signed OBO JWT tokens (15-60 min TTL)
+          |
+  [Remote Kill-Switch: /api/v1/agents/revoke] -> Instantly revokes agent access
+```
+
+### Running the BAP Control Plane
+```powershell
+cd bap-controlplane
+go build -o bapcontrolplane.exe ./cmd/server
+.\bapcontrolplane.exe -port 8080 -ttl 30 -policy ../bap-edge/policy.cedar -schema ../bap-edge/schema.json
+```
+
+### Step 1: Self-Registration by App Owner
+The app owner calls the control plane to pre-register an agent:
+```bash
+curl -X POST http://localhost:8080/api/v1/agents/pre-register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "app_id": "payments-worker",
+    "owner_email": "owner@company.internal",
+    "agent_name": "SettlementAgent",
+    "env_profile": "production",
+    "allowed_binary_hashes": ["4e75b1590ef4ac3a871ba7ed2075f32d7a4cfbad773e700b583fcb4643d709fb"],
+    "permitted_scopes": ["cli:exec", "payments:settle"],
+    "ttl_minutes": 15
+  }'
+```
+Response:
+```json
+{
+  "agent_id": "agent-payments-worker-3fa8b10e",
+  "one_time_code": "LTD-OTC-a1b2c3d4-e5f60718",
+  "expires_at": "2026-09-12T11:45:00Z"
+}
+```
+
+### Step 2: One-Time Edge Registration
+On the edge host where the Local Trusted Daemon (`bapedge`) is deployed:
+```bash
+bapedge register --server http://control-plane.corp:8080 --code LTD-OTC-a1b2c3d4-e5f60718
+```
+The edge LTD broker:
+1. Computes the cryptographic SHA-256 hash of its executing binary.
+2. Sends the hash along with the OTC to the control plane.
+3. Upon validation, the OTC is burned (replay blocked) and session credentials are stored in `~/.ltd/credentials.json`.
+
+### Step 3: Acquiring Short-Lived Grants
+Edge agents obtain short-lived (15–60 min) signed authority tokens:
+```bash
+curl -X POST http://localhost:8080/api/v1/grants/acquire \
+  -H "Content-Type: application/json" \
+  -d '{
+    "agent_id": "agent-payments-worker-3fa8b10e",
+    "binary_hash": "4e75b1590ef4ac3a871ba7ed2075f32d7a4cfbad773e700b583fcb4643d709fb",
+    "scopes": ["cli:exec"]
+  }'
+```
+
+### Step 4: Central Kill-Switch (Instant Revocation)
+If an agent is compromised or decommissioned, revoke it immediately:
+```bash
+curl -X POST http://localhost:8080/api/v1/agents/revoke \
+  -H "Content-Type: application/json" \
+  -d '{"agent_id": "agent-payments-worker-3fa8b10e"}'
+```
+Once revoked, any subsequent request to acquire grants is immediately rejected with HTTP 403 Forbidden.
+
+---
+
+## 8. Offline Edge Resilience & Fail-Secure Design
+
+A fundamental invariant of BAP is that **edge agents must continue operating normally if `bapcontrolplane` is down, without compromising security**:
+
+1. **Local Policy Cache (`~/.ltd/policy/`)**:
+   - `bapedge` caches the latest authoritative Cedar policy bundle (`policy.cedar`, `schema.json`, and `policy-state.json`).
+2. **Zero Downtime for Developers**:
+   - Authorized developer toolchains (`git`, `go`, `python`, `npm`, `cargo`) execute locally in 1–2ms via in-process Cedar evaluation.
+   - If `bapcontrolplane` is unreachable, `bapedge sync` logs `[!] OFFLINE RESILIENCE ACTIVE` and cleanly falls back to cached settings.
+3. **Strict Retention of Security Invariants**:
+   - Secrets protection (`cat .env`, `type .env`, evasive renames like `ren .env`), credential directory protection (`~/.aws`, `~/.ssh`), and egress blocks (`curl`, `wget`) are hard invariants compiled into the cached Cedar rules and remain **100% active offline**.
+4. **Persistent Kill-Switch**:
+   - If an emergency lock was triggered, `policy-state.json` retains `kill_switch: true`. Network disconnection **cannot bypass** the kill-switch.
+5. **Fail-Secure Default**:
+   - If no cached policy bundle exists and the central control plane cannot be contacted, `bapedge` strictly denies execution (`exit 1`). It never fails open.
+
+---
+
+## 9. Comprehensive Documentation & Guides
+
+- [ARCHITECTURE.md](file:///c:/Users/User/pyprj/bapltd/ARCHITECTURE.md): Full technical architecture, system topology, sequence diagrams, and threat models.
+- [API_GUIDE.md](file:///c:/Users/User/pyprj/bapltd/API_GUIDE.md): Complete REST API specification and CLI reference for all 10 control plane endpoints and edge commands.
+- [TESTING_GUIDE.md](file:///c:/Users/User/pyprj/bapltd/TESTING_GUIDE.md): Step-by-step manual test guide for Control Plane UP, Control Plane DOWN resilience, kill-switch, and Claude/Copilot live testing.
+
 

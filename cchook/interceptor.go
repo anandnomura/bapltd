@@ -99,14 +99,19 @@ func main() {
 		return
 	}
 
-	// 4. Resolve ltd-agent executable
-	binName := "ltd-agent"
+	// 4. Resolve bapedge (LTD) or ltd-agent executable
+	binName := "bapedge"
+	fallbackName := "ltd-agent"
 	if runtime.GOOS == "windows" {
-		binName = "ltd-agent.exe"
+		binName = "bapedge.exe"
+		fallbackName = "ltd-agent.exe"
 	}
 	ltdBin := findBinary(binName)
+	if _, err := os.Stat(ltdBin); err != nil {
+		ltdBin = findBinary(fallbackName)
+	}
 
-	// 5. Execute ltd-agent exec --source claude-code --json "$command"
+	// 5. Execute bapedge exec --source claude-code --json "$command"
 	cmd := exec.Command(ltdBin, "exec", "--source", "claude-code", "--json", command)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -147,10 +152,14 @@ func findBinary(name string) string {
 	if _, err := os.Stat(name); err == nil {
 		return "./" + name
 	}
-	// 2. Check sibling ltd-agent directory
-	relPath := filepath.Join("..", "ltd-agent", name)
+	// 2. Check sibling bap-edge and ltd-agent directory
+	relPath := filepath.Join("..", "bap-edge", name)
 	if _, err := os.Stat(relPath); err == nil {
 		return relPath
+	}
+	relPathLegacy := filepath.Join("..", "ltd-agent", name)
+	if _, err := os.Stat(relPathLegacy); err == nil {
+		return relPathLegacy
 	}
 	// 3. Check executable directory and ancestor folders
 	if exePath, err := os.Executable(); err == nil {
@@ -169,6 +178,11 @@ func findBinary(name string) string {
 		candRoot := filepath.Join(exeDir, "..", "..", name)
 		if _, err := os.Stat(candRoot); err == nil {
 			return candRoot
+		}
+		// In sibling bap-edge directory
+		candEdge := filepath.Join(exeDir, "..", "..", "..", "bap-edge", name)
+		if _, err := os.Stat(candEdge); err == nil {
+			return candEdge
 		}
 		// In sibling ltd-agent directory
 		candSibling := filepath.Join(exeDir, "..", "..", "..", "ltd-agent", name)

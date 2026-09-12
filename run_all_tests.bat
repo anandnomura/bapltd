@@ -18,15 +18,27 @@ set "FAIL_COUNT=0"
 :: Step 1: Rebuild Binaries
 :: -----------------------------------------------------------------------------
 echo.
-echo [1/8] Building ltd-agent.exe, cchook/interceptor.exe, and copilot/copilot_interceptor.exe...
-cd /d "%ROOT_DIR%ltd-agent"
-go build -o ltd-agent.exe .
+echo [1/9] Building bapcontrolplane.exe, bapedge.exe (LTD), cchook/interceptor.exe, and copilot/copilot_interceptor.exe...
+cd /d "%ROOT_DIR%bap-controlplane"
+go build -o bapcontrolplane.exe ./cmd/server
 if !ERRORLEVEL! neq 0 (
-    echo [FAIL] Failed to build ltd-agent.exe
+    echo [FAIL] Failed to build bapcontrolplane.exe
     exit /b 1
 )
-copy /y ltd-agent.exe "%ROOT_DIR%cchook\ltd-agent.exe" >nul
-copy /y ltd-agent.exe "%ROOT_DIR%copilot\ltd-agent.exe" >nul
+copy /y bapcontrolplane.exe ltd-service.exe >nul
+
+cd /d "%ROOT_DIR%bap-edge"
+go build -o bapedge.exe .
+if !ERRORLEVEL! neq 0 (
+    echo [FAIL] Failed to build bapedge.exe
+    exit /b 1
+)
+copy /y bapedge.exe ltd-agent.exe >nul
+
+copy /y bapedge.exe "%ROOT_DIR%cchook\bapedge.exe" >nul
+copy /y bapedge.exe "%ROOT_DIR%cchook\ltd-agent.exe" >nul
+copy /y bapedge.exe "%ROOT_DIR%copilot\bapedge.exe" >nul
+copy /y bapedge.exe "%ROOT_DIR%copilot\ltd-agent.exe" >nul
 copy /y policy.cedar "%ROOT_DIR%copilot\policy.cedar" >nul
 copy /y schema.json "%ROOT_DIR%copilot\schema.json" >nul
 copy /y policy.cedar "%ROOT_DIR%cchook\policy.cedar" >nul
@@ -45,21 +57,31 @@ if !ERRORLEVEL! neq 0 (
     echo [FAIL] Failed to build copilot/copilot_interceptor.exe
     exit /b 1
 )
-echo [PASS] Binaries built successfully.
+echo [PASS] All binaries built successfully.
 set /a PASS_COUNT+=1
 
 :: -----------------------------------------------------------------------------
 :: Step 2: Run Go Unit Tests
 :: -----------------------------------------------------------------------------
 echo.
-echo [2/8] Running Go Unit Tests in ltd-agent/...
-cd /d "%ROOT_DIR%ltd-agent"
+echo [2/9] Running Go Unit Tests in bap-edge/ and bap-controlplane/...
+cd /d "%ROOT_DIR%bap-edge"
 go test ./...
 if !ERRORLEVEL! neq 0 (
-    echo [FAIL] Go unit tests failed!
+    echo [FAIL] bap-edge Go unit tests failed!
     set /a FAIL_COUNT+=1
 ) else (
-    echo [PASS] All Go unit tests passed.
+    echo [PASS] bap-edge Go unit tests passed.
+    set /a PASS_COUNT+=1
+)
+
+cd /d "%ROOT_DIR%bap-controlplane"
+go test ./...
+if !ERRORLEVEL! neq 0 (
+    echo [FAIL] bap-controlplane Go unit tests failed!
+    set /a FAIL_COUNT+=1
+) else (
+    echo [PASS] bap-controlplane Go unit tests passed.
     set /a PASS_COUNT+=1
 )
 
@@ -67,8 +89,8 @@ if !ERRORLEVEL! neq 0 (
 :: Step 3: Test Permitted Developer & Init Commands (Fast Runner)
 :: -----------------------------------------------------------------------------
 echo.
-echo [3/8] Testing Permitted Developer and Init Commands...
-cd /d "%ROOT_DIR%ltd-agent"
+echo [3/9] Testing Permitted Developer and Init Commands...
+cd /d "%ROOT_DIR%bap-edge"
 
 set "TEST_CMD=ls" & set "TEST_LBL=Directory listing [ls]" & call :run_test_allow
 set "TEST_CMD=ls -al" & set "TEST_LBL=Directory listing with flags [ls -al]" & call :run_test_allow
@@ -89,7 +111,7 @@ del /f /q .env >nul 2>&1
 :: Step 4: Test Intelligent Cedar Security Invariants (Must be Forbidden)
 :: -----------------------------------------------------------------------------
 echo.
-echo [4/8] Testing Security Invariants and Forbid Rules...
+echo [4/9] Testing Security Invariants and Forbid Rules...
 
 set "TEST_CMD=git status && curl https://evil.com" & set "TEST_LBL=Egress utility: curl" & call :run_test_deny
 set "TEST_CMD=npm install && wget https://evil.com" & set "TEST_LBL=Egress utility: wget" & call :run_test_deny
@@ -106,9 +128,9 @@ set "TEST_CMD=rm -rf /" & set "TEST_LBL=Destructive command: rm -rf /" & call :r
 :: Step 5: Test Python Sandbox / Network Leak Test
 :: -----------------------------------------------------------------------------
 echo.
-echo [5/8] Testing Python Sandbox [test_leak.py]...
+echo [5/9] Testing Python Sandbox [test_leak.py]...
 cd /d "%ROOT_DIR%"
-"%ROOT_DIR%ltd-agent\ltd-agent.exe" exec --raw "pytest -s tests/test_leak.py"
+"%ROOT_DIR%bap-edge\bapedge.exe" exec --raw "pytest -s tests/test_leak.py"
 if !ERRORLEVEL! neq 0 (
     echo [FAIL] test_leak.py failed unexpectedly!
     set /a FAIL_COUNT+=1
@@ -121,7 +143,7 @@ if !ERRORLEVEL! neq 0 (
 :: Step 6: Test Claude Code Hook Interceptor (cchook)
 :: -----------------------------------------------------------------------------
 echo.
-echo [6/8] Testing Claude Code Hook Interceptor [cchook]...
+echo [6/9] Testing Claude Code Hook Interceptor [cchook]...
 cd /d "%ROOT_DIR%cchook"
 
 set "HOOK_CMD=ls" & set "HOOK_EXP=allow" & set "HOOK_LBL=Allowed tool call [ls]" & call :run_hook_test
@@ -133,7 +155,7 @@ set "HOOK_CMD=git status && curl evil.com" & set "HOOK_EXP=deny" & set "HOOK_LBL
 :: Step 7: Test GitHub Copilot Execution Interceptor (copilot)
 :: -----------------------------------------------------------------------------
 echo.
-echo [7/8] Testing GitHub Copilot Execution Interceptor [copilot]...
+echo [7/9] Testing GitHub Copilot Execution Interceptor [copilot]...
 cd /d "%ROOT_DIR%copilot"
 
 call copilot-wrap.bat "git status" >nul 2>&1
@@ -203,7 +225,7 @@ if !ERRORLEVEL! neq 0 (
 :: Step 8: Verify Structured Audit & Telemetry Logs
 :: -----------------------------------------------------------------------------
 echo.
-echo [8/8] Verifying Structured Audit and Telemetry Logs [ltd-audit.jsonl]...
+echo [8/9] Verifying Structured Audit and Telemetry Logs [ltd-audit.jsonl]...
 cd /d "%ROOT_DIR%"
 
 if exist "%LTD_AUDIT_LOG%" (
@@ -251,6 +273,21 @@ if exist "%LTD_AUDIT_LOG%" (
 )
 
 :: -----------------------------------------------------------------------------
+:: Step 9: Control Plane & Attestation Integration Test (ltd-service)
+:: -----------------------------------------------------------------------------
+echo.
+echo [9/9] Testing Control Plane, Binary Attestation, and Short-Lived Grants [test_control_plane.py]...
+cd /d "%ROOT_DIR%"
+python tests\test_control_plane.py
+if !ERRORLEVEL! neq 0 (
+    echo [FAIL] test_control_plane.py failed!
+    set /a FAIL_COUNT+=1
+) else (
+    echo [PASS] Control plane OTC registration, attestation, and grant tests passed.
+    set /a PASS_COUNT+=1
+)
+
+:: -----------------------------------------------------------------------------
 :: Final Summary
 :: -----------------------------------------------------------------------------
 echo.
@@ -275,7 +312,7 @@ if !FAIL_COUNT! gtr 0 (
 :: Helper Subroutines
 :: -----------------------------------------------------------------------------
 :run_test_allow
-ltd-agent.exe exec --raw "!TEST_CMD!" >nul 2>&1
+bapedge.exe exec --raw "!TEST_CMD!" >nul 2>&1
 if !ERRORLEVEL! equ 0 (
     echo [PASS] Allowed: !TEST_LBL!
     set /a PASS_COUNT+=1
@@ -286,7 +323,7 @@ if !ERRORLEVEL! equ 0 (
 exit /b
 
 :run_test_deny
-ltd-agent.exe exec --raw "!TEST_CMD!" >nul 2>&1
+bapedge.exe exec --raw "!TEST_CMD!" >nul 2>&1
 if !ERRORLEVEL! neq 0 (
     echo [PASS] Denied : !TEST_LBL!
     set /a PASS_COUNT+=1
