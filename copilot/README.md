@@ -11,6 +11,9 @@ copilot/
 ├── copilot_interceptor.go   # Standalone Go broker for Copilot commands
 ├── copilot-wrap.bat         # Windows batch wrapper for Copilot terminal tasks
 ├── copilot-wrap.sh          # POSIX shell wrapper for Linux / macOS
+├── copilot-wrap.bat         # Windows CMD batch wrapper
+├── copilot-wrap.ps1         # Windows / Cross-platform PowerShell wrapper
+├── copilot-wrap.sh          # POSIX shell wrapper for Linux / macOS / Git Bash
 └── README.md                # This integration guide
 ```
 
@@ -73,6 +76,7 @@ function ?? {
     $cmd = gh copilot suggest -t shell "$args"
     if ($cmd) {
         .\copilot\copilot-wrap.bat "$cmd"
+        & .\copilot\copilot-wrap.ps1 "$cmd"
     }
 }
 ```

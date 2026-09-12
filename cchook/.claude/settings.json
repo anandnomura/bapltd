@@ -2,8 +2,13 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash",
-        "command": ".claude/hooks/interceptor.sh"
+        "matcher": "Bash|Read|View|Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./cchook/interceptor.exe"
+          }
+        ]
       }
     ]
   }

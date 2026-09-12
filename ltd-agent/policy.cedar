@@ -17,6 +17,7 @@ permit (
         "mvn", "gradle", "cargo", "git",
         "java", "javac",
         "ls", "dir", "mkdir", "echo", "pwd", "cat", "type", "printenv",
+        "cmd", "powershell", "pwsh",
         "cmd", "powershell", "pwsh", "bash", "sh", "zsh",
         "grep", "findstr", "head", "tail", "wc", "sort", "uniq", "more"
     ].contains(context.executable)

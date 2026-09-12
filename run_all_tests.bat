@@ -181,6 +181,24 @@ if !ERRORLEVEL! neq 0 (
     set /a FAIL_COUNT+=1
 )
 
+powershell -ExecutionPolicy Bypass -File copilot-wrap.ps1 "git status" >nul 2>&1
+if !ERRORLEVEL! equ 0 (
+    echo [PASS] Copilot PowerShell: Allowed [git status]
+    set /a PASS_COUNT+=1
+) else (
+    echo [FAIL] Copilot PowerShell: Expected git status to be allowed
+    set /a FAIL_COUNT+=1
+)
+
+powershell -ExecutionPolicy Bypass -File copilot-wrap.ps1 "cat .env" >nul 2>&1
+if !ERRORLEVEL! neq 0 (
+    echo [PASS] Copilot PowerShell: Forbidden secret read [cat .env]
+    set /a PASS_COUNT+=1
+) else (
+    echo [FAIL] Copilot PowerShell: Expected cat .env to be blocked
+    set /a FAIL_COUNT+=1
+)
+
 :: -----------------------------------------------------------------------------
 :: Step 8: Verify Structured Audit & Telemetry Logs
 :: -----------------------------------------------------------------------------

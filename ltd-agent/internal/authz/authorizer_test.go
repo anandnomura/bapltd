@@ -262,4 +262,3 @@ func TestRealPolicyCedarFile(t *testing.T) {
 		}
 	}
 }
-
