@@ -294,4 +294,42 @@ cd /mnt/c/Users/User/pyprj/bapltd/cchook
 | Network Egress Leak | `pytest tests/test_leak.py` | `Network is unreachable` (PASS) | `0` | Linux / WSL (skips on Win) |
 | Claude Hook: Allowed | `echo '{"tool_input":{"command":"ls -al"}}'` | `permissionDecision: "allow"` | `0` | Windows, Linux/WSL, macOS |
 | Claude Hook: Forbidden | `echo '{"tool_input":{"command":"cat .env"}}'` | `permissionDecision: "deny"` | `0` | Windows, Linux/WSL, macOS |
-| **Complete Automated Suite** | `run_all_tests.bat` | **21 / 21 Tests PASS** | `0` | Windows |
+| Copilot: Allowed | `copilot-wrap.bat "git status"` | `allowed: true` | `0` | Windows, Linux/WSL, macOS |
+| Copilot: Forbidden | `copilot-wrap.bat "cat .env"` | `[COPILOT BLOCKED BY POLICY]` | `1` | Windows, Linux/WSL, macOS |
+| **Complete Automated Suite** | `run_all_tests.bat` | **37 / 37 Tests PASS** | `0` | Windows |
+
+---
+
+## Viewing and Analyzing Audit Logs
+
+All agent actions (Claude Code, GitHub Copilot, and CLI executions) append structured telemetry to `ltd-audit.jsonl` in the workspace root.
+
+### 1. View Formatted Table in PowerShell
+```powershell
+Get-Content .\ltd-audit.jsonl | ConvertFrom-Json | Select-Object timestamp, source, decision, full_command, duration_ms, reason | Format-Table -AutoSize
+```
+
+### 2. View Only Denials / Security Blocks
+```powershell
+Get-Content .\ltd-audit.jsonl | ConvertFrom-Json | Where-Object { $_.decision -eq 'deny' } | Format-Table timestamp, source, full_command, reason -AutoSize
+```
+
+### 3. Filter by Agent Source (`claude-code` or `copilot`)
+```powershell
+# Claude Code executions only
+Get-Content .\ltd-audit.jsonl | ConvertFrom-Json | Where-Object { $_.source -eq 'claude-code' } | Format-Table
+
+# GitHub Copilot executions only
+Get-Content .\ltd-audit.jsonl | ConvertFrom-Json | Where-Object { $_.source -eq 'copilot' } | Format-Table
+```
+
+### 4. Real-time Log Stream (Tail)
+```powershell
+Get-Content .\ltd-audit.jsonl -Wait -Tail 10
+```
+
+### 5. Windows Command Prompt (CMD)
+```cmd
+type ltd-audit.jsonl
+```
+
