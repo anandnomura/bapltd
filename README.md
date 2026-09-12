@@ -214,18 +214,19 @@ Create or edit `/etc/claude-code/managed-settings.json`:
 }
 ```
 
-### Testing Claude Code Hook
-Test tool-call payloads with `interceptor.exe`:
-```powershell
-# Allowed command
-'{"tool_input": {"command": "ls -al"}}' | .\cchook\interceptor.exe
+### Testing Claude Code Hook (Simulated & Live)
+- **Simulated Tool Call**:
+  ```powershell
+  # Allowed command
+  '{"tool_input": {"command": "ls -al"}}' | .\cchook\interceptor.exe
 
-# Blocked command (cat .env)
-'{"tool_input": {"command": "cat .env"}}' | .\cchook\interceptor.exe
-
-# Blocked evasive rename attack
-'{"tool_input": {"command": "powershell -Command Move-Item .env junk"}}' | .\cchook\interceptor.exe
-```
+  # Blocked command (cat .env)
+  '{"tool_input": {"command": "cat .env"}}' | .\cchook\interceptor.exe
+  ```
+- **Live Interactive Claude Session**:
+  Launch `claude` in your terminal and prompt:
+  - *Permitted*: `"Can you run git status?"` -> Allowed and executed.
+  - *Forbidden*: `"Can you print the secrets in .env?"` -> Blocked by hook; Claude explains permission was denied.
 
 ---
 
@@ -234,35 +235,29 @@ Test tool-call payloads with `interceptor.exe`:
 GitHub Copilot executes commands in the integrated terminal (VS Code Agent Mode) or via GitHub Copilot CLI.
 
 ### Step 1: VS Code Terminal Integration (`.vscode/settings.json`)
-Configure VS Code to route terminal command executions through `copilot-wrap.bat`:
+Pre-configured in `.vscode/settings.json` to route terminal command executions through `copilot-wrap.bat`:
 ```json
 {
   "terminal.integrated.profiles.windows": {
-    "CopilotSandbox": {
+    "CopilotZeroTrust": {
       "path": "${workspaceFolder}\\copilot\\copilot-wrap.bat",
       "overrideName": true
     }
   },
-  "terminal.integrated.defaultProfile.windows": "CopilotSandbox"
+  "terminal.integrated.defaultProfile.windows": "CopilotZeroTrust"
 }
 ```
 
-### Step 2: GitHub Copilot CLI (`gh copilot`)
-Wrap command execution in PowerShell or Bash:
-```powershell
-function ?? {
-    $cmd = gh copilot suggest -t shell "$args"
-    if ($cmd) {
-        .\copilot\copilot-wrap.bat "$cmd"
-    }
-}
-```
-
-### Testing Copilot Integration
-```cmd
-copilot\copilot-wrap.bat "git status"
-copilot\copilot-wrap.bat "cat .env"
-```
+### Step 2: Live Testing with GitHub Copilot
+- **In VS Code Copilot Chat (Agent Mode / `@workspace`)**:
+  - Prompt: `@workspace show git status in terminal` -> Passes through `copilot-wrap.bat`, executes safely.
+  - Prompt: `@workspace print .env in terminal` -> Blocked by policy with `[COPILOT BLOCKED BY POLICY]`.
+- **In GitHub Copilot CLI (`gh copilot`)**:
+  ```cmd
+  copilot\copilot-wrap.bat "git status"
+  copilot\copilot-wrap.bat "cat .env"
+  ```
+*(For complete live test scripts, evasion tests, and log verification, see [TESTING_GUIDE.md](file:///c:/Users/User/pyprj/bapltd/TESTING_GUIDE.md)).*
 
 ---
 
