@@ -35,8 +35,19 @@ forbid (
 ) when {
     context.full_command like "*curl*" ||
     context.full_command like "*wget*" ||
-    context.full_command like "*nc*" ||
-    context.full_command like "*ssh*" ||
+    context.full_command like "nc *" ||
+    context.full_command like "* nc *" ||
+    context.full_command like "*|nc*" ||
+    context.full_command like "*&nc*" ||
+    context.full_command like "*;nc*" ||
+    context.full_command like "nc" ||
+    context.full_command like "*netcat*" ||
+    context.full_command like "*ncat*" ||
+    context.full_command like "ssh *" ||
+    context.full_command like "* ssh *" ||
+    context.full_command like "*|ssh*" ||
+    context.full_command like "*&ssh*" ||
+    context.full_command like "*;ssh*" ||
     context.full_command like "*socat*" ||
     context.full_command like "*Invoke-WebRequest*" ||
     context.full_command like "*Invoke-RestMethod*" ||
