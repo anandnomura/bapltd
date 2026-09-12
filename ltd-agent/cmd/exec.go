@@ -6,22 +6,78 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
+	"ltd-agent/internal/audit"
 	"ltd-agent/internal/authz"
 	"ltd-agent/internal/sandbox"
 	"ltd-agent/pkg/types"
 )
 
+type execContext struct {
+	startTime    time.Time
+	source       string
+	auditLogPath string
+	fullCommand  string
+	executable   string
+	cmdArguments string
+	forceJSON    bool
+	forceRaw     bool
+}
+
+func (ec *execContext) exit(resp types.ExecResponse, code int) {
+	durationMs := time.Since(ec.startTime).Milliseconds()
+	decision := "deny"
+	if resp.Allowed {
+		decision = "allow"
+	}
+	entry := audit.AuditEntry{
+		Timestamp:   ec.startTime.UTC(),
+		Source:      ec.source,
+		ClientPID:   os.Getpid(),
+		Executable:  ec.executable,
+		Arguments:   ec.cmdArguments,
+		FullCommand: ec.fullCommand,
+		Decision:    decision,
+		Reason:      resp.Reason,
+		DurationMs:  durationMs,
+		ExitCode:    code,
+	}
+	if !resp.Allowed && entry.Reason == "" {
+		entry.Reason = "Blocked by security policy"
+	}
+	_ = audit.Log(entry, ec.auditLogPath)
+
+	exitWithResponse(resp, code, ec.forceJSON, ec.forceRaw)
+}
+
 // RunExec handles the 'exec' subcommand.
 func RunExec(args []string) {
+	startTime := time.Now()
+
 	fs := flag.NewFlagSet("exec", flag.ContinueOnError)
 	policyPath := fs.String("policy", "", "Path to policy.cedar file (defaults to ./policy.cedar)")
 	jsonFlag := fs.Bool("json", false, "Output in JSON format (default: auto-detect TTY)")
 	rawFlag := fs.Bool("raw", false, "Force output in raw text format")
 
+	defaultSource := os.Getenv("LTD_SOURCE")
+	if defaultSource == "" {
+		defaultSource = "cli"
+	}
+	sourceFlag := fs.String("source", defaultSource, "Identifier of agent invoking command (e.g. claude-code, copilot, cli)")
+	auditLogFlag := fs.String("audit-log", "", "Path to audit log file in JSON lines (defaults to LTD_AUDIT_LOG or ltd-audit.jsonl, 'off' to disable)")
+
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintf(os.Stderr, "Error parsing arguments: %v\n", err)
 		os.Exit(1)
+	}
+
+	ec := &execContext{
+		startTime:    startTime,
+		source:       *sourceFlag,
+		auditLogPath: *auditLogFlag,
+		forceJSON:    *jsonFlag,
+		forceRaw:     *rawFlag,
 	}
 
 	cmdArgs := fs.Args()
@@ -30,7 +86,7 @@ func RunExec(args []string) {
 			Allowed: false,
 			Reason:  "No command provided to exec. Usage: ltd-agent exec <shell_command>",
 		}
-		exitWithResponse(resp, 1, *jsonFlag, *rawFlag)
+		ec.exit(resp, 1)
 	}
 
 	// Join all remaining args as the shell command string, preserving quotes for arguments with spaces
@@ -45,6 +101,7 @@ func RunExec(args []string) {
 		fullCommand = strings.Join(parts, " ")
 	}
 	fullCommand = sandbox.CleanCommandString(fullCommand)
+	ec.fullCommand = fullCommand
 
 	// 1. Initialize Cedar authorizer
 	authorizer, err := authz.NewAuthorizer(*policyPath)
@@ -53,11 +110,13 @@ func RunExec(args []string) {
 			Allowed: false,
 			Reason:  fmt.Sprintf("Failed to load Cedar policy: %v", err),
 		}
-		exitWithResponse(resp, 1, *jsonFlag, *rawFlag)
+		ec.exit(resp, 1)
 	}
 
 	// 2. Parse command for Cedar context
 	executable, cmdArguments := sandbox.ParseCommand(fullCommand)
+	ec.executable = executable
+	ec.cmdArguments = cmdArguments
 
 	// 3. Evaluate command against Cedar policies
 	allowed, reason, err := authorizer.Evaluate(executable, fullCommand, cmdArguments)
@@ -66,7 +125,7 @@ func RunExec(args []string) {
 			Allowed: false,
 			Reason:  fmt.Sprintf("Error during Cedar policy evaluation: %v", err),
 		}
-		exitWithResponse(resp, 1, *jsonFlag, *rawFlag)
+		ec.exit(resp, 1)
 	}
 
 	if !allowed {
@@ -74,7 +133,7 @@ func RunExec(args []string) {
 			Allowed: false,
 			Reason:  reason,
 		}
-		exitWithResponse(resp, 1, *jsonFlag, *rawFlag)
+		ec.exit(resp, 1)
 	}
 
 	// 4. Execute sandboxed command (allowed by Cedar)
@@ -86,9 +145,9 @@ func RunExec(args []string) {
 	}
 	if execErr != nil {
 		resp.Reason = fmt.Sprintf("Command execution failed: %v", execErr)
-		exitWithResponse(resp, 1, *jsonFlag, *rawFlag)
+		ec.exit(resp, 1)
 	}
-	exitWithResponse(resp, 0, *jsonFlag, *rawFlag)
+	ec.exit(resp, 0)
 }
 
 func isTerminal(f *os.File) bool {
