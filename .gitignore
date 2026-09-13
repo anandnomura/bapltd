@@ -1,0 +1,24 @@
+# Binaries & Backups
+*.old
+*.tmp
+*.bak
+bapcontrolplane.old
+bapedge.old
+bapmcp.old
+build_manifest.json
+
+# Python cache & virtualenvs
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+venv/
+.venv/
+
+# Environment files
+.env.local
+.env.*.local
+
+# Logs
+*.log
+

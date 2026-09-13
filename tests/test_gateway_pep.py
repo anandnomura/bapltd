@@ -71,3 +71,42 @@ def test_gateway_governed_agent_lifecycle():
         body = json.loads(exc_info.value.read().decode())
         assert body.get("pep_decision") == "DENY"
 
+    # 4. Verify post-session deregistration on Control Plane
+    import time
+    time.sleep(0.5)
+    req_sess = urllib.request.Request(f"{CONTROL_PLANE_URL}/api/v1/sessions/{bap.session_id}")
+    with urllib.request.urlopen(req_sess, timeout=3) as resp:
+        assert resp.status == 200
+        sess_data = json.loads(resp.read().decode())
+        assert sess_data.get("status") == "closed", "Session was not marked closed"
+
+    req_agents = urllib.request.Request(f"{CONTROL_PLANE_URL}/api/v1/agents")
+    with urllib.request.urlopen(req_agents, timeout=3) as resp:
+        assert resp.status == 200
+        agents_data = json.loads(resp.read().decode())
+        agents_list = agents_data.get("agents", []) if isinstance(agents_data, dict) else agents_data
+        matching = [a for a in agents_list if a.get("app_id") == app_id]
+        assert any(a.get("status") == "deregistered" for a in matching), "Agent was not marked deregistered in registry"
+
+
+def test_gateway_pep_emits_audit_telemetry():
+    """Verify that Gateway PEP forwards both blocked rogue calls and permitted governed calls to Control Plane audit store."""
+    import time
+    time.sleep(0.3)
+    req_audit = urllib.request.Request(f"{CONTROL_PLANE_URL}/api/v1/audit/events")
+    with urllib.request.urlopen(req_audit, timeout=3) as resp:
+        assert resp.status == 200
+        data = json.loads(resp.read().decode())
+        events = data.get("events", [])
+        gateway_events = [e for e in events if e.get("source") == "bap-gateway-pep"]
+        assert len(gateway_events) > 0, "No audit events ingested from Gateway PEP"
+        
+        # Verify rogue denial exists
+        has_deny = any(e.get("decision") == "deny" for e in gateway_events)
+        assert has_deny, "Gateway PEP did not record rogue denial event in audit store"
+
+        # Verify governed allow exists
+        has_allow = any(e.get("decision") == "allow" for e in gateway_events)
+        assert has_allow, "Gateway PEP did not record governed allow event in audit store"
+
+

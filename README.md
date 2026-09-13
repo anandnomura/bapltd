@@ -1,10 +1,12 @@
 # BAP: Bounded Authority Plane for AI Agents
 
-**BAP** provides cryptographically bounded, zero-trust execution governance for AI agents such as **Claude Code**, **GitHub Copilot**, and automated workflow workers across Windows, Linux, WSL, and macOS.
+**BAP** provides cryptographically bounded, zero-trust execution governance for AI agents such as **Google Antigravity**, **Claude Code**, **GitHub Copilot**, **Cursor/Windsurf**, and automated Python SDK workflow workers across Windows, Linux, WSL, and macOS.
 
 The architecture formally converges into two core components:
-1. **`bapedge`**: The **Local Trusted Daemon (LTD)** process running at the edge (developer laptops, CI/CD runners, and worker hosts). It acts as the local Zero-Trust Execution Broker and Policy Decision/Enforcement Point (PDP/PEP), evaluating Cedar policies, isolating processes, sanitizing outputs, injecting scoped OBO tokens, and generating audit logs. *(Legacy alias: `ltd-agent`)*.
-2. **`bapcontrolplane`**: The central server-side control plane managing the Agent Registry, self-service One-Time Code (OTC) registration, binary image attestation, short-lived OBO JWT grants, dynamic Cedar policy distribution, and centralized tamper-evident audit ingestion. *(Legacy alias: `ltd-service`)*.
+1. **`bapedge`**: The **Local Trusted Daemon (LTD)** process running at the edge (developer laptops, CI/CD runners, and worker hosts). It acts as the local Zero-Trust Execution Broker and Policy Decision/Enforcement Point (PDP/PEP), evaluating Cedar policies, isolating processes, sanitizing outputs, injecting scoped OBO tokens, generating tamper-evident audit logs, and running as a native **Model Context Protocol (MCP)** server (`bapmcp.exe`). *(Legacy alias: `ltd-agent`)*.
+2. **`bapcontrolplane`**: The central server-side control plane managing the Agent Registry, self-service One-Time Code (OTC) registration, binary image attestation, short-lived OBO JWT grants, dynamic Cedar policy distribution, and centralized tamper-evident audit ingestion with a real-time **Live Workload Radar**. *(Legacy alias: `ltd-service`)*.
+
+> 📖 **Enterprise Integration Guide**: See [**`INTEGRATIONS.md`**](INTEGRATIONS.md) for complete, copy-pasteable setup guides for Google Antigravity, Claude Code, Claude Desktop, VS Code Copilot, Cursor, and Python SDK.
 
 ---
 

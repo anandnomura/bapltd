@@ -99,4 +99,32 @@ func TestSessionStore_Lifecycle(t *testing.T) {
 	if closed.CloseReason != "normal exit" {
 		t.Errorf("expected close_reason 'normal exit', got %q", closed.CloseReason)
 	}
+
+	// 7. Test PurgeStale
+	staleSess, _ := store.Start(SessionStartRequest{
+		SessionID: "sess-stale-test",
+		AppID:     "claude-code",
+	})
+	// Artificially age the session
+	staleSess.LastActiveAt = time.Now().UTC().Add(-2 * time.Hour)
+	purged := store.PurgeStale(1 * time.Hour)
+	if purged != 1 {
+		t.Errorf("expected 1 session purged, got %d", purged)
+	}
+	purgedSess, _ := store.Get("sess-stale-test")
+	if purgedSess.Status != "closed" {
+		t.Errorf("expected purged session to be closed, got %s", purgedSess.Status)
+	}
+
+	// 8. Test Reset
+	_, _ = store.Start(SessionStartRequest{SessionID: "sess-reset-1", AppID: "test"})
+	_, _ = store.Start(SessionStartRequest{SessionID: "sess-reset-2", AppID: "test"})
+	resetCount := store.Reset()
+	if resetCount < 2 {
+		t.Errorf("expected at least 2 sessions reset, got %d", resetCount)
+	}
+	r1, _ := store.Get("sess-reset-1")
+	if r1.Status != "closed" {
+		t.Errorf("expected reset session to be closed, got %s", r1.Status)
+	}
 }

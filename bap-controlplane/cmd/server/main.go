@@ -117,6 +117,10 @@ func main() {
 	}
 
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("[bapcontrolplane] Fatal server error: %v", err)
+		log.Printf("[bapcontrolplane] ERROR: Could not start server on %s: %v", addr, err)
+		log.Printf("[bapcontrolplane] Note: Port %d is already in use by another running instance or process.", *port)
+		log.Printf("[bapcontrolplane] Run 'powershell Get-NetTCPConnection -LocalPort %d' to check the occupying process.", *port)
+		time.Sleep(1 * time.Second)
+		os.Exit(1)
 	}
 }

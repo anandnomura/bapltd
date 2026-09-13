@@ -198,25 +198,24 @@ class BAPSession:
         return self
 
     def end(self, reason: str = "completed") -> None:
-        """Closes the session and notifies the BAP Control Plane if registered."""
+        """Closes the session and notifies the BAP Control Plane to deregister."""
         if not self.is_active:
             return
-        if self.server_registered:
-            payload = {
-                "session_id": self.session_id,
-                "reason": reason
-            }
-            url = f"{self.server_url}/api/v1/sessions/end"
-            try:
-                req = urllib.request.Request(
-                    url,
-                    data=json.dumps(payload).encode("utf-8"),
-                    headers={"Content-Type": "application/json"}
-                )
-                with urllib.request.urlopen(req, timeout=1) as resp:
-                    pass
-            except Exception:
+        payload = {
+            "session_id": self.session_id,
+            "reason": reason
+        }
+        url = f"{self.server_url}/api/v1/sessions/end"
+        try:
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"}
+            )
+            with urllib.request.urlopen(req, timeout=2) as resp:
                 pass
+        except Exception:
+            pass
         self.is_active = False
         self.server_registered = False
 

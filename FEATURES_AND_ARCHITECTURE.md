@@ -435,3 +435,98 @@ When running on an unmanaged personal laptop or sandbox without `apiKeyHelper`:
 - **Stage 4**: Filesystem User Home Directory Basename (`filepath.Base(os.UserHomeDir())`).
 - **Stage 5 (Worst-Case Fallback)**: Gracefully degrades to `"NA"` — ensuring the system **never panics, crashes, or blocks workflows**.
 
+---
+
+## 7. Model Context Protocol (MCP) Zero-Trust Governance & Pilot Registration
+
+### 7.1 Architecture & Workflow
+Modern AI developer tools (Claude Desktop, Claude Code, GitHub Copilot Chat, Cursor, Windsurf) standardize on the **Model Context Protocol (MCP)** using JSON-RPC 2.0 over `stdio`. BAP natively exposes this protocol via `bapmcp.exe` and `bapedge mcp`, removing the need for raw, unrestricted shell access:
+
+```
++-------------------------------------------------------------------------+
+|                  AI Agent (Claude Code / Copilot / Cursor)              |
++-------------------------------------------------------------------------+
+                                    |
+                    JSON-RPC 2.0 stdio (tools/call)
+                                    v
++-------------------------------------------------------------------------+
+|                     BAP MCP Server (bapmcp.exe)                         |
+|  - initialize / ping / tools/list / tools/call                          |
++-------------------------------------------------------------------------+
+                                    |
+                       In-Process Policy Check (<2ms)
+                                    v
++-------------------------------------------------------------------------+
+|                    Embedded AWS Cedar Policy Engine                     |
+|  - Evaluates executable and full command against strict forbid rules   |
+|  - Permits local dev tools (git, python, go, ollama localhost:11434)    |
+|  - Blocks exfiltration (evil.com), secret theft (.env), reverse shells  |
++-------------------------------------------------------------------------+
+                    |                                  |
+                [ALLOWED]                          [DENIED]
+                    v                                  v
++------------------------------------+   +------------------------------------+
+|       Kernel Sandbox Execution     |   | Instant Fail-Secure Denial (isError) |
+| - Injects CORP_OBO_TOKEN           |   | - Actionable remediation suggestion|
+| - Captures stdout/stderr           |   | - Guides agent to compliant paths  |
++------------------------------------+   +------------------------------------+
+                    |                                  |
+                    +----------------+-----------------+
+                                     |
+                         Audit Telemetry Stream
+                                     v
++-------------------------------------------------------------------------+
+|           Tamper-Evident SHA-256 Audit Log (ltd-audit.jsonl)            |
+|       & Real-Time Control Plane Telemetry (http://localhost:8080)       |
++-------------------------------------------------------------------------+
+```
+
+### 7.2 Exposed MCP Tools
+
+| Tool Name | Parameters | Purpose |
+| :--- | :--- | :--- |
+| `bap_execute` | `command` *(string, required)*<br>`reason` *(string, optional)* | Executes command inside BAP kernel sandbox governed by Cedar policies. |
+| `bap_explain_policy` | `command` *(string, required)* | Dry-run pre-flight check returning permit/deny decision and suggestion without execution. |
+| `bap_status` | *(none)* | Returns SPIFFE ID, active session ID, control plane endpoint, and active invariants. |
+
+### 7.3 Instant Actionable Suggestions
+When an agent or prompt injection triggers a policy violation, BAP does not return a cryptic exit code. It provides an immediate, actionable `suggestion`:
+- **External Network Egress**: Explains that direct external calls are blocked and directs the agent to local Ollama (`localhost:11434`) or the governed Gateway PEP (`localhost:9090`).
+- **Secret Theft (`.env`)**: Explains that `.env` files are protected and directs the agent to sandboxed environment variables.
+- **Obfuscation (`-EncodedCommand`)**: Explains that Base64 obfuscation is prohibited for defense evasion.
+- **Raw Sockets (`System.Net.Sockets`)**: Directs all outbound communication through the Gateway PEP.
+
+### 7.4 Client Registration Quick-Reference
+
+#### Claude Code (CLI)
+```bash
+claude mcp add bap-zero-trust -- C:\Users\User\pyprj\bapltd\bapmcp.exe
+```
+
+#### Claude Desktop (`%APPDATA%\Claude\claude_desktop_config.json`)
+```json
+{
+  "mcpServers": {
+    "bap-zero-trust": {
+      "command": "C:\\Users\\User\\pyprj\\bapltd\\bapmcp.exe",
+      "args": []
+    }
+  }
+}
+```
+
+#### GitHub Copilot in VS Code (`.vscode/mcp.json`)
+```json
+{
+  "servers": {
+    "bap-zero-trust": {
+      "command": "C:\\Users\\User\\pyprj\\bapltd\\bapmcp.exe",
+      "args": []
+    }
+  }
+}
+```
+
+#### Cursor / Windsurf Settings
+- **Name**: `bap-zero-trust`
+- **Command**: `C:\Users\User\pyprj\bapltd\bapmcp.exe`

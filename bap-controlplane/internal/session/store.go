@@ -257,3 +257,39 @@ func (s *Store) Get(sessionID string) (*Session, error) {
 	cp.Events = eventsCopy
 	return &cp, nil
 }
+
+// PurgeStale marks any active sessions that have been idle for longer than maxIdle as closed.
+func (s *Store) PurgeStale(maxIdle time.Duration) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now().UTC()
+	closed := 0
+	for _, sess := range s.sessions {
+		if sess.Status == "active" && now.Sub(sess.LastActiveAt) > maxIdle {
+			sess.Status = "closed"
+			sess.EndedAt = &now
+			sess.CloseReason = "idle_timeout"
+			closed++
+		}
+	}
+	return closed
+}
+
+// Reset marks all active sessions as closed.
+func (s *Store) Reset() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now().UTC()
+	closed := 0
+	for _, sess := range s.sessions {
+		if sess.Status == "active" {
+			sess.Status = "closed"
+			sess.EndedAt = &now
+			sess.CloseReason = "system_reset"
+			closed++
+		}
+	}
+	return closed
+}

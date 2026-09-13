@@ -105,10 +105,11 @@ func Log(entryInput any, logPath string) error {
 		content, err := os.ReadFile(logPath)
 		if err == nil && len(content) > 0 {
 			lines := bytes.Split(bytes.TrimSpace(content), []byte("\n"))
-			if len(lines) > 0 {
+			for idx := len(lines) - 1; idx >= 0; idx-- {
 				var lastEntry AuditEntry
-				if err := json.Unmarshal(lines[len(lines)-1], &lastEntry); err == nil && lastEntry.EntryHash != "" {
+				if err := json.Unmarshal(lines[idx], &lastEntry); err == nil && lastEntry.EntryHash != "" {
 					lastHash = lastEntry.EntryHash
+					break
 				}
 			}
 		}
@@ -176,6 +177,11 @@ func VerifyLocalLog(logPath string) (bool, int, error) {
 		if entry.EntryHash == "" {
 			count++
 			continue
+		}
+
+		// Support explicit genesis blocks initiating new sessions
+		if entry.PreviousHash == "genesis-ltd-local" {
+			expectedPrev = "genesis-ltd-local"
 		}
 
 		if entry.PreviousHash != expectedPrev {

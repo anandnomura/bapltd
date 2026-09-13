@@ -74,6 +74,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/v1/audit/events", s.handleListAuditEvents)
 	s.mux.HandleFunc("/api/v1/sessions/start", s.handleSessionStart)
 	s.mux.HandleFunc("/api/v1/sessions/end", s.handleSessionEnd)
+	s.mux.HandleFunc("/api/v1/sessions/reset", s.handleResetSessions)
 	s.mux.HandleFunc("/api/v1/sessions", s.handleListSessions)
 	s.mux.HandleFunc("/api/v1/sessions/", s.handleGetSession)
 	s.mux.HandleFunc("/api/v1/auth/envoy", s.handleEnvoyExtAuthz)
@@ -534,6 +535,13 @@ func (s *Server) handleInspectorData(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if s.sessionStore != nil {
+		s.sessionStore.PurgeStale(60 * time.Second)
+	}
+	if s.registry != nil {
+		s.registry.PurgeStale(60 * time.Second)
+	}
+
 	agents := s.registry.List()
 	centralEvents := s.auditStore.List(200)
 	valid, chainErr := s.auditStore.VerifyChain()
@@ -632,14 +640,38 @@ func (s *Server) handleSessionEnd(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "session_id is required")
 		return
 	}
+	sess, getErr := s.sessionStore.Get(req.SessionID)
 	if err := s.sessionStore.End(req.SessionID, req.Reason); err != nil {
 		writeError(w, http.StatusNotFound, "Failed to end session: "+err.Error())
 		return
+	}
+	if getErr == nil && sess != nil && s.registry != nil {
+		s.registry.EndSessionAgent(sess.AppID, sess.InstanceID)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"session_id": req.SessionID,
 		"status":     "closed",
 		"ended_at":   time.Now().UTC(),
+	})
+}
+
+func (s *Server) handleResetSessions(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	closedSess := 0
+	if s.sessionStore != nil {
+		closedSess = s.sessionStore.Reset()
+	}
+	closedAgents := 0
+	if s.registry != nil {
+		closedAgents = s.registry.Reset()
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"message":         "All sessions and agents reset cleanly",
+		"closed_sessions": closedSess,
+		"closed_agents":   closedAgents,
 	})
 }
 

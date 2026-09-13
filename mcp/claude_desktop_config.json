@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "bap-zero-trust": {
+      "command": "C:\\Users\\User\\pyprj\\bapltd\\bapmcp.exe",
+      "args": [],
+      "env": {
+        "BAP_SESSION_ID": "sess-claude-mcp",
+        "LTD_SOURCE": "claude-desktop"
+      }
+    }
+  }
+}
+

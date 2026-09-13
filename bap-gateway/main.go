@@ -87,7 +87,10 @@ func main() {
 	}
 
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("[bap-gateway] Fatal server error: %v", err)
+		log.Printf("[bap-gateway] ERROR: Could not start gateway on %s: %v", addr, err)
+		log.Printf("[bap-gateway] Note: Port %d is already in use by another running instance or process.", cfg.Port)
+		time.Sleep(1 * time.Second)
+		os.Exit(1)
 	}
 }
 
@@ -112,6 +115,8 @@ func pepGuard(cfg GatewayConfig, next http.HandlerFunc) http.HandlerFunc {
 			durationMs := time.Since(start).Milliseconds()
 			log.Printf("[BAP-GATEWAY-PEP] [BLOCKED ROGUE AGENT] 401 Unauthorized | Path: %s | Source: %s | Latency: %dms | Reason: Missing BAP Grant Bearer Token",
 				r.URL.Path, r.RemoteAddr, durationMs)
+
+			emitGatewayAudit(cfg, "", "rogue-agent", "unknown", r.URL.Path, r.Method, "deny", "BLOCKED ROGUE AGENT: Missing BAP Grant Bearer Token at Gateway PEP (HTTP 401)", durationMs, 401)
 
 			writeJSON(w, http.StatusUnauthorized, map[string]any{
 				"error":         "AccessDenied",
@@ -146,6 +151,8 @@ func pepGuard(cfg GatewayConfig, next http.HandlerFunc) http.HandlerFunc {
 			log.Printf("[BAP-GATEWAY-PEP] [BLOCKED FORBIDDEN] 403 Forbidden | Path: %s | Source: %s | Latency: %dms | Reason: %s",
 				r.URL.Path, r.RemoteAddr, durationMs, reason)
 
+			emitGatewayAudit(cfg, "", "unauthorized-agent", "unknown", r.URL.Path, r.Method, "deny", "BLOCKED FORBIDDEN: "+reason+" (HTTP 403)", durationMs, 403)
+
 			writeJSON(w, http.StatusForbidden, map[string]any{
 				"error":         "Forbidden",
 				"gateway":       "bap-gateway-pep",
@@ -160,11 +167,49 @@ func pepGuard(cfg GatewayConfig, next http.HandlerFunc) http.HandlerFunc {
 		log.Printf("[BAP-GATEWAY-PEP] [PERMIT GOVERNED] 200 OK | Path: %s | Workload: %s | App: %s | Latency: %dms",
 			r.URL.Path, claims.Sub, claims.AppID, durationMs)
 
+		sessID := r.Header.Get("X-BAP-Session-ID")
+		emitGatewayAudit(cfg, sessID, claims.Sub, claims.AppID, r.URL.Path, r.Method, "allow", "GATEWAY PEP: Verified BAP Grant for "+claims.Sub+" (HTTP 200)", durationMs, 200)
+
 		r.Header.Set("X-BAP-Verified-Workload", claims.Sub)
 		r.Header.Set("X-BAP-Verified-App", claims.AppID)
 
 		next(w, r)
 	}
+}
+
+func emitGatewayAudit(cfg GatewayConfig, sessionID, agentID, appID, path, method, decision, reason string, durationMs int64, exitCode int) {
+	ev := map[string]any{
+		"event_id":     fmt.Sprintf("ev-pep-%d", time.Now().UnixNano()),
+		"session_id":   sessionID,
+		"agent_id":     agentID,
+		"timestamp":    time.Now().UTC().Format(time.RFC3339),
+		"source":       "bap-gateway-pep",
+		"executable":   fmt.Sprintf("%s %s", method, path),
+		"full_command": fmt.Sprintf("PEP GATEWAY %s %s [%s]", method, path, strings.ToUpper(decision)),
+		"decision":     decision,
+		"reason":       reason,
+		"duration_ms":  durationMs,
+		"exit_code":    exitCode,
+	}
+
+	go func() {
+		// 1. Post to Control Plane
+		if cfg.ControlPlane != "" {
+			data, _ := json.Marshal(ev)
+			client := &http.Client{Timeout: 2 * time.Second}
+			_, _ = client.Post(cfg.ControlPlane+"/api/v1/audit/ingest", "application/json", bytes.NewReader(data))
+		}
+
+		// 2. Append to local ltd-audit.jsonl
+		for _, auditFile := range []string{"ltd-audit.jsonl", "../ltd-audit.jsonl"} {
+			if f, err := os.OpenFile(auditFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); err == nil {
+				data, _ := json.Marshal(ev)
+				_, _ = f.Write(append(data, '\n'))
+				_ = f.Close()
+				break
+			}
+		}
+	}()
 }
 
 func validateGrant(cfg GatewayConfig, token, resource string) (bool, *TokenClaims, error) {

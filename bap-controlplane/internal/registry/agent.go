@@ -259,3 +259,57 @@ func (s *Store) EnsureSessionAgent(appID, instanceID, spiffeID, userEmail, hostn
 	s.agents[agentID] = agent
 	return agent
 }
+
+// EndSessionAgent updates the registry status to deregistered when a session closes.
+func (s *Store) EndSessionAgent(appID, instanceID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now()
+	for _, a := range s.agents {
+		if strings.EqualFold(a.AppID, appID) && (instanceID == "" || a.InstanceID == instanceID || instanceID == "default") {
+			a.Status = "deregistered"
+			a.LastHeartbeatAt = &now
+		}
+	}
+}
+
+// PurgeStale marks active agents whose last heartbeat/activity exceeds maxIdle as deregistered.
+func (s *Store) PurgeStale(maxIdle time.Duration) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now()
+	count := 0
+	for _, a := range s.agents {
+		if a.Status == types.StatusActive {
+			lastAct := a.CreatedAt
+			if a.LastHeartbeatAt != nil {
+				lastAct = *a.LastHeartbeatAt
+			}
+			if now.Sub(lastAct) > maxIdle {
+				a.Status = "deregistered"
+				a.LastHeartbeatAt = &now
+				count++
+			}
+		}
+	}
+	return count
+}
+
+// Reset marks all active agents as deregistered.
+func (s *Store) Reset() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now()
+	count := 0
+	for _, a := range s.agents {
+		if a.Status == types.StatusActive {
+			a.Status = "deregistered"
+			a.LastHeartbeatAt = &now
+			count++
+		}
+	}
+	return count
+}

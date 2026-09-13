@@ -29,6 +29,9 @@ type execContext struct {
 }
 
 func (ec *execContext) exit(resp types.ExecResponse, code int) {
+	if !resp.Allowed && resp.Suggestion == "" {
+		resp.Suggestion = GenerateSuggestion(ec.fullCommand, ec.executable, resp.Reason)
+	}
 	durationMs := time.Since(ec.startTime).Milliseconds()
 	decision := "deny"
 	if resp.Allowed {
@@ -57,7 +60,7 @@ func (ec *execContext) exit(resp types.ExecResponse, code int) {
 	_ = audit.Log(&entry, ec.auditLogPath)
 	_, _, _ = audit.Transmit(entry, ec.serverURL, ec.auditLogPath)
 
-	exitWithResponse(resp, code, ec.forceJSON, ec.forceRaw)
+	exitWithResponse(resp, code, ec.forceJSON, ec.forceRaw, isAgentEnvironment(ec.source))
 }
 
 // RunExec handles the 'exec' subcommand.
@@ -178,17 +181,45 @@ func isTerminal(f *os.File) bool {
 	return (stat.Mode() & os.ModeCharDevice) != 0
 }
 
-func exitWithResponse(resp types.ExecResponse, code int, forceJSON, forceRaw bool) {
-	outputJSON := forceJSON || (!forceRaw && !isTerminal(os.Stdout))
+func isAgentEnvironment(source string) bool {
+	if source != "" && source != "cli" {
+		return true
+	}
+	agentEnvs := []string{
+		"BAP_SESSION_ID",
+		"LTD_SESSION_ID",
+		"ANTIGRAVITY",
+		"AGY_SESSION",
+		"GEMINI_AGENT",
+		"CLAUDE_CODE",
+		"COPILOT_AGENT",
+		"AI_AGENT",
+		"AGENT_NAME",
+		"AUTO_GPT",
+	}
+	for _, envKey := range agentEnvs {
+		if os.Getenv(envKey) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func exitWithResponse(resp types.ExecResponse, code int, forceJSON, forceRaw bool, isAgent bool) {
+	outputJSON := forceJSON || (!forceRaw && (!isTerminal(os.Stdout) || isAgent))
 
 	if outputJSON {
 		printJSONAndExit(resp, code)
 		return
 	}
 
-	// Human-friendly / beautified output (what `jq -r .output` does)
+	// Human-friendly / interactive terminal output
 	if !resp.Allowed {
 		fmt.Fprintf(os.Stderr, "[DENIED] %s\n", resp.Reason)
+		if resp.Suggestion != "" {
+			fmt.Fprintf(os.Stderr, "[SUGGESTION] %s\n", resp.Suggestion)
+		}
+		fmt.Fprintf(os.Stderr, "[TIP] Pass '-json' to receive machine-readable structured JSON responses.\n")
 		os.Exit(code)
 	}
 
@@ -197,8 +228,53 @@ func exitWithResponse(resp types.ExecResponse, code int, forceJSON, forceRaw boo
 	}
 	if resp.Reason != "" {
 		fmt.Fprintf(os.Stderr, "[ERROR] %s\n", resp.Reason)
+		if resp.Suggestion != "" {
+			fmt.Fprintf(os.Stderr, "[SUGGESTION] %s\n", resp.Suggestion)
+		}
 	}
 	os.Exit(code)
+}
+
+// GenerateSuggestion produces intelligent, actionable advice when a command is denied.
+func GenerateSuggestion(fullCmd, execName, reason string) string {
+	lower := strings.ToLower(fullCmd)
+
+	if strings.Contains(lower, "invoke-restmethod") || strings.Contains(lower, "invoke-webrequest") ||
+		strings.Contains(lower, "curl") || strings.Contains(lower, "wget") ||
+		strings.Contains(lower, "iwr ") || strings.Contains(lower, "irm ") ||
+		strings.Contains(lower, "downloadstring") || strings.Contains(lower, "downloadfile") {
+		return "External network egress is restricted by Zero-Trust policy. For local LLM inference, use 'http://localhost:11434' or 'http://127.0.0.1:11434'. For external banking APIs or web services, route through the BAP Gateway PEP (http://localhost:9090) with an authorized BAP Grant."
+	}
+
+	if strings.Contains(lower, ".env") {
+		return "Direct access or tampering with .env credential files is strictly prohibited. Access required configuration via sandboxed environment variables (e.g., $env:VARIABLE) or the corporate Secret Store."
+	}
+
+	if strings.Contains(lower, ".ssh") || strings.Contains(lower, ".aws") || strings.Contains(lower, "id_rsa") {
+		return "Direct access to private developer credentials (~/.ssh, ~/.aws) is blocked. Use the injected corporate identity token (CORP_OBO_TOKEN) or SPIFFE workload identities provided by BAP."
+	}
+
+	if strings.Contains(lower, "-encodedcommand") || strings.Contains(lower, "-enc ") || strings.Contains(lower, "-encoded ") {
+		return "Base64-encoded PowerShell execution is blocked to prevent defense evasion. Provide the decoded PowerShell script or command directly."
+	}
+
+	if strings.Contains(lower, "tcpclient") || strings.Contains(lower, "system.net.sockets") || strings.Contains(lower, "udpclient") {
+		return "Opening raw network sockets directly on the host is prohibited on edge agents. Egress must be governed through the BAP Gateway PEP."
+	}
+
+	if strings.Contains(lower, "set-mppreference") || strings.Contains(lower, "disablerealtimemonitoring") {
+		return "Disabling or altering host security controls and antivirus preferences is strictly prohibited."
+	}
+
+	if strings.Contains(lower, "remove-item") || strings.Contains(lower, "rmdir") || strings.Contains(lower, "rd /s") {
+		return "Mass recursive deletion targeting system paths is blocked to protect workspace integrity."
+	}
+
+	if strings.Contains(lower, "comsvcs") || strings.Contains(lower, "minidump") || strings.Contains(lower, "sekurlsa") {
+		return "Process memory dumping and credential harvesting techniques are blocked by zero-trust invariant."
+	}
+
+	return "Command executable is not in the approved developer whitelist. Permitted toolchains include: python, git, go, npm, maven, gradle, cargo, java, powershell, cmd, and standard inspection utilities."
 }
 
 func printJSONAndExit(resp types.ExecResponse, code int) {

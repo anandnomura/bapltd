@@ -47,9 +47,10 @@ type HookResponse struct {
 
 // ExecResponse represents the JSON output from ltd-agent exec.
 type ExecResponse struct {
-	Allowed bool   `json:"allowed"`
-	Output  string `json:"output,omitempty"`
-	Reason  string `json:"reason,omitempty"`
+	Allowed    bool   `json:"allowed"`
+	Output     string `json:"output,omitempty"`
+	Reason     string `json:"reason,omitempty"`
+	Suggestion string `json:"suggestion,omitempty"`
 }
 
 func main() {
@@ -157,9 +158,13 @@ func main() {
 	} else {
 		reason := execResp.Reason
 		if reason == "" {
-			reason = "Command execution denied by ltd-agent Cedar security policy"
+			reason = "Command execution denied by bapedge Cedar security policy"
 		}
-		outputDecision("deny", reason, reason)
+		contextMsg := reason
+		if execResp.Suggestion != "" {
+			contextMsg = fmt.Sprintf("%s. SUGGESTION: %s", reason, execResp.Suggestion)
+		}
+		outputDecision("deny", reason, contextMsg)
 	}
 }
 

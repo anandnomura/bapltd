@@ -3,7 +3,6 @@ package authz
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -58,12 +57,14 @@ func NewAuthorizer(policyPath string) (*Authorizer, error) {
 			if err := s.UnmarshalJSON(schemaData); err == nil {
 				if _, err := s.Resolve(); err == nil {
 					authz.schema = &s
-					log.Printf("[authz] Loaded and validated Cedar schema from %s", resolvedSchemaPath)
+					if os.Getenv("BAP_DEBUG") != "" {
+						fmt.Fprintf(os.Stderr, "[authz] Loaded and validated Cedar schema from %s\n", resolvedSchemaPath)
+					}
 				} else {
-					log.Printf("[authz] Warning: Failed to resolve schema %s: %v", resolvedSchemaPath, err)
+					fmt.Fprintf(os.Stderr, "[authz] Warning: Failed to resolve schema %s: %v\n", resolvedSchemaPath, err)
 				}
 			} else {
-				log.Printf("[authz] Warning: Failed to parse schema %s: %v", resolvedSchemaPath, err)
+				fmt.Fprintf(os.Stderr, "[authz] Warning: Failed to parse schema %s: %v\n", resolvedSchemaPath, err)
 			}
 		}
 	}

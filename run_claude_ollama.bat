@@ -2,7 +2,7 @@
 setlocal EnableDelayedExpansion
 
 echo ===============================================================================
-echo   Launching Claude Code with Local Ollama & BAP Edge Interceptor
+echo   Launching Claude Code with Local Ollama ^& BAP Edge Interceptor
 echo ===============================================================================
 
 :: 1. Set Anthropic API redirection to local Ollama instance
@@ -75,8 +75,8 @@ if "%~1"=="" (
     echo.
     call %CLAUDE_BIN% --model %OLLAMA_MODEL%
 ) else (
-    echo [*] Executing prompt: "%*"
-    call %CLAUDE_BIN% --model %OLLAMA_MODEL% -p "%*"
+    echo [*] Executing prompt: %~1
+    call %CLAUDE_BIN% --dangerously-skip-permissions --model %OLLAMA_MODEL% -p %1 <nul
 )
 
 :: 7. Notify BAP Control Plane of Session End (with strict 2s timeout so it never hangs)

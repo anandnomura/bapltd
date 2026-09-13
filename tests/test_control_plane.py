@@ -466,6 +466,82 @@ def main():
             assert sess_end_resp["status"] == "closed"
             print(f"[PASS] 10c-2. Session {sess_id} successfully closed upon agent shutdown")
 
+            # 10c-3. Verify agent registry marks agent deregistered and dashboard live count is 0
+            status, agents_resp = http_get_json(f"{base_url}/api/v1/agents")
+            assert status == 200
+            agents_list = agents_resp.get("agents", []) if isinstance(agents_resp, dict) else agents_resp
+            matching_agents = [a for a in agents_list if a.get("app_id") == "claude-code"]
+            assert any(a.get("status") == "deregistered" for a in matching_agents), "Agent was not marked deregistered in registry"
+
+            status, inspector_resp = http_get_json(f"{base_url}/api/v1/inspector/data")
+            assert status == 200
+            active_sessions = [s for s in inspector_resp.get("sessions", []) if s.get("status") == "active"]
+            assert not any(s.get("session_id") == sess_id for s in active_sessions), "Session still active on inspector dashboard"
+            print(f"[PASS] 10c-3. Agent cleanly deregistered from registry and Live Radar")
+
+            # 10d. Antigravity IDE First-Class Session & Live Workload Radar Presence
+            ag_sess_id = f"sess-antigravity-{uuid.uuid4().hex[:8]}"
+            status, ag_start = http_post_json(f"{base_url}/api/v1/sessions/start", {
+                "session_id": ag_sess_id,
+                "app_id": "antigravity",
+                "client_pid": os.getpid(),
+                "hostname": "antigravity-dev-box"
+            })
+            assert status == 200, f"Antigravity session start failed: {status}"
+            assert ag_start["status"] == "active"
+            print(f"[*] Started Antigravity session: {ag_sess_id}")
+
+            # Verify Antigravity appears in Live Inspector radar
+            status, ag_radar = http_get_json(f"{base_url}/api/v1/inspector/data")
+            assert status == 200
+            active_ag = [s for s in ag_radar.get("sessions", []) if s.get("session_id") == ag_sess_id]
+            assert len(active_ag) == 1, "Antigravity session missing from Live Workload Radar"
+            assert active_ag[0]["app_id"] == "antigravity"
+
+            # Stream allowed & denied commands from Antigravity
+            old_test_mode = os.environ.get("BAP_TEST_MODE")
+            if "BAP_TEST_MODE" in os.environ:
+                del os.environ["BAP_TEST_MODE"]
+            try:
+                ag_exec_allow = subprocess.run([
+                    agent_exe, "exec",
+                    "--source", "antigravity",
+                    "--session-id", ag_sess_id,
+                    "--server", base_url,
+                    "--raw", "git status"
+                ], capture_output=True, text=True)
+                assert ag_exec_allow.returncode == 0
+
+                ag_exec_deny = subprocess.run([
+                    agent_exe, "exec",
+                    "--source", "antigravity",
+                    "--session-id", ag_sess_id,
+                    "--server", base_url,
+                    "--raw", "type .env"
+                ], capture_output=True, text=True)
+                assert ag_exec_deny.returncode != 0
+            finally:
+                if old_test_mode is not None:
+                    os.environ["BAP_TEST_MODE"] = old_test_mode
+
+            time.sleep(0.3)
+
+            # Query Antigravity session telemetry
+            status, ag_detail = http_get_json(f"{base_url}/api/v1/sessions/{ag_sess_id}")
+            assert status == 200
+            assert ag_detail["total_events"] >= 2, f"Expected >= 2 Antigravity events, got {ag_detail['total_events']}"
+            assert ag_detail["allowed_count"] >= 1
+            assert ag_detail["denied_count"] >= 1
+            print(f"[PASS] 10d-1. Antigravity IDE workload enrolled and streaming telemetry to Live Radar ({ag_detail['total_events']} events)")
+
+            # End Antigravity session
+            status, ag_end = http_post_json(f"{base_url}/api/v1/sessions/end", {
+                "session_id": ag_sess_id,
+                "reason": "antigravity paired session finished"
+            })
+            assert status == 200
+            print(f"[PASS] 10d-2. Antigravity session {ag_sess_id} deregistered cleanly from control plane")
+
             # 11. Control Plane DOWN Resilience (Operating with Prior Secure Settings)
             tmp_policy_dir = tempfile.mkdtemp(prefix="bap_policy_cache_")
             try:

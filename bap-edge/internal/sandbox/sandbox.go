@@ -31,7 +31,7 @@ func CleanCommandString(s string) string {
 		inner := strings.TrimSpace(s[1 : len(s)-1])
 		if !strings.HasPrefix(inner, "\"") {
 			parts := strings.Fields(inner)
-			if len(parts) > 1 {
+			if len(parts) >= 1 {
 				s = inner
 			}
 		}
@@ -52,16 +52,34 @@ func ParseCommand(cmdStr string) (string, string) {
 	if strings.HasPrefix(trimmed, "\"") {
 		endIdx := strings.Index(trimmed[1:], "\"")
 		if endIdx != -1 {
-			rawExec = trimmed[1 : endIdx+1]
-			args = strings.TrimSpace(trimmed[endIdx+2:])
+			candidate := trimmed[1 : endIdx+1]
+			lowerCand := strings.ToLower(candidate)
+			if strings.Contains(candidate, " ") && !strings.HasSuffix(lowerCand, ".exe") && !strings.ContainsAny(candidate, "/\\") {
+				parts := strings.Fields(candidate)
+				rawExec = parts[0]
+				rest := strings.TrimSpace(candidate[len(parts[0]):])
+				args = strings.TrimSpace(rest + " " + trimmed[endIdx+2:])
+			} else {
+				rawExec = candidate
+				args = strings.TrimSpace(trimmed[endIdx+2:])
+			}
 		} else {
 			rawExec = strings.Trim(trimmed, "\"")
 		}
 	} else if strings.HasPrefix(trimmed, "'") {
 		endIdx := strings.Index(trimmed[1:], "'")
 		if endIdx != -1 {
-			rawExec = trimmed[1 : endIdx+1]
-			args = strings.TrimSpace(trimmed[endIdx+2:])
+			candidate := trimmed[1 : endIdx+1]
+			lowerCand := strings.ToLower(candidate)
+			if strings.Contains(candidate, " ") && !strings.HasSuffix(lowerCand, ".exe") && !strings.ContainsAny(candidate, "/\\") {
+				parts := strings.Fields(candidate)
+				rawExec = parts[0]
+				rest := strings.TrimSpace(candidate[len(parts[0]):])
+				args = strings.TrimSpace(rest + " " + trimmed[endIdx+2:])
+			} else {
+				rawExec = candidate
+				args = strings.TrimSpace(trimmed[endIdx+2:])
+			}
 		} else {
 			rawExec = strings.Trim(trimmed, "'")
 		}
@@ -113,20 +131,46 @@ func ParseCommand(cmdStr string) (string, string) {
 func BuildExecCmd(cmdStr string) *exec.Cmd {
 	trimmed := CleanCommandString(cmdStr)
 	if runtime.GOOS == "windows" {
-		parts := strings.Fields(trimmed)
+		executable, args := ParseCommand(trimmed)
 
-		// Direct invocation of powershell or cmd
-		if len(parts) > 0 && (parts[0] == "powershell" || parts[0] == "powershell.exe" || parts[0] == "pwsh") {
-			return exec.Command(parts[0], parts[1:]...)
+		// Direct invocation of powershell or pwsh with smart -Command payload preservation
+		if executable == "powershell" || executable == "pwsh" {
+			psExe := executable + ".exe"
+			lower := strings.ToLower(args)
+			cmdIdx := -1
+			cmdFlagLen := 0
+			for _, flag := range []string{"-command ", "-c "} {
+				if idx := strings.Index(lower, flag); idx != -1 {
+					cmdIdx = idx
+					cmdFlagLen = len(flag)
+					break
+				}
+			}
+			if cmdIdx != -1 {
+				prefix := strings.TrimSpace(args[:cmdIdx])
+				code := strings.TrimSpace(args[cmdIdx+cmdFlagLen:])
+				// Strip outer quotes if the code was wrapped in quotes
+				if (strings.HasPrefix(code, "\"") && strings.HasSuffix(code, "\"") && len(code) >= 2) ||
+					(strings.HasPrefix(code, "'") && strings.HasSuffix(code, "'") && len(code) >= 2) {
+					code = code[1 : len(code)-1]
+				}
+				prefixParts := strings.Fields(prefix)
+				cmdArgs := append(prefixParts, "-Command", code)
+				return exec.Command(psExe, cmdArgs...)
+			}
+			argParts := strings.Fields(args)
+			return exec.Command(psExe, argParts...)
 		}
-		if len(parts) > 0 && (parts[0] == "cmd" || parts[0] == "cmd.exe") {
-			return exec.Command("cmd.exe", parts[1:]...)
+		if executable == "cmd" {
+			return exec.Command("cmd.exe", strings.Fields(args)...)
 		}
 
 		// If command uses shell features (pipes, chaining, redirection), execute via cmd.exe /c
 		if strings.ContainsAny(trimmed, "|&><;") {
 			return exec.Command("cmd.exe", "/c", trimmed)
 		}
+
+		parts := strings.Fields(trimmed)
 
 		// Fast direct resolution for "ls"
 		if len(parts) > 0 && parts[0] == "ls" {
@@ -201,4 +245,3 @@ func RunSandboxedCommand(cmdStr string) (string, error) {
 	output, err := cmd.CombinedOutput()
 	return CleanOutput(string(output)), err
 }
-

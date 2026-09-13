@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"bap-edge/cmd"
 )
@@ -19,6 +20,7 @@ Available Commands:
   sync      Synchronize or inspect local policy cache from control plane (with offline fallback)
   serve     Start the zero-trust attestation server on Unix domain socket
   exec      Evaluate command against Cedar policy and run in sandboxed kernel namespace
+  mcp       Run as Model Context Protocol (MCP) stdio server for Claude, Copilot, and Cursor
   attest      Client test command: connect to attestation server and request OBO JWT
   verify-log  Verify cryptographic integrity and anti-tamper hash-chain of local audit log
   help        Display help information
@@ -35,6 +37,14 @@ Examples:
 
 func main() {
 	if len(os.Args) < 2 {
+		// If invoked as bapmcp.exe or containing "mcp", default to running the MCP server
+		if strings.Contains(strings.ToLower(os.Args[0]), "mcp") {
+			if err := cmd.RunMCP(nil); err != nil {
+				fmt.Fprintf(os.Stderr, "Error running MCP server: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
 		fmt.Print(usage)
 		os.Exit(1)
 	}
@@ -60,6 +70,11 @@ func main() {
 		}
 	case "exec":
 		cmd.RunExec(args)
+	case "mcp":
+		if err := cmd.RunMCP(args); err != nil {
+			fmt.Fprintf(os.Stderr, "Error running MCP server: %v\n", err)
+			os.Exit(1)
+		}
 	case "attest":
 		if err := cmd.RunAttest(args); err != nil {
 			fmt.Fprintf(os.Stderr, "Error running attestation client: %v\n", err)

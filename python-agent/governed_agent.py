@@ -23,9 +23,32 @@ def print_banner(text: str):
     print("=" * 80)
 
 
+def ensure_gateway_running(gateway_url: str) -> bool:
+    try:
+        req = urllib.request.Request(gateway_url)
+        urllib.request.urlopen(req, timeout=1)
+        return True
+    except urllib.error.HTTPError:
+        return True
+    except urllib.error.URLError:
+        if "localhost" in gateway_url or "127.0.0.1" in gateway_url:
+            import subprocess
+            root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+            for cand in ["bapgateway.exe", "bap-gateway\\bapgateway.exe"]:
+                p = os.path.join(root_dir, cand)
+                if os.path.isfile(p):
+                    print(f"[*] Gateway PEP is not running. Auto-starting {cand} on port 9090...")
+                    subprocess.Popen([p, "-port", "9090"], cwd=root_dir, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    time.sleep(1.5)
+                    return True
+        return False
+
+
 def run_governed_agent():
     ep = resolve_endpoints()
     gateway_url = f"{ep['gateway_url']}/api/v1/financial-records"
+
+    ensure_gateway_running(gateway_url)
 
     print_banner("GOVERNED AI AGENT: SECURE ENTERPRISE API ACCESS")
     print("[*] Purpose        : Demonstrates authorized BAP-governed API access via Gateway PEP.")
@@ -72,6 +95,9 @@ def run_governed_agent():
         except urllib.error.HTTPError as e:
             print(f"[ERROR] Gateway rejected request: {e.code} {e.reason}")
             print(e.read().decode())
+        except urllib.error.URLError as e:
+            print(f"\n[CONNECTION ERROR] Could not reach Gateway PEP at {gateway_url}: {e.reason}")
+            print("                   Ensure bapgateway.exe is running: .\\bapgateway.exe -port 9090")
 
     print_banner("VERDICT: ZERO-TRUST DUAL-PEP MODEL SUCCESSFUL")
     print("[+] Governed agents with cryptographic BAP Grants pass seamlessly.")

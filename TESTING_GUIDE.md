@@ -2,28 +2,29 @@
 ## `bapedge` (LTD) & `bapcontrolplane`
 
 This guide provides end-to-end instructions for testing all components of the **Bounded Authority Plane (BAP)**, including:
-1. Automated Test Suite (41/41 passing tests).
+1. Automated Test Suite (48/48 passing tests, 0 failures).
 2. Live `bapcontrolplane` UP Testing (OTC Pre-registration, Binary Hash Attestation, Ephemeral Grants, Central Audit Chain).
 3. Live `bapcontrolplane` DOWN Resilience Testing (Offline Edge Continuity, 0ms latency, Fail-Secure Invariants).
 4. Persistent Kill-Switch Testing across network partitions.
-5. Live AI Agent Interceptors (Claude Code `cchook` and GitHub Copilot CLI).
+5. Live AI Agent Interceptors (Google Antigravity, Claude Code `cchook`, and GitHub Copilot CLI).
+6. Model Context Protocol (MCP) Server Suite (Pure-Go stdio server tested against RFC specification).
 
 ---
 
 ## 1. Quick Start: One-Command Automated Tests
 
 ### 1.1 Complete Automated Test Suite (Windows CMD/PowerShell)
-Runs compilation, Go unit tests, developer commands, Cedar forbid invariants, network sandbox, Claude Code hook, Copilot CLI shim, audit log verification, and control plane integration tests:
+Runs compilation, Go unit tests, developer commands, Cedar forbid invariants, network sandbox, Claude Code hook, Copilot CLI shim, Model Context Protocol (MCP) suite, audit log verification, and control plane integration tests:
 ```cmd
 run_all_tests.bat
 ```
-- **Execution Time**: ~8 seconds
+- **Execution Time**: ~8-10 seconds
 - **Expected Output**:
   ```text
   ===============================================================================
                               TEST SUMMARY
   ===============================================================================
-  Total Passed : 41
+  Total Passed : 48
   Total Failed : 0
 
   [OVERALL STATUS] SUCCESS - All tests passed
@@ -87,6 +88,31 @@ python-agent\build_package.bat
   bap-sdk-0.1.0.tar.gz
   bap_sdk-0.1.0-py3-none-any.whl
   ```
+
+### 1.6 Model Context Protocol (MCP) Server Test Suite (Pytest)
+Verifies standard JSON-RPC 2.0 stdio communication, tool discovery (`bap_execute`, `bap_explain_policy`, `bap_status`), complex in-memory pipelines, and instant zero-trust denials with remediation suggestions:
+```cmd
+pytest tests/test_mcp_server.py -v
+```
+- **Execution Time**: ~3.2 seconds
+- **Expected Output**:
+  ```text
+  18 passed in 3.17s
+  ```
+
+### 1.7 Model Context Protocol (MCP) Interactive Visual Demo
+Runs a step-by-step interactive demonstration of MCP initialize handshake, tool listing, safe execution, and blocked exfiltration:
+```cmd
+run_mcp_demo.bat
+:: Or directly via python:
+python scripts\mcp_demo.py
+```
+
+### 1.8 Complex Safe & Adversarial Command Test Suite
+Runs the 15-point test matrix covering PowerShell object pipelines, local Ollama queries, Base64 obfuscation blocking, raw TCP reverse shells, and automatic JSON detection:
+```cmd
+test_complex_cases.bat
+```
 
 ---
 

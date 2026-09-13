@@ -42,5 +42,31 @@ def test_bap_python_sdk_lifecycle():
         assert res_deny.is_denied is True
         assert res_deny.exit_code != 0
 
+        # 4. Verify session is marked active on Control Plane while running
+        import urllib.request
+        import json
+        req_sess = urllib.request.Request(f"http://localhost:8080/api/v1/sessions/{bap.session_id}")
+        with urllib.request.urlopen(req_sess, timeout=2) as resp:
+            data = json.loads(resp.read().decode())
+            assert data.get("status") == "active"
+
+        saved_session_id = bap.session_id
+
     assert bap.is_active is False
+
+    # 5. Verify session is closed and agent is marked deregistered after context exit
+    import time
+    time.sleep(0.3)
+    req_sess_closed = urllib.request.Request(f"http://localhost:8080/api/v1/sessions/{saved_session_id}")
+    with urllib.request.urlopen(req_sess_closed, timeout=2) as resp:
+        data = json.loads(resp.read().decode())
+        assert data.get("status") == "closed", "Session was not marked closed upon exit"
+
+    req_agents = urllib.request.Request("http://localhost:8080/api/v1/agents")
+    with urllib.request.urlopen(req_agents, timeout=2) as resp:
+        agents = json.loads(resp.read().decode())
+        agents_list = agents.get("agents", []) if isinstance(agents, dict) else agents
+        matching = [a for a in agents_list if a.get("app_id") == app_id]
+        assert any(a.get("status") == "deregistered" for a in matching), "Agent was not marked deregistered in registry"
+
 

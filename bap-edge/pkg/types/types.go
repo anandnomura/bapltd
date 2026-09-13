@@ -7,8 +7,8 @@ type AttestationResponse struct {
 
 // ExecResponse is output by the exec command.
 type ExecResponse struct {
-	Allowed bool   `json:"allowed"`
-	Output  string `json:"output,omitempty"`
-	Reason  string `json:"reason,omitempty"`
+	Allowed    bool   `json:"allowed"`
+	Output     string `json:"output,omitempty"`
+	Reason     string `json:"reason,omitempty"`
+	Suggestion string `json:"suggestion,omitempty"`
 }
-
