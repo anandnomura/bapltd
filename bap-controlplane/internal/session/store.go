@@ -199,6 +199,13 @@ func (s *Store) RecordEvent(sessionID string, ev audit.Event) {
 		s.order = append(s.order, sessionID)
 	}
 
+	// Re-activate session on new activity if it was previously closed due to idle timeout
+	if sess.Status != "active" {
+		sess.Status = "active"
+		sess.EndedAt = nil
+		sess.CloseReason = ""
+	}
+
 	if ev.UserID != "" && sess.UserID == "" {
 		sess.UserID = ev.UserID
 	}

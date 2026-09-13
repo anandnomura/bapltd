@@ -535,11 +535,17 @@ func (s *Server) handleInspectorData(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	idleTimeout := 15 * time.Minute
+	if envTimeout := os.Getenv("BAP_SESSION_TIMEOUT"); envTimeout != "" {
+		if d, err := time.ParseDuration(envTimeout); err == nil {
+			idleTimeout = d
+		}
+	}
 	if s.sessionStore != nil {
-		s.sessionStore.PurgeStale(60 * time.Second)
+		s.sessionStore.PurgeStale(idleTimeout)
 	}
 	if s.registry != nil {
-		s.registry.PurgeStale(60 * time.Second)
+		s.registry.PurgeStale(idleTimeout)
 	}
 
 	agents := s.registry.List()

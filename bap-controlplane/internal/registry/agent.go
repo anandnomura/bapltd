@@ -228,6 +228,7 @@ func (s *Store) EnsureSessionAgent(appID, instanceID, spiffeID, userEmail, hostn
 	}
 	agentID := fmt.Sprintf("agent-%s-%s", strings.ToLower(appID), instanceID)
 	if existing, found := s.agents[agentID]; found {
+		existing.Status = types.StatusActive
 		existing.LastHeartbeatAt = &now
 		if spiffeID != "" && spiffeID != "NA" {
 			existing.SPIFFEID = spiffeID
