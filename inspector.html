@@ -72,8 +72,36 @@
     </div>
   </header>
 
+  <!-- FLOATING LIVE TOAST NOTIFICATIONS (TOP-RIGHT) -->
+  <div id="toast-container" class="fixed top-5 right-5 z-50 flex flex-col space-y-2 pointer-events-none max-w-sm w-full"></div>
+
   <!-- MAIN CONTAINER -->
   <main class="max-w-7xl mx-auto w-full p-6 space-y-6 flex-1">
+
+    <!-- LIVE FLEET RADAR & PRESENCE BANNER -->
+    <section id="live-fleet-radar" class="bg-gradient-to-r from-slate-900 via-slate-900/90 to-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl flex flex-col md:flex-row items-center justify-between gap-4 relative overflow-hidden">
+      <!-- Animated radar sweep glow -->
+      <div class="absolute inset-0 bg-gradient-to-r from-transparent via-cyan-500/5 to-transparent pointer-events-none -translate-x-full animate-[shimmer_3s_infinite]"></div>
+
+      <div class="flex items-center space-x-3.5 z-10">
+        <div class="relative flex items-center justify-center">
+          <span class="w-3.5 h-3.5 rounded-full bg-emerald-500 animate-ping absolute opacity-75"></span>
+          <span class="w-3 h-3 rounded-full bg-emerald-400 relative shadow-lg shadow-emerald-500/50"></span>
+        </div>
+        <div>
+          <div class="text-xs font-bold text-white flex items-center space-x-2">
+            <span>LIVE WORKLOAD RADAR</span>
+            <span id="radar-live-count" class="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 text-[10px] font-mono">0 ACTIVE AGENTS</span>
+          </div>
+          <p id="radar-summary-text" class="text-[11px] text-slate-400 mt-0.5 font-mono">Monitoring edge sessions & heartbeats on port 8080</p>
+        </div>
+      </div>
+
+      <!-- Active Client Chips / Badges -->
+      <div id="radar-clients-chips" class="flex flex-wrap items-center gap-2 z-10">
+        <span class="text-xs text-slate-500 font-mono italic">No client sessions active</span>
+      </div>
+    </section>
 
     <!-- INTERACTIVE CONTROL & REPLAYER BAR -->
     <section class="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl flex flex-col md:flex-row items-center justify-between gap-4">
@@ -212,6 +240,12 @@
           <span>Activity Stream & Replayer</span>
         </button>
 
+        <button id="tab-btn-sessions" class="tab-btn px-4 py-2 text-xs font-bold rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition flex items-center space-x-1.5">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+          <span>Agent Sessions</span>
+          <span id="sessions-count-pill" class="ml-1 px-1.5 py-0.2 bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 rounded-full text-[10px]">0</span>
+        </button>
+
         <button id="tab-btn-fleet" class="tab-btn px-4 py-2 text-xs font-bold rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition flex items-center space-x-1.5">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
           <span>SPIFFE Workload Registry</span>
@@ -233,7 +267,7 @@
         
         <!-- Filters Ribbon -->
         <div class="flex flex-wrap items-center justify-between gap-3 text-xs">
-          <div class="flex items-center space-x-2">
+          <div class="flex flex-wrap items-center gap-2">
             <span class="text-slate-400">Filter Source:</span>
             <button data-filter-src="all" class="filter-src-btn px-2.5 py-1 rounded-md bg-slate-800 text-white font-medium border border-slate-700">All</button>
             <button data-filter-src="claude-code" class="filter-src-btn px-2.5 py-1 rounded-md bg-slate-900 text-slate-400 border border-slate-800 hover:bg-slate-800">Claude Code</button>
@@ -242,11 +276,20 @@
             <button data-filter-src="controlplane" class="filter-src-btn px-2.5 py-1 rounded-md bg-slate-900 text-slate-400 border border-slate-800 hover:bg-slate-800">Control Plane</button>
           </div>
 
-          <div class="flex items-center space-x-2">
-            <span class="text-slate-400">Decision:</span>
-            <button data-filter-dec="all" class="filter-dec-btn px-2.5 py-1 rounded-md bg-slate-800 text-white font-medium border border-slate-700">All</button>
-            <button data-filter-dec="allow" class="filter-dec-btn px-2.5 py-1 rounded-md bg-slate-900 text-slate-400 border border-slate-800 hover:bg-slate-800">Allow Only</button>
-            <button data-filter-dec="deny" class="filter-dec-btn px-2.5 py-1 rounded-md bg-slate-900 text-slate-400 border border-slate-800 hover:bg-slate-800">Deny / Blocked Only</button>
+          <div class="flex items-center space-x-3">
+            <div class="flex items-center space-x-1.5">
+              <span class="text-slate-400">Session:</span>
+              <select id="filter-session-select" class="bg-slate-900 border border-slate-700 text-slate-200 rounded px-2 py-1 text-xs font-mono">
+                <option value="all">All Sessions</option>
+              </select>
+            </div>
+
+            <div class="flex items-center space-x-1.5">
+              <span class="text-slate-400">Decision:</span>
+              <button data-filter-dec="all" class="filter-dec-btn px-2.5 py-1 rounded-md bg-slate-800 text-white font-medium border border-slate-700">All</button>
+              <button data-filter-dec="allow" class="filter-dec-btn px-2.5 py-1 rounded-md bg-slate-900 text-slate-400 border border-slate-800 hover:bg-slate-800">Allow Only</button>
+              <button data-filter-dec="deny" class="filter-dec-btn px-2.5 py-1 rounded-md bg-slate-900 text-slate-400 border border-slate-800 hover:bg-slate-800">Deny Only</button>
+            </div>
           </div>
         </div>
 
@@ -369,6 +412,25 @@ when {
 };
               </pre>
             </div>
+          </div>
+      <!-- TAB 5: AGENT SESSIONS -->
+      <div id="tab-pane-sessions" class="tab-pane hidden space-y-4">
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg space-y-4">
+          <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+            <div>
+              <h3 class="text-sm font-bold text-white flex items-center space-x-2">
+                <span>Agent Execution Sessions</span>
+                <span id="sessions-active-badge" class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">0 ACTIVE</span>
+              </h3>
+              <p class="text-xs text-slate-400 mt-0.5">Real-time session lifecycle tracking for Claude Code, Copilot, and CLI workers</p>
+            </div>
+            <div class="flex items-center space-x-3">
+              <span class="text-xs text-slate-400 font-mono">Live Ingestion: <strong class="text-cyan-400">Streamed</strong></span>
+            </div>
+          </div>
+
+          <div id="sessions-container" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <!-- Populated by JavaScript -->
           </div>
         </div>
       </div>
@@ -726,6 +788,10 @@ when {
     let playbackSpeed = 1000;
     let currentFilterSource = "all";
     let currentFilterDecision = "all";
+    let currentFilterSession = "all";
+    let allLiveSessions = [];
+    let knownActiveSessionIds = new Set();
+    let initialPollComplete = false;
     let livePollInterval = null;
 
     // --- DOM REFERENCES ---
@@ -743,6 +809,7 @@ when {
     const scenarioSelector = document.getElementById("scenario-selector");
     const eventCardsContainer = document.getElementById("event-cards-container");
     const btnRefreshLive = document.getElementById("btn-refresh-live");
+    const filterSessionSelect = document.getElementById("filter-session-select");
 
     // Drawer references
     const detailDrawer = document.getElementById("detail-drawer");
@@ -751,8 +818,14 @@ when {
     // --- INITIALIZATION ---
     function init() {
       setupEventListeners();
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.get("mode") === "live") {
+        scenarioSelector.value = "live";
+      }
       updateScenario(scenarioSelector.value);
       checkLiveConnection();
+      // Always poll control plane every 1.5s for session and registry updates
+      setInterval(checkLiveConnection, 1500);
     }
 
     // --- CHECK LIVE CONNECTION ---
@@ -765,6 +838,25 @@ when {
           document.getElementById("stat-cp-status").className = "font-semibold text-emerald-400";
           if (data.trust_domain) {
             document.getElementById("stat-trust-domain").textContent = data.trust_domain;
+          }
+          if (data.sessions) {
+            renderSessions(data.sessions);
+            updateLiveFleetRadar(data.sessions, data.agents || []);
+          }
+          if (data.agents && data.agents.length > 0) {
+            renderFleetTableWithData(data.agents);
+          }
+          if (data.chain_status) {
+            const chainBadge = document.getElementById("chain-validation-badge");
+            if (chainBadge) {
+              if (data.chain_status === "valid") {
+                chainBadge.innerHTML = '<span>●</span> <span>CRYPTOGRAPHICALLY VERIFIED (PASS)</span>';
+                chainBadge.className = "px-3 py-1 rounded-full text-xs font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 flex items-center space-x-1";
+              } else {
+                chainBadge.innerHTML = '<span>●</span> <span>TAMPER DETECTED / CORRUPTED</span>';
+                chainBadge.className = "px-3 py-1 rounded-full text-xs font-bold bg-rose-500/10 text-rose-400 border border-rose-500/30 flex items-center space-x-1";
+              }
+            }
           }
           // If live data exists and user selected live mode, render live
           if (scenarioSelector.value === "live") {
@@ -779,13 +871,242 @@ when {
       document.getElementById("stat-cp-status").className = "font-semibold text-cyan-400";
     }
 
+    // --- LIVE TOAST NOTIFICATION SYSTEM ---
+    function showToast(title, message, type = "info") {
+      const container = document.getElementById("toast-container");
+      if (!container) return;
+
+      const toast = document.createElement("div");
+      const isStart = type === "agent_start";
+      const isEnd = type === "agent_end";
+      const isDeny = type === "deny";
+
+      const borderColor = isStart ? "border-emerald-500/80" : isEnd ? "border-slate-600" : isDeny ? "border-rose-500/80" : "border-cyan-500/80";
+      const bgColor = isStart ? "bg-emerald-950/95 shadow-emerald-950/50" : isEnd ? "bg-slate-900/95" : isDeny ? "bg-rose-950/95 shadow-rose-950/50" : "bg-slate-900/95";
+      const icon = isStart ? "⚡" : isEnd ? "○" : isDeny ? "⛔" : "ℹ";
+
+      toast.className = `p-3.5 rounded-xl border ${borderColor} ${bgColor} shadow-2xl backdrop-blur-md text-xs font-mono text-white transition-all transform duration-300 translate-y-2 opacity-0 pointer-events-auto flex items-start space-x-3`;
+      toast.innerHTML = `
+        <span class="text-base leading-none mt-0.5">${icon}</span>
+        <div class="flex-1">
+          <div class="font-bold tracking-wide">${escapeHtml(title)}</div>
+          <div class="text-[11px] text-slate-300 mt-0.5">${escapeHtml(message)}</div>
+        </div>
+        <button class="text-slate-400 hover:text-white text-base leading-none ml-2">&times;</button>
+      `;
+
+      toast.querySelector("button").addEventListener("click", () => {
+        toast.classList.add("opacity-0", "translate-y-2");
+        setTimeout(() => toast.remove(), 300);
+      });
+
+      container.appendChild(toast);
+      requestAnimationFrame(() => {
+        toast.classList.remove("translate-y-2", "opacity-0");
+      });
+
+      setTimeout(() => {
+        if (toast.parentElement) {
+          toast.classList.add("opacity-0", "translate-y-2");
+          setTimeout(() => toast.remove(), 300);
+        }
+      }, 6000);
+    }
+
+    // --- LIVE FLEET RADAR UPDATES ---
+    function updateLiveFleetRadar(sessions, agents) {
+      const liveCountEl = document.getElementById("radar-live-count");
+      const summaryTextEl = document.getElementById("radar-summary-text");
+      const chipsContainer = document.getElementById("radar-clients-chips");
+      const nodeAgent = document.getElementById("node-agent");
+
+      const activeSessions = (sessions || []).filter(s => s.status === "active");
+      const currentActiveIds = new Set(activeSessions.map(s => s.session_id));
+
+      if (initialPollComplete) {
+        // Check for newly started workloads
+        activeSessions.forEach(s => {
+          if (!knownActiveSessionIds.has(s.session_id)) {
+            const agentName = (s.app_id || "").includes("claude") ? "Claude Code" : (s.app_id || "Autonomous Agent");
+            showToast("⚡ NEW WORKLOAD ENROLLED (LIVE)", `${agentName} [PID: ${s.client_pid || 'active'}] initiated session ${s.session_id}`, "agent_start");
+          }
+        });
+        // Check for terminated workloads
+        knownActiveSessionIds.forEach(id => {
+          if (!currentActiveIds.has(id)) {
+            showToast("○ WORKLOAD TERMINATED", `Session ${id} completed gracefully`, "agent_end");
+          }
+        });
+      }
+      knownActiveSessionIds = currentActiveIds;
+      initialPollComplete = true;
+
+      const totalActive = activeSessions.length;
+      if (liveCountEl) {
+        liveCountEl.textContent = `${totalActive} ACTIVE AGENT${totalActive === 1 ? '' : 'S'}`;
+        liveCountEl.className = totalActive > 0 
+          ? "px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/50 text-[10px] font-mono font-bold animate-pulse"
+          : "px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700 text-[10px] font-mono";
+      }
+
+      if (summaryTextEl) {
+        if (totalActive > 0) {
+          summaryTextEl.textContent = `Zero-Trust broker actively intercepting ${totalActive} live workload session(s) in sub-2ms`;
+          summaryTextEl.className = "text-[11px] text-emerald-400 font-mono mt-0.5 font-semibold";
+        } else {
+          summaryTextEl.textContent = "Monitoring edge sessions & heartbeats on port 8080. Start Claude or Copilot to watch presence live.";
+          summaryTextEl.className = "text-[11px] text-slate-400 font-mono mt-0.5";
+        }
+      }
+
+      // Populate Live Chips
+      if (chipsContainer) {
+        if (totalActive === 0) {
+          chipsContainer.innerHTML = '<span class="text-xs text-slate-500 font-mono italic">No client sessions active</span>';
+        } else {
+          chipsContainer.innerHTML = "";
+          activeSessions.forEach(s => {
+            const isClaude = (s.app_id || "").includes("claude");
+            const isCopilot = (s.app_id || "").includes("copilot");
+            const appLabel = isClaude ? "Claude Code" : isCopilot ? "Copilot CLI" : (s.app_id || "AI Agent");
+            const avatarColor = isClaude ? "bg-purple-600 text-purple-100" : isCopilot ? "bg-sky-600 text-sky-100" : "bg-emerald-600 text-emerald-100";
+
+            const chip = document.createElement("button");
+            chip.className = "px-3 py-1.5 rounded-xl bg-slate-950 border border-emerald-500/60 hover:border-emerald-400 shadow-lg shadow-emerald-950/50 text-xs font-mono flex items-center space-x-2 transition group";
+            chip.innerHTML = `
+              <span class="w-5 h-5 rounded-full ${avatarColor} flex items-center justify-center font-bold text-[10px] shadow">${appLabel[0]}</span>
+              <span class="text-white font-bold group-hover:text-emerald-300">${escapeHtml(appLabel)}</span>
+              <span class="text-slate-500 text-[10px]">[PID: ${s.client_pid || '?'}]</span>
+              <span class="relative flex h-2 w-2">
+                <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+              </span>
+            `;
+            chip.title = `Click to filter timeline for session ${s.session_id}`;
+            chip.addEventListener("click", () => {
+              if (filterSessionSelect) filterSessionSelect.value = s.session_id;
+              currentFilterSession = s.session_id;
+              document.getElementById("tab-btn-timeline").click();
+              renderTimeline();
+            });
+            chipsContainer.appendChild(chip);
+          });
+        }
+      }
+
+      // Highlight Node 1 in Topological Pipeline if active
+      if (nodeAgent && totalActive > 0) {
+        const topAgent = activeSessions[0];
+        const isClaude = (topAgent.app_id || "").includes("claude");
+        document.getElementById("flow-agent-name").textContent = isClaude ? "Claude Code" : (topAgent.app_id || "Live Agent");
+        document.getElementById("flow-agent-pid").textContent = `PID: ${topAgent.client_pid || 'Active'}`;
+        nodeAgent.classList.add("border-emerald-500", "shadow-lg", "shadow-emerald-950/50");
+      }
+    }
+
+    // --- RENDER LIVE AGENT SESSIONS ---
+    function renderSessions(sessions) {
+      allLiveSessions = sessions || [];
+      const countPill = document.getElementById("sessions-count-pill");
+      const activeBadge = document.getElementById("sessions-active-badge");
+      const container = document.getElementById("sessions-container");
+
+      let activeCount = 0;
+      allLiveSessions.forEach(s => { if (s.status === "active") activeCount++; });
+      if (countPill) countPill.textContent = activeCount;
+      if (activeBadge) activeBadge.textContent = `${activeCount} ACTIVE`;
+
+      // Update Session Dropdown in Filter Ribbon
+      if (filterSessionSelect) {
+        const currentVal = filterSessionSelect.value;
+        filterSessionSelect.innerHTML = '<option value="all">All Sessions</option>';
+        allLiveSessions.forEach(s => {
+          const opt = document.createElement("option");
+          opt.value = s.session_id;
+          opt.textContent = `${s.session_id} (${s.app_id || s.status})`;
+          if (s.session_id === currentVal) opt.selected = true;
+          filterSessionSelect.appendChild(opt);
+        });
+      }
+
+      if (!container) return;
+      if (allLiveSessions.length === 0) {
+        container.innerHTML = `
+          <div class="col-span-full py-8 text-center text-slate-500 text-xs font-mono">
+            No agent sessions recorded yet. Launch Claude Code (<code>run_claude_ollama.bat</code>) or Copilot to see live session tracking.
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = "";
+      allLiveSessions.forEach(s => {
+        const isActive = s.status === "active";
+        const card = document.createElement("div");
+        card.className = `p-4 rounded-xl border transition ${
+          isActive 
+            ? 'bg-slate-900 border-emerald-500/50 shadow-lg shadow-emerald-950/30' 
+            : 'bg-slate-900/70 border-slate-800 hover:border-slate-700'
+        } space-y-3`;
+
+        const started = s.started_at ? new Date(s.started_at).toLocaleTimeString() : "N/A";
+        const lastActive = s.last_active_at ? new Date(s.last_active_at).toLocaleTimeString() : started;
+
+        card.innerHTML = `
+          <div class="flex items-center justify-between">
+            <div class="flex items-center space-x-2">
+              <span class="w-2.5 h-2.5 rounded-full ${isActive ? 'bg-emerald-400 animate-pulse' : 'bg-slate-600'}"></span>
+              <span class="font-bold text-white text-xs font-mono">${escapeHtml(s.session_id)}</span>
+            </div>
+            <span class="px-2 py-0.5 rounded text-[10px] font-bold ${
+              isActive ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' : 'bg-slate-800 text-slate-400 border border-slate-700'
+            }">
+              ${s.status.toUpperCase()}
+            </span>
+          </div>
+
+          <div class="text-[11px] text-slate-300 font-mono space-y-1 bg-slate-950 p-2.5 rounded-lg border border-slate-800">
+            <div class="flex justify-between"><span class="text-slate-500">Agent:</span> <strong class="text-cyan-300">${escapeHtml(s.app_id || 'claude-code')}</strong></div>
+            <div class="flex justify-between"><span class="text-slate-500">User:</span> <strong class="text-amber-300">${escapeHtml(s.user_id || 'NA')}</strong></div>
+            ${s.spiffe_id && s.spiffe_id !== 'NA' ? `<div class="flex justify-between"><span class="text-slate-500">SPIFFE:</span> <span class="text-purple-300 text-[10px] truncate max-w-[140px]" title="${escapeHtml(s.spiffe_id)}">${escapeHtml(s.spiffe_id)}</span></div>` : ''}
+            <div class="flex justify-between"><span class="text-slate-500">PID:</span> <span>${s.client_pid || 'N/A'}</span></div>
+            <div class="flex justify-between"><span class="text-slate-500">Started:</span> <span>${started}</span></div>
+            <div class="flex justify-between"><span class="text-slate-500">Last Action:</span> <span>${lastActive}</span></div>
+          </div>
+
+          <div class="flex items-center justify-between text-[11px] font-mono pt-1">
+            <div class="flex items-center space-x-2">
+              <span class="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 font-bold">${s.allowed_count || 0} ALLOW</span>
+              <span class="px-2 py-0.5 rounded bg-rose-500/10 text-rose-400 border border-rose-500/30 font-bold">${s.denied_count || 0} DENY</span>
+            </div>
+            <button class="filter-to-sess-btn px-2.5 py-1 bg-slate-800 hover:bg-cyan-600/20 hover:text-cyan-300 hover:border-cyan-500/40 text-slate-300 rounded border border-slate-700 text-[10px] transition" data-session-id="${escapeHtml(s.session_id)}">
+              Inspect Stream &rarr;
+            </button>
+          </div>
+        `;
+
+        card.querySelector(".filter-to-sess-btn")?.addEventListener("click", () => {
+          if (filterSessionSelect) filterSessionSelect.value = s.session_id;
+          currentFilterSession = s.session_id;
+          document.getElementById("tab-btn-timeline").click();
+          renderTimeline();
+        });
+
+        container.appendChild(card);
+      });
+    }
+
     // --- LOAD LIVE DATA FROM SERVER ---
     function loadLiveData(data) {
       const converted = [];
-      if (data.edge_events && data.edge_events.length > 0) {
-        data.edge_events.forEach((ev, idx) => {
+      const sourceEvents = (data.edge_events && data.edge_events.length > 0) ? data.edge_events : (data.central_events || []);
+      if (sourceEvents.length > 0) {
+        sourceEvents.forEach((ev, idx) => {
           converted.push({
-            id: "ev-live-" + idx,
+            id: ev.event_id || ("ev-live-" + idx),
+            session_id: ev.session_id || "",
+            user_id: ev.user_id || "NA",
+            spiffe_id: ev.spiffe_id || "NA",
             timestamp: ev.timestamp || new Date().toISOString(),
             source: ev.source || "bapedge",
             category: "CEDAR_DECISION",
@@ -797,7 +1118,7 @@ when {
             duration_ms: ev.duration_ms || 1,
             exit_code: ev.exit_code !== undefined ? ev.exit_code : 0,
             client_pid: ev.client_pid || 0,
-            hash: "live-hash-" + idx
+            hash: ev.event_hash || ("live-hash-" + idx)
           });
         });
       }
@@ -900,22 +1221,37 @@ when {
         });
       });
 
+      // Filter Session Dropdown
+      if (filterSessionSelect) {
+        filterSessionSelect.addEventListener("change", (e) => {
+          currentFilterSession = e.target.value;
+          renderTimeline();
+        });
+      }
+
       // Tab Switching
       const tabs = [
         { btn: "tab-btn-timeline", pane: "tab-pane-timeline" },
+        { btn: "tab-btn-sessions", pane: "tab-pane-sessions" },
         { btn: "tab-btn-fleet", pane: "tab-pane-fleet" },
         { btn: "tab-btn-chain", pane: "tab-pane-chain" },
         { btn: "tab-btn-cedar", pane: "tab-pane-cedar" }
       ];
       tabs.forEach(tab => {
-        document.getElementById(tab.btn).addEventListener("click", () => {
-          tabs.forEach(t => {
-            document.getElementById(t.btn).className = "tab-btn px-4 py-2 text-xs font-bold rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition flex items-center space-x-1.5";
-            document.getElementById(t.pane).classList.add("hidden");
+        const btnElem = document.getElementById(tab.btn);
+        const paneElem = document.getElementById(tab.pane);
+        if (btnElem && paneElem) {
+          btnElem.addEventListener("click", () => {
+            tabs.forEach(t => {
+              const b = document.getElementById(t.btn);
+              const p = document.getElementById(t.pane);
+              if (b) b.className = "tab-btn px-4 py-2 text-xs font-bold rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition flex items-center space-x-1.5";
+              if (p) p.classList.add("hidden");
+            });
+            btnElem.className = "tab-btn px-4 py-2 text-xs font-bold rounded-lg bg-cyan-600/20 text-cyan-300 border border-cyan-500/30 transition flex items-center space-x-1.5";
+            paneElem.classList.remove("hidden");
           });
-          document.getElementById(tab.btn).className = "tab-btn px-4 py-2 text-xs font-bold rounded-lg bg-cyan-600/20 text-cyan-300 border border-cyan-500/30 transition flex items-center space-x-1.5";
-          document.getElementById(tab.pane).classList.remove("hidden");
-        });
+        }
       });
     }
 
@@ -1047,6 +1383,9 @@ when {
           if (currentFilterDecision === "allow" && ev.decision !== "allow") return;
           if (currentFilterDecision === "deny" && ev.decision !== "deny") return;
         }
+        if (currentFilterSession !== "all") {
+          if (ev.session_id && ev.session_id !== currentFilterSession) return;
+        }
 
         const isDeny = ev.decision === "deny";
         const isCurrent = idx === currentIndex;
@@ -1064,7 +1403,7 @@ when {
           : "bg-emerald-500/10 text-emerald-400 border-emerald-500/30";
 
         card.innerHTML = `
-          <div class="flex items-center space-x-3 w-full md:w-auto">
+          <div class="flex items-center space-x-2.5 w-full md:w-auto">
             <span class="font-mono text-slate-500 text-[11px]">#${idx + 1}</span>
             <span class="px-2 py-0.5 rounded font-bold uppercase text-[10px] border ${badgeClass}">
               ${ev.decision.toUpperCase()}
@@ -1072,6 +1411,8 @@ when {
             <span class="px-2 py-0.5 rounded text-[10px] font-mono bg-slate-800 text-cyan-300 border border-slate-700">
               ${ev.source}
             </span>
+            ${ev.session_id ? `<span class="px-1.5 py-0.5 rounded text-[9px] font-mono bg-purple-950/80 text-purple-300 border border-purple-800/50 truncate max-w-[130px]" title="${escapeHtml(ev.session_id)}">${escapeHtml(ev.session_id)}</span>` : ''}
+            ${ev.user_id && ev.user_id !== 'NA' ? `<span class="px-1.5 py-0.5 rounded text-[9px] font-mono bg-amber-950/80 text-amber-300 border border-amber-800/50 truncate max-w-[100px]" title="User: ${escapeHtml(ev.user_id)}">👤 ${escapeHtml(ev.user_id)}</span>` : ''}
             <code class="font-bold text-slate-200 text-sm font-mono truncate max-w-xs md:max-w-md">${escapeHtml(ev.full_command || ev.executable)}</code>
           </div>
 
@@ -1173,6 +1514,33 @@ when {
           </td>
           <td class="px-4 py-3 font-mono text-slate-400 truncate max-w-xs" title="${f.binary_hash}">${f.binary_hash.substring(0, 16)}...</td>
           <td class="px-4 py-3 text-slate-400">${f.last_heartbeat}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function renderFleetTableWithData(agents) {
+      const tbody = document.getElementById("fleet-table-body");
+      if (!tbody || !agents || agents.length === 0) return;
+      tbody.innerHTML = "";
+      agents.forEach(a => {
+        const isRevoked = a.status === "revoked";
+        const tr = document.createElement("tr");
+        tr.className = "hover:bg-slate-800/50";
+        const lastHb = a.last_heartbeat_at ? new Date(a.last_heartbeat_at).toLocaleTimeString() : "Active (Alive)";
+        const hashDisplay = a.binary_hash ? (a.binary_hash.substring(0, 16) + "...") : "verified-binary";
+        tr.innerHTML = `
+          <td class="px-4 py-3 font-mono text-slate-200 font-medium">${escapeHtml(a.agent_id)}</td>
+          <td class="px-4 py-3 font-semibold text-cyan-400">${escapeHtml(a.app_id || a.agent_name)}</td>
+          <td class="px-4 py-3 font-mono text-slate-300">${escapeHtml(a.instance_id || 'default')}</td>
+          <td class="px-4 py-3 font-mono text-purple-300 font-semibold">${escapeHtml(a.spiffe_id || 'N/A')}</td>
+          <td class="px-4 py-3">
+            <span class="px-2 py-0.5 rounded text-[10px] font-bold ${isRevoked ? 'bg-rose-500/10 text-rose-400 border border-rose-500/30' : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'}">
+              ${(a.status || "active").toUpperCase()}
+            </span>
+          </td>
+          <td class="px-4 py-3 font-mono text-slate-400 truncate max-w-xs" title="${escapeHtml(a.binary_hash || '')}">${hashDisplay}</td>
+          <td class="px-4 py-3 text-slate-400">${lastHb}</td>
         `;
         tbody.appendChild(tr);
       });

@@ -23,6 +23,11 @@ This document is the complete REST API specification for **`bapcontrolplane`**, 
 | `POST` | `/api/v1/agents/revoke` | Emergency kill-switch revoking a specific agent instance | None |
 | `POST` | `/api/v1/apps/revoke` | Emergency kill-switch revoking an entire fleet/app | None |
 | `POST` | `/api/v1/instances/heartbeat`| Edge agent instance liveness heartbeat | Agent ID |
+| `POST` | `/api/v1/sessions/start` | Start an agent execution session (Claude Code, Copilot, CLI) | None |
+| `POST` | `/api/v1/sessions/end` | Record conclusion or shutdown of an agent session | None |
+| `GET` | `/api/v1/sessions` | List recent agent execution sessions with stats | None |
+| `GET` | `/api/v1/sessions/{id}` | Retrieve details and stats for a specific session | None |
+| `GET` | `/api/v1/inspector/data` | Unified polling endpoint for Inspector UI | None |
 
 ---
 
@@ -325,6 +330,7 @@ Edge agents stream their execution decisions and telemetry into the central cont
   [
     {
       "event_id": "ev-edge-001",
+      "session_id": "sess-claude-20260912-140000",
       "timestamp": "2026-09-12T10:14:00Z",
       "source": "claude-code",
       "executable": "git",
@@ -336,6 +342,7 @@ Edge agents stream their execution decisions and telemetry into the central cont
     },
     {
       "event_id": "ev-edge-002",
+      "session_id": "sess-claude-20260912-140000",
       "timestamp": "2026-09-12T10:14:05Z",
       "source": "claude-code",
       "executable": "cat",
@@ -348,11 +355,13 @@ Edge agents stream their execution decisions and telemetry into the central cont
     }
   ]
   ```
-- **Example Response** (`200 OK`):
+- **Example Response** (`200 OK` - Clean Cryptographic Handshake):
   ```json
   {
     "ingested": 2,
-    "chain_valid": true
+    "chain_valid": true,
+    "receipt_hash": "a59b34f8263de7890b561c29e4d0725a33b018591ef8634c01d4a8e630f9a721",
+    "status": "acknowledged"
   }
   ```
 
@@ -445,13 +454,126 @@ Edge agent instances periodically send liveness heartbeats to maintain active st
   {
     "agent_id": "agent-payments-worker-9fa1b402-worker-01"
   }
-  ```
-- **Example Response** (`200 OK`):
   ```json
   {
     "agent_id": "agent-payments-worker-9fa1b402-worker-01",
     "status": "alive",
     "time": "2026-09-12T10:35:00Z"
+  }
+  ```
+
+---
+
+### 3.12. Agent Session Lifecycle Engine & Live Radar Endpoints
+The Session Engine tracks discrete agent execution sessions (Claude Code interactive sessions, GitHub Copilot CLI runs, automated worker workflows), providing real-time presence detection and session-level metrics.
+
+#### Start Session
+- **Method**: `POST`
+- **Path**: `/api/v1/sessions/start`
+- **Request Body**:
+  ```json
+  {
+    "session_id": "sess-claude-20260912-140000",
+    "source": "claude-code",
+    "pid": 14208,
+    "model": "claude-3-5-sonnet-20241022",
+    "cwd": "C:\\Users\\User\\pyprj\\bapltd"
+  }
+  ```
+- **Example Response** (`200 OK`):
+  ```json
+  {
+    "status": "started",
+    "session": {
+      "session_id": "sess-claude-20260912-140000",
+      "source": "claude-code",
+      "pid": 14208,
+      "model": "claude-3-5-sonnet-20241022",
+      "started_at": "2026-09-12T14:00:00Z",
+      "status": "active",
+      "total_events": 0,
+      "allow_count": 0,
+      "deny_count": 0
+    }
+  }
+  ```
+
+#### End Session
+- **Method**: `POST`
+- **Path**: `/api/v1/sessions/end`
+- **Request Body**:
+  ```json
+  {
+    "session_id": "sess-claude-20260912-140000",
+    "status": "completed"
+  }
+  ```
+- **Example Response** (`200 OK`):
+  ```json
+  {
+    "status": "ended",
+    "session": {
+      "session_id": "sess-claude-20260912-140000",
+      "status": "completed",
+      "started_at": "2026-09-12T14:00:00Z",
+      "ended_at": "2026-09-12T14:15:30Z",
+      "duration_sec": 930.25,
+      "total_events": 14,
+      "allow_count": 12,
+      "deny_count": 2
+    }
+  }
+  ```
+
+#### List Sessions
+- **Method**: `GET`
+- **Path**: `/api/v1/sessions`
+- **Example Response** (`200 OK`):
+  ```json
+  {
+    "count": 2,
+    "sessions": [
+      {
+        "session_id": "sess-claude-20260912-140000",
+        "source": "claude-code",
+        "pid": 14208,
+        "model": "claude-3-5-sonnet-20241022",
+        "started_at": "2026-09-12T14:00:00Z",
+        "status": "active",
+        "total_events": 14,
+        "allow_count": 12,
+        "deny_count": 2
+      }
+    ]
+  }
+  ```
+
+#### Get Session Detail
+- **Method**: `GET`
+- **Path**: `/api/v1/sessions/{id}`
+- **Example Response** (`200 OK`):
+  ```json
+  {
+    "session": {
+      "session_id": "sess-claude-20260912-140000",
+      "source": "claude-code",
+      "status": "active",
+      "total_events": 14,
+      "allow_count": 12,
+      "deny_count": 2
+    }
+  }
+  ```
+
+#### Inspector Unified Polling Data
+- **Method**: `GET`
+- **Path**: `/api/v1/inspector/data`
+- **Example Response** (`200 OK`):
+  ```json
+  {
+    "events": [ ... ],
+    "chain_status": "valid",
+    "sessions": [ ... ]
   }
   ```
 
@@ -502,12 +624,14 @@ bapedge sync --server <url> [--policy-dir <path>]
 - **Persistent Emergency Lock**: If the server returns directive `KILL_SWITCH`, `bapedge` marks `kill_switch: true` in `policy-state.json`.
 
 ### 4.3. Zero-Trust Command Execution (`bapedge exec`)
-Evaluates and executes commands through in-process Cedar authorization and sandboxing.
+Evaluates and executes commands through in-process Cedar authorization and sandboxing, appending to local audit logs and streaming telemetry to the control plane.
 ```bash
-bapedge exec --raw "<command_string>" [--policy <file>] [--schema <file>]
+bapedge exec --raw "<command_string>" [--session-id <id>] [--server <url>] [--policy <file>] [--schema <file>]
 ```
 - **Options**:
   - `--raw` (string, required): Full shell command string to evaluate and execute.
+  - `--session-id` (string, optional): Links execution telemetry to an active agent session (e.g. from `BAP_SESSION_ID`).
+  - `--server` (string, optional): Central control plane URL for real-time audit streaming (defaults to `BAP_SERVER` or `http://localhost:8080`).
   - `--policy` (string, optional): Explicit path to `policy.cedar`. Defaults to `~/.ltd/policy/policy.cedar` or working directory.
   - `--schema` (string, optional): Explicit path to `schema.json`.
 - **Exit Codes**:
@@ -523,3 +647,14 @@ bapedge serve --socket /tmp/ltd.sock [--allowed-hash <sha256>]
 # Query attestation server
 bapedge attest --socket /tmp/ltd.sock
 ```
+
+### 4.5. Local Audit Log Verification & Anti-Tamper Check (`bapedge verify-log`)
+Validates the cryptographic sequential SHA-256 hash-chain of the local audit log file, detecting any content tampering, line modifications, or retroactive deletions:
+```bash
+bapedge verify-log [--file <path>]
+```
+- **Options**:
+  - `--file` (string, optional): Path to audit log file. Defaults to `LTD_AUDIT_LOG` or `ltd-audit.jsonl`.
+- **Exit Codes**:
+  - `0`: All records cryptographically verified; zero tampering detected.
+  - `1`: Tamper alert (hash mismatch, broken previous_hash chain, or corrupted JSON).

@@ -8,6 +8,7 @@ import tempfile
 import time
 import urllib.request
 import urllib.error
+import uuid
 
 def get_free_port():
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -407,6 +408,63 @@ def main():
                         os.remove(p)
                     except Exception:
                         pass
+
+            # 10c. Agent Session Lifecycle & Real-Time Edge Telemetry Streaming
+            sess_id = f"sess-claude-test-{uuid.uuid4().hex[:8]}"
+            status, sess_start_resp = http_post_json(f"{base_url}/api/v1/sessions/start", {
+                "session_id": sess_id,
+                "app_id": "claude-code",
+                "client_pid": os.getpid(),
+                "hostname": "test-runner"
+            })
+            assert status == 200, f"Session start failed: {status}"
+            assert sess_start_resp["status"] == "active"
+            print(f"[*] Started agent session: {sess_id}")
+
+            # Execute edge commands with --session-id and --server (simulating Claude Code / cchook)
+            old_test_mode = os.environ.get("BAP_TEST_MODE")
+            if "BAP_TEST_MODE" in os.environ:
+                del os.environ["BAP_TEST_MODE"]
+            try:
+                cmd_exec1 = subprocess.run([
+                    agent_exe, "exec",
+                    "--source", "claude-code",
+                    "--session-id", sess_id,
+                    "--server", base_url,
+                    "--raw", "git --version"
+                ], capture_output=True, text=True)
+                assert cmd_exec1.returncode == 0
+
+                cmd_exec2 = subprocess.run([
+                    agent_exe, "exec",
+                    "--source", "claude-code",
+                    "--session-id", sess_id,
+                    "--server", base_url,
+                    "--raw", "cat .env"
+                ], capture_output=True, text=True)
+                assert cmd_exec2.returncode != 0
+            finally:
+                if old_test_mode is not None:
+                    os.environ["BAP_TEST_MODE"] = old_test_mode
+
+            time.sleep(0.3)
+
+            # Query session from control plane
+            status, sess_detail = http_get_json(f"{base_url}/api/v1/sessions/{sess_id}")
+            assert status == 200, f"Failed to get session {sess_id}: {status}"
+            assert sess_detail["total_events"] >= 2, f"Expected >= 2 events, got {sess_detail['total_events']}"
+            assert sess_detail["allowed_count"] >= 1, "Expected >= 1 allowed event"
+            assert sess_detail["denied_count"] >= 1, "Expected >= 1 denied event"
+            print(f"[PASS] 10c-1. Real-time edge telemetry streamed to control plane session ({sess_detail['total_events']} events)")
+
+            # End the session
+            status, sess_end_resp = http_post_json(f"{base_url}/api/v1/sessions/end", {
+                "session_id": sess_id,
+                "reason": "agent test completed"
+            })
+            assert status == 200
+            assert sess_end_resp["status"] == "closed"
+            print(f"[PASS] 10c-2. Session {sess_id} successfully closed upon agent shutdown")
 
             # 11. Control Plane DOWN Resilience (Operating with Prior Secure Settings)
             tmp_policy_dir = tempfile.mkdtemp(prefix="bap_policy_cache_")

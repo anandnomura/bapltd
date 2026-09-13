@@ -18,8 +18,9 @@ Available Commands:
   sync      Synchronize or inspect local policy cache from control plane (with offline fallback)
   serve     Start the zero-trust attestation server on Unix domain socket
   exec      Evaluate command against Cedar policy and run in sandboxed kernel namespace
-  attest    Client test command: connect to attestation server and request OBO JWT
-  help      Display help information
+  attest      Client test command: connect to attestation server and request OBO JWT
+  verify-log  Verify cryptographic integrity and anti-tamper hash-chain of local audit log
+  help        Display help information
 
 Examples:
   bapedge register --server http://localhost:8080 --code LTD-OTC-XXXX-XXXX
@@ -61,6 +62,10 @@ func main() {
 	case "attest":
 		if err := cmd.RunAttest(args); err != nil {
 			fmt.Fprintf(os.Stderr, "Error running attestation client: %v\n", err)
+			os.Exit(1)
+		}
+	case "verify-log":
+		if err := cmd.RunVerifyLog(args); err != nil {
 			os.Exit(1)
 		}
 	case "help", "-h", "--help":

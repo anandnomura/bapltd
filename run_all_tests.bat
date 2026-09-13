@@ -10,6 +10,7 @@ cd /d "%ROOT_DIR%"
 
 set "LTD_AUDIT_LOG=%ROOT_DIR%ltd-audit.jsonl"
 if exist "%LTD_AUDIT_LOG%" del /f /q "%LTD_AUDIT_LOG%" >nul 2>&1
+set "BAP_TEST_MODE=1"
 
 set "PASS_COUNT=0"
 set "FAIL_COUNT=0"
@@ -25,8 +26,6 @@ if !ERRORLEVEL! neq 0 (
     echo [FAIL] Failed to build bapcontrolplane.exe
     exit /b 1
 )
-copy /y bapcontrolplane.exe ltd-service.exe >nul
-
 cd /d "%ROOT_DIR%bap-edge"
 go build -o bapedge.exe .
 if !ERRORLEVEL! neq 0 (

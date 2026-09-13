@@ -14,32 +14,41 @@ import (
 	"bap-controlplane/internal/otc"
 	"bap-controlplane/internal/policy"
 	"bap-controlplane/internal/registry"
+	"bap-controlplane/internal/session"
 	"bap-controlplane/pkg/types"
 )
 
 type Server struct {
-	registry    *registry.Store
-	otcStore    *otc.Store
-	minter      *authz.TokenMinter
-	policyStore *policy.Store
-	auditStore  *audit.Store
-	mux         *http.ServeMux
+	registry     *registry.Store
+	otcStore     *otc.Store
+	minter       *authz.TokenMinter
+	policyStore  *policy.Store
+	auditStore   *audit.Store
+	sessionStore *session.Store
+	mux          *http.ServeMux
 }
 
-func NewServer(reg *registry.Store, otcStore *otc.Store, minter *authz.TokenMinter, policyStore *policy.Store, auditStore *audit.Store) *Server {
+func NewServer(reg *registry.Store, otcStore *otc.Store, minter *authz.TokenMinter, policyStore *policy.Store, auditStore *audit.Store, sessionStore ...*session.Store) *Server {
 	if policyStore == nil {
 		policyStore = policy.NewStore("", "")
 	}
 	if auditStore == nil {
 		auditStore = audit.NewStore()
 	}
+	var sessStore *session.Store
+	if len(sessionStore) > 0 && sessionStore[0] != nil {
+		sessStore = sessionStore[0]
+	} else {
+		sessStore = session.NewStore()
+	}
 	s := &Server{
-		registry:    reg,
-		otcStore:    otcStore,
-		minter:      minter,
-		policyStore: policyStore,
-		auditStore:  auditStore,
-		mux:         http.NewServeMux(),
+		registry:     reg,
+		otcStore:     otcStore,
+		minter:       minter,
+		policyStore:  policyStore,
+		auditStore:   auditStore,
+		sessionStore: sessStore,
+		mux:          http.NewServeMux(),
 	}
 	s.registerRoutes()
 	return s
@@ -63,6 +72,10 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/v1/policy/sync", s.handlePolicySync)
 	s.mux.HandleFunc("/api/v1/audit/ingest", s.handleAuditIngest)
 	s.mux.HandleFunc("/api/v1/audit/events", s.handleListAuditEvents)
+	s.mux.HandleFunc("/api/v1/sessions/start", s.handleSessionStart)
+	s.mux.HandleFunc("/api/v1/sessions/end", s.handleSessionEnd)
+	s.mux.HandleFunc("/api/v1/sessions", s.handleListSessions)
+	s.mux.HandleFunc("/api/v1/sessions/", s.handleGetSession)
 	s.mux.HandleFunc("/inspector", s.handleInspectorUI)
 	s.mux.HandleFunc("/api/v1/inspector/data", s.handleInspectorData)
 }
@@ -358,10 +371,21 @@ func (s *Server) handleAuditIngest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Link events to sessions
+	if s.sessionStore != nil {
+		for _, ev := range events {
+			if ev.SessionID != "" {
+				s.sessionStore.RecordEvent(ev.SessionID, ev)
+			}
+		}
+	}
+
 	valid, _ := s.auditStore.VerifyChain()
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ingested":    ingested,
-		"chain_valid": valid,
+		"ingested":     ingested,
+		"chain_valid":  valid,
+		"receipt_hash": s.auditStore.LastHash(),
+		"status":       "acknowledged",
 	})
 }
 
@@ -493,11 +517,17 @@ func (s *Server) handleInspectorData(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	var sessionsList any = []any{}
+	if s.sessionStore != nil {
+		sessionsList = s.sessionStore.List(50)
+	}
+
 	resp := map[string]any{
 		"service":        "bapcontrolplane",
 		"trust_domain":   s.registry.TrustDomain(),
 		"chain_status":   chainStatus,
 		"agents":         agents,
+		"sessions":       sessionsList,
 		"central_events": centralEvents,
 		"edge_events":    edgeLogs,
 		"policy_version": bundle.Version,
@@ -507,6 +537,83 @@ func (s *Server) handleInspectorData(w http.ResponseWriter, r *http.Request) {
 		"server_time":    time.Now().UTC(),
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) handleSessionStart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	var req session.SessionStartRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid request payload: "+err.Error())
+		return
+	}
+	sess, err := s.sessionStore.Start(req)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Failed to start session: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, sess)
+}
+
+func (s *Server) handleSessionEnd(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	var req struct {
+		SessionID string `json:"session_id"`
+		Reason    string `json:"reason,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid request payload: "+err.Error())
+		return
+	}
+	if req.SessionID == "" {
+		writeError(w, http.StatusBadRequest, "session_id is required")
+		return
+	}
+	if err := s.sessionStore.End(req.SessionID, req.Reason); err != nil {
+		writeError(w, http.StatusNotFound, "Failed to end session: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"session_id": req.SessionID,
+		"status":     "closed",
+		"ended_at":   time.Now().UTC(),
+	})
+}
+
+func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	sessions := s.sessionStore.List(100)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"sessions": sessions,
+		"total":    len(sessions),
+	})
+}
+
+func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	prefix := "/api/v1/sessions/"
+	sessionID := strings.TrimPrefix(r.URL.Path, prefix)
+	if sessionID == "" {
+		writeError(w, http.StatusBadRequest, "session_id is required in path")
+		return
+	}
+	sess, err := s.sessionStore.Get(sessionID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, sess)
 }
 
 func (s *Server) handleInspectorUI(w http.ResponseWriter, r *http.Request) {

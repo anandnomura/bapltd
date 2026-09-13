@@ -99,7 +99,16 @@ func main() {
 		return
 	}
 
-	// 4. Resolve bapedge (LTD) or ltd-agent executable
+	// 4. Resolve session identifier
+	sessionID := os.Getenv("BAP_SESSION_ID")
+	if sessionID == "" {
+		sessionID = os.Getenv("LTD_SESSION_ID")
+	}
+	if sessionID == "" {
+		sessionID = fmt.Sprintf("sess-claude-pid-%d", os.Getppid())
+	}
+
+	// 5. Resolve bapedge (LTD) or ltd-agent executable
 	binName := "bapedge"
 	fallbackName := "ltd-agent"
 	if runtime.GOOS == "windows" {
@@ -111,8 +120,16 @@ func main() {
 		ltdBin = findBinary(fallbackName)
 	}
 
-	// 5. Execute bapedge exec --source claude-code --json "$command"
-	cmd := exec.Command(ltdBin, "exec", "--source", "claude-code", "--json", command)
+	// 6. Execute bapedge exec --source claude-code --session-id <sessionID> --json "$command"
+	execArgs := []string{"exec", "--source", "claude-code", "--json"}
+	if sessionID != "" {
+		execArgs = append(execArgs, "--session-id", sessionID)
+	}
+	execArgs = append(execArgs, command)
+
+	cmd := exec.Command(ltdBin, execArgs...)
+	cmd.Env = os.Environ()
+	cmd.Env = append(cmd.Env, "BAP_SESSION_ID="+sessionID)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

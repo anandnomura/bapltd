@@ -46,19 +46,30 @@ The architecture formally converges into two core components:
                                      +--------+--------+
                                               |
                                               v
-                           +------------------+------------------+
-                           |     Local Structured Audit Log      |
-                           |         (ltd-audit.jsonl)           |
-                           +------------------+------------------+
-                                              | Stream to Control Plane
-                                              v
-                           +------------------+------------------+
-                           |        bapcontrolplane              |
-                           |  - Central Agent Registry & OTC     |
-                           |  - Binary SHA-256 Attestation       |
-                           |  - Dynamic Cedar Policy Sync        |
-                           |  - Tamper-Evident Hash Chain        |
-                           +-------------------------------------+
+                            +-------------------------------------+
+                            |     Local Structured Audit Log      |
+                            |         (ltd-audit.jsonl)           |
+                            +------------------+------------------+
+                                               | Non-Blocking HTTP Push (150ms)
+                                               | (Smart Test Filter Active)
+                                               v
+                            +-------------------------------------+
+                            |        bapcontrolplane              |
+                            |  - Central Agent Registry & OTC     |
+                            |  - Binary SHA-256 Attestation       |
+                            |  - Ephemeral OBO JWT Grants         |
+                            |  - Dynamic Cedar Policy Sync        |
+                            |  - Session Lifecycle Engine         |
+                            |  - Tamper-Evident SHA-256 Chain     |
+                            +------------------+------------------+
+                                               | Live Event & Presence Stream
+                                               v
+                            +-------------------------------------+
+                            |       BAP Activity Inspector        |
+                            |  - Live Workload Presence Radar     |
+                            |  - Active Agent Chips & Live Toasts |
+                            |  - Step-by-Step Scenario Replayer   |
+                            +-------------------------------------+
 ```
 
 ---
@@ -78,7 +89,6 @@ cd ..
 :: Build bap-controlplane
 cd bap-controlplane
 go build -o bapcontrolplane.exe ./cmd/server
-copy /y bapcontrolplane.exe ltd-service.exe >nul
 cd ..
 
 :: Build Claude Code interceptor

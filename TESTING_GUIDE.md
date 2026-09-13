@@ -574,3 +574,91 @@ To run Claude Code locally using your laptop's Ollama instance and have every co
    Switch to your browser at `http://localhost:8080/inspector`.
    - The interactive diagram shows the red shield glowing at the Cedar engine node.
    - Click the blocked card to open the **Detail Inspector Drawer** and examine the exact Cedar forbid rule that triggered the block.
+
+---
+
+### 7.4. Turnkey Live Client Radar Demonstration (`demo_live_client.bat`)
+
+To demonstrate the **Live Workload Radar**, real-time presence detection, and live toast notifications for executive demonstrations:
+
+1. **Launch the Demo Script**:
+   ```cmd
+   cd c:\Users\User\pyprj\bapltd
+   demo_live_client.bat
+   ```
+2. **Watch the Inspector UI** (`http://localhost:8080/inspector`):
+   - A pulsing green beacon appears in the top-right header displaying `Live Agents: 1 Active`.
+   - An active client chip emerges: `Claude Code [PID: ...] (Active)`.
+   - A floating toast notification pops up: `New Agent Connected: Claude Code [PID: ...]`.
+   - 3 permitted commands stream through the visualizer.
+   - A red toast notification alerts on tool denial: `Security Invariant Triggered: Access to .env blocked`.
+   - The agent cleanly concludes after 30 seconds with session completion.
+
+---
+
+## 8. 50,000-Event High-Throughput Performance Test (PT)
+
+To verify that the central log ingestion pipeline and sequential SHA-256 cryptographic blockchain can handle massive enterprise telemetry streams:
+
+1. **Ensure Control Plane is Running**:
+   ```powershell
+   cd c:\Users\User\pyprj\bapltd\bap-controlplane
+   .\bapcontrolplane.exe -port 8080 -ttl 30 -trust-domain bap.internal
+   ```
+
+2. **Execute the 50K Performance Test**:
+   ```powershell
+   cd c:\Users\User\pyprj\bapltd
+   python tests/perf_test_50k.py
+   ```
+
+3. **Expected Benchmark Output**:
+   ```text
+   ======================================================================
+     BAP Control Plane: 50,000-Event Performance Stress Test (PT)
+   ======================================================================
+   [*] Target Server: http://localhost:8080
+   [*] Generating 50,000 realistic edge execution audit records...
+   [*] Ingesting 50,000 events in 50 batches (1,000 events/batch)...
+       [Batch 10/50] 10,000 events sent... (62.3ms)
+       [Batch 20/50] 20,000 events sent... (58.1ms)
+       [Batch 30/50] 30,000 events sent... (61.4ms)
+       [Batch 40/50] 40,000 events sent... (59.7ms)
+       [Batch 50/50] 50,000 events sent... (61.0ms)
+
+   ======================================================================
+                           PERFORMANCE TEST RESULTS
+   ======================================================================
+   Total Ingested Events : 50,000
+   Ingestion Duration    : 1.40 seconds
+   Ingestion Throughput  : 35,620 events/sec
+   Average Batch Latency : 60.5 ms / 1,000 events
+   Chain Verification    : VALID (Verified 50,000 blocks in 32.6 ms)
+   ======================================================================
+   [RESULT] PASS - Control plane demonstrated high-scale ingestion!
+   ```
+
+---
+
+## 9. Self-Test Log Isolation Verification
+
+BAP guarantees that running local automated tests does **not** pollute central control plane telemetry stores:
+
+1. **Inspect Control Plane Event Count**:
+   ```powershell
+   $initial_count = (curl.exe -s http://localhost:8080/api/v1/audit/events | ConvertFrom-Json).count
+   Write-Host "Initial Server Events: $initial_count"
+   ```
+
+2. **Run the Full 41-Test Suite**:
+   ```cmd
+   run_all_tests.bat
+   ```
+
+3. **Verify Central Telemetry Remains Clean**:
+   ```powershell
+   $final_count = (curl.exe -s http://localhost:8080/api/v1/audit/events | ConvertFrom-Json).count
+   Write-Host "Post-Test Server Events: $final_count"
+   ```
+   - **Expected Result**: `Post-Test Server Events` matches `Initial Server Events` exactly (0 synthetic test events streamed).
+   - **Local Verification**: `ltd-audit.jsonl` contains the full local execution log for test assertions.

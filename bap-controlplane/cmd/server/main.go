@@ -15,6 +15,7 @@ import (
 	"bap-controlplane/internal/otc"
 	"bap-controlplane/internal/policy"
 	"bap-controlplane/internal/registry"
+	"bap-controlplane/internal/session"
 	"bap-controlplane/internal/tlsutil"
 )
 
@@ -48,7 +49,7 @@ func main() {
 
 	resolvedPolicy := *policyPath
 	if resolvedPolicy == "" {
-		candidates := []string{"../bap-edge/policy.cedar", "../ltd-agent/policy.cedar", "./policy.cedar", "../policy.cedar"}
+		candidates := []string{"bap-edge/policy.cedar", "./bap-edge/policy.cedar", "../bap-edge/policy.cedar", "../ltd-agent/policy.cedar", "./policy.cedar", "../policy.cedar"}
 		for _, c := range candidates {
 			if _, err := os.Stat(c); err == nil {
 				resolvedPolicy = c
@@ -58,7 +59,7 @@ func main() {
 	}
 	resolvedSchema := *schemaPath
 	if resolvedSchema == "" {
-		candidates := []string{"../bap-edge/schema.json", "../ltd-agent/schema.json", "./schema.json", "../schema.json"}
+		candidates := []string{"bap-edge/schema.json", "./bap-edge/schema.json", "../bap-edge/schema.json", "../ltd-agent/schema.json", "./schema.json", "../schema.json"}
 		for _, c := range candidates {
 			if _, err := os.Stat(c); err == nil {
 				resolvedSchema = c
@@ -71,8 +72,9 @@ func main() {
 	schemaContent, _ := os.ReadFile(resolvedSchema)
 	policyStore := policy.NewStore(string(cedarContent), string(schemaContent))
 	auditStore := audit.NewStore()
+	sessionStore := session.NewStore()
 
-	server := api.NewServer(regStore, otcStore, minter, policyStore, auditStore)
+	server := api.NewServer(regStore, otcStore, minter, policyStore, auditStore, sessionStore)
 
 	addr := fmt.Sprintf(":%d", *port)
 	proto := "http"
@@ -81,7 +83,7 @@ func main() {
 	}
 	log.Printf("[bapcontrolplane] Central Control Plane for Bounded Authority Plane starting on %s://%s (Alias: ltd-service)", proto, addr)
 	log.Printf("[bapcontrolplane] Trust Domain: %s (SPIFFE format: spiffe://%s/app/{app_id}/instance/{instance_id})", *trustDomain, *trustDomain)
-	log.Printf("[bapcontrolplane] Features: Agent Registry, Multi-Instance Quotas, Binary Hash Attestation, Dynamic Policy Sync, Audit Ingestion")
+	log.Printf("[bapcontrolplane] Features: Agent Registry, Multi-Instance Quotas, Binary Hash Attestation, Dynamic Policy Sync, Audit Ingestion, Session Lifecycle")
 
 	srv := &http.Server{
 		Addr:         addr,

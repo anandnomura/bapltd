@@ -11,6 +11,10 @@ import (
 type Event struct {
 	EventID      string `json:"event_id"`
 	AgentID      string `json:"agent_id,omitempty"`
+	SessionID    string `json:"session_id,omitempty"`
+	UserID       string `json:"user_id,omitempty"`
+	UserEmail    string `json:"user_email,omitempty"`
+	SPIFFEID     string `json:"spiffe_id,omitempty"`
 	Timestamp    string `json:"timestamp"`
 	Source       string `json:"source"`
 	ClientPID    int    `json:"client_pid,omitempty"`
@@ -113,4 +117,11 @@ func (s *Store) VerifyChain() (bool, error) {
 		expectedPrev = ev.EventHash
 	}
 	return true, nil
+}
+
+// LastHash returns the current tail hash of the sequential SHA-256 chain.
+func (s *Store) LastHash() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.lastHash
 }

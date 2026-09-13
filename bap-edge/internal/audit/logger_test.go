@@ -2,6 +2,7 @@ package audit
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -89,3 +90,127 @@ func TestAuditLogDisabled(t *testing.T) {
 	}
 }
 
+func TestTamperEvidentHashAndVerification(t *testing.T) {
+	tempDir := t.TempDir()
+	logFile := filepath.Join(tempDir, "audit_tamper.jsonl")
+
+	entry1 := AuditEntry{
+		EventID:     "ev-1",
+		Timestamp:   time.Now().UTC(),
+		Source:      "claude-code",
+		Executable:  "git",
+		FullCommand: "git status",
+		Decision:    "allow",
+		ExitCode:    0,
+	}
+
+	entry2 := AuditEntry{
+		EventID:     "ev-2",
+		Timestamp:   time.Now().UTC(),
+		Source:      "claude-code",
+		Executable:  "cat",
+		FullCommand: "cat .env",
+		Decision:    "deny",
+		ExitCode:    1,
+	}
+
+	if err := Log(&entry1, logFile); err != nil {
+		t.Fatalf("Log entry 1 failed: %v", err)
+	}
+	if err := Log(&entry2, logFile); err != nil {
+		t.Fatalf("Log entry 2 failed: %v", err)
+	}
+
+	// Verify intact log
+	valid, count, err := VerifyLocalLog(logFile)
+	if err != nil || !valid || count != 2 {
+		t.Fatalf("Expected log to be valid with 2 entries, got valid=%v, count=%d, err=%v", valid, count, err)
+	}
+}
+
+func TestTamperDetectionOnModifiedEntry(t *testing.T) {
+	tempDir := t.TempDir()
+	logFile := filepath.Join(tempDir, "audit_tamper_attack.jsonl")
+
+	entry := AuditEntry{
+		EventID:     "ev-attack-1",
+		Timestamp:   time.Now().UTC(),
+		Source:      "claude-code",
+		Executable:  "cat",
+		FullCommand: "cat .env",
+		Decision:    "deny",
+		ExitCode:    1,
+	}
+
+	if err := Log(&entry, logFile); err != nil {
+		t.Fatalf("Log entry failed: %v", err)
+	}
+
+	// Read content and tamper with decision (change "deny" to "allow")
+	content, err := os.ReadFile(logFile)
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+
+	tamperedContent := []byte(string(content))
+	tamperedContent = []byte(bytes.Replace(tamperedContent, []byte(`"decision":"deny"`), []byte(`"decision":"allow"`), 1))
+	if err := os.WriteFile(logFile, tamperedContent, 0644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	// Verification must detect the tampering!
+	valid, _, err := VerifyLocalLog(logFile)
+	if valid || err == nil {
+		t.Fatalf("Expected tamper detection to fail verification, but got valid=%v, err=%v", valid, err)
+	}
+}
+
+func TestRemoveEntryPrunesBurden(t *testing.T) {
+	tempDir := t.TempDir()
+	logFile := filepath.Join(tempDir, "audit_prune.jsonl")
+
+	entry1 := AuditEntry{
+		EventID:     "ev-prune-1",
+		Timestamp:   time.Now().UTC(),
+		Source:      "claude-code",
+		FullCommand: "ls",
+		Decision:    "allow",
+	}
+	entry2 := AuditEntry{
+		EventID:     "ev-prune-2",
+		Timestamp:   time.Now().UTC(),
+		Source:      "claude-code",
+		FullCommand: "git branch",
+		Decision:    "allow",
+	}
+
+	_ = Log(&entry1, logFile)
+	_ = Log(&entry2, logFile)
+
+	// Remove entry1
+	if err := RemoveEntry("ev-prune-1", logFile); err != nil {
+		t.Fatalf("RemoveEntry failed: %v", err)
+	}
+
+	// Verify only entry2 remains
+	content, _ := os.ReadFile(logFile)
+	if bytes.Contains(content, []byte("ev-prune-1")) {
+		t.Fatalf("Expected ev-prune-1 to be removed from log")
+	}
+	if !bytes.Contains(content, []byte("ev-prune-2")) {
+		t.Fatalf("Expected ev-prune-2 to remain in log")
+	}
+
+	// Remove entry2 (all entries gone -> file must truncate to 0 bytes)
+	if err := RemoveEntry("ev-prune-2", logFile); err != nil {
+		t.Fatalf("RemoveEntry failed: %v", err)
+	}
+
+	info, err := os.Stat(logFile)
+	if err != nil {
+		t.Fatalf("Stat failed: %v", err)
+	}
+	if info.Size() != 0 {
+		t.Fatalf("Expected file size to be 0 bytes after pruning all entries, got %d", info.Size())
+	}
+}

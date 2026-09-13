@@ -17,6 +17,8 @@ import (
 type execContext struct {
 	startTime    time.Time
 	source       string
+	sessionID    string
+	serverURL    string
 	auditLogPath string
 	fullCommand  string
 	executable   string
@@ -31,7 +33,12 @@ func (ec *execContext) exit(resp types.ExecResponse, code int) {
 	if resp.Allowed {
 		decision = "allow"
 	}
+	uID, uEmail, spiffeID := resolveLocalIdentity()
 	entry := audit.AuditEntry{
+		SessionID:   ec.sessionID,
+		UserID:      uID,
+		UserEmail:   uEmail,
+		SPIFFEID:    spiffeID,
 		Timestamp:   ec.startTime.UTC(),
 		Source:      ec.source,
 		ClientPID:   os.Getpid(),
@@ -46,7 +53,8 @@ func (ec *execContext) exit(resp types.ExecResponse, code int) {
 	if !resp.Allowed && entry.Reason == "" {
 		entry.Reason = "Blocked by security policy"
 	}
-	_ = audit.Log(entry, ec.auditLogPath)
+	_ = audit.Log(&entry, ec.auditLogPath)
+	_, _, _ = audit.Transmit(entry, ec.serverURL, ec.auditLogPath)
 
 	exitWithResponse(resp, code, ec.forceJSON, ec.forceRaw)
 }
@@ -67,6 +75,21 @@ func RunExec(args []string) {
 	sourceFlag := fs.String("source", defaultSource, "Identifier of agent invoking command (e.g. claude-code, copilot, cli)")
 	auditLogFlag := fs.String("audit-log", "", "Path to audit log file in JSON lines (defaults to LTD_AUDIT_LOG or ltd-audit.jsonl, 'off' to disable)")
 
+	defaultSession := os.Getenv("BAP_SESSION_ID")
+	if defaultSession == "" {
+		defaultSession = os.Getenv("LTD_SESSION_ID")
+	}
+	sessionFlag := fs.String("session-id", defaultSession, "Session identifier for grouping agent actions")
+
+	defaultServer := os.Getenv("BAP_SERVER_URL")
+	if defaultServer == "" {
+		defaultServer = os.Getenv("LTD_SERVER_URL")
+	}
+	if defaultServer == "" {
+		defaultServer = "http://localhost:8080"
+	}
+	serverFlag := fs.String("server", defaultServer, "Central control plane URL for telemetry streaming")
+
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintf(os.Stderr, "Error parsing arguments: %v\n", err)
 		os.Exit(1)
@@ -75,6 +98,8 @@ func RunExec(args []string) {
 	ec := &execContext{
 		startTime:    startTime,
 		source:       *sourceFlag,
+		sessionID:    *sessionFlag,
+		serverURL:    *serverFlag,
 		auditLogPath: *auditLogFlag,
 		forceJSON:    *jsonFlag,
 		forceRaw:     *rawFlag,

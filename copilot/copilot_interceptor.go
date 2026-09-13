@@ -67,8 +67,25 @@ func main() {
 		ltdBin = findBinary(fallbackName)
 	}
 
-	// 4. Execute bapedge exec --source copilot --json "$command"
-	cmd := exec.Command(ltdBin, "exec", "--source", "copilot", "--json", command)
+	// 4. Resolve session identifier
+	sessionID := os.Getenv("BAP_SESSION_ID")
+	if sessionID == "" {
+		sessionID = os.Getenv("LTD_SESSION_ID")
+	}
+	if sessionID == "" {
+		sessionID = fmt.Sprintf("sess-copilot-pid-%d", os.Getppid())
+	}
+
+	// 5. Execute bapedge exec --source copilot --session-id <sessionID> --json "$command"
+	execArgs := []string{"exec", "--source", "copilot", "--json"}
+	if sessionID != "" {
+		execArgs = append(execArgs, "--session-id", sessionID)
+	}
+	execArgs = append(execArgs, command)
+
+	cmd := exec.Command(ltdBin, execArgs...)
+	cmd.Env = os.Environ()
+	cmd.Env = append(cmd.Env, "BAP_SESSION_ID="+sessionID)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

@@ -21,17 +21,19 @@ graph TD
         MINTER["OBO JWT Grant Minter"]
         BUNDLE["Cedar Policy Store & Sync"]
         AUDIT_CHAIN["Tamper-Evident Audit Chain (SHA-256)"]
+        SESS["Agent Session Engine & Live Radar"]
         
         CP --> REG
         CP --> ATTEST
         CP --> MINTER
         CP --> BUNDLE
         CP --> AUDIT_CHAIN
+        CP --> SESS
     end
 
     subgraph Edge_Environment ["Edge Developer Machine / Container (bapedge)"]
         subgraph Agents ["AI Agent Runtimes"]
-            CLAUDE["Claude Code CLI"]
+            CLAUDE["Claude Code CLI (run_claude_ollama.bat)"]
             COPILOT["GitHub Copilot CLI"]
             WORKER["Custom Autonomous Agent"]
         end
@@ -46,6 +48,7 @@ graph TD
             CEDAR["In-Process Cedar Engine (<2ms)"]
             STORE["PolicyStore (~/.ltd/policy/)"]
             AUDIT_LOCAL["Local Audit Logger (ltd-audit.jsonl)"]
+            TRANS["Telemetry Transmitter & Test Filter"]
             SANDBOX["OS Sandbox Primitives (Landlock/Win32)"]
         end
 
@@ -59,6 +62,7 @@ graph TD
         PEP --> CEDAR
         CEDAR --> STORE
         PEP --> AUDIT_LOCAL
+        AUDIT_LOCAL --> TRANS
         PEP --> SANDBOX
     end
 
@@ -72,9 +76,10 @@ graph TD
 
     %% Control Plane Comms
     PEP <-->|Dynamic Sync & Directives| BUNDLE
-    PEP -->|Audit Log Streaming| AUDIT_CHAIN
+    TRANS -->|Real-Time Telemetry Stream| AUDIT_CHAIN
     PEP <-->|OTC Enrollment & Attestation| REG
     PEP <-->|Ephemeral Authority Grants| MINTER
+    Agents <-->|Session Start / End Lifecycle| SESS
 ```
 
 ---
@@ -115,6 +120,17 @@ Key subsystems of `bapcontrolplane`:
   - Compares edge version/digest via `POST /api/v1/policy/sync` and responds with `CURRENT`, `UPDATE_REQUIRED`, or `KILL_SWITCH`.
 - **Tamper-Evident Audit Chain**:
   - Central audit log ingestion (`POST /api/v1/audit/ingest`) cryptographically links incoming edge telemetry records into an immutable SHA-256 hash chain ($H_n = \text{SHA256}(H_{n-1} \parallel \text{EventData})$). Retroactive log tampering is immediately detectable.
+- **Agent Session Lifecycle Engine**:
+  - Manages discrete agent execution sessions (`POST /api/v1/sessions/start`, `POST /api/v1/sessions/end`, `GET /api/v1/sessions`).
+  - Correlates incoming audit events by `session_id`, dynamically calculating allow/deny ratios, durations, and active status for real-time presence detection on the Inspector Live Radar.
+
+### 2.3. Edge Telemetry Streaming & Self-Test Isolation Filter
+
+`bapedge` bridges local execution with central fleet governance through a dedicated transmission subsystem (`internal/audit/transmitter.go`):
+- **Real-Time Synchronous Push (150ms Bounded)**: Whenever an execution event is logged locally, `bapedge` initiates a synchronous HTTP POST to `POST /api/v1/audit/ingest` with a strict 150ms timeout. If the control plane is reachable, the event is ingested immediately; if the network is partitioned or the server is down, the request silently drops without delaying the developer.
+- **Smart Self-Test Isolation**: Local unit tests, pytest runs, and batch verification scripts (`run_all_tests.bat`) generate hundreds of rapid synthetic test events. To prevent test runs from polluting the central audit chain:
+  - The transmitter inspects environment variables (`BAP_TEST_MODE=1`, `LTD_TEST=1`), source identifiers (matching `test`, `pytest`, `selftest`), and command strings (e.g. `pytest`, `test_leak.py`, `go test`).
+  - When a test execution is detected, the event is written exclusively to the local `ltd-audit.jsonl` file for automated test assertions, and network transmission to the control plane is cleanly suppressed.
 
 ---
 
@@ -309,6 +325,18 @@ In production, all control plane communication runs over HTTPS:
   - `--ca-cert`: Loads custom CA bundle into `x509.CertPool` to verify `bapcontrolplane`.
   - `--insecure`: Bypasses TLS verification in development/test setups.
 
+### 6.4. Agent Execution Session Engine & Live Presence Radar
+To transform isolated event logs into cohesive operational narratives, `bapcontrolplane` incorporates a stateful Session Engine:
+- **Session Lifecycle Hooks**:
+  - `POST /api/v1/sessions/start`: Invoked when an agent process starts (e.g. `run_claude_ollama.bat`). Captures `session_id`, source (`claude-code`, `copilot`), client PID, model identifier, and working directory.
+  - `POST /api/v1/sessions/end`: Invoked on agent exit. Records conclusion status (`completed`, `terminated`), calculates total session duration, and finalizes allow/deny counters.
+- **Correlation via `session_id`**:
+  - During execution, interceptors (`cchook`, `copilot_interceptor`) propagate `BAP_SESSION_ID` to `bapedge exec --session-id <id>`.
+  - When audit events are ingested at `/api/v1/audit/ingest`, the session store automatically increments event counts and allow/deny ratios for the linked session.
+- **Inspector Live Radar**:
+  - The Inspector web dashboard queries `/api/v1/inspector/data` to render active sessions as presence chips (`Claude Code [PID: ...]`, `Copilot CLI [PID: ...]`).
+  - Operators and executives can click any active presence chip to instantly filter the live topological event stream to that specific agent process.
+
 ---
 
 ## 7. Threat Model & Mitigations
@@ -322,4 +350,58 @@ In production, all control plane communication runs over HTTPS:
 | **T5** | **Control Plane Outage Exploitation** | Attacker cuts network connectivity to the control plane, hoping the edge fails open. | Edge defaults to fail-secure. If no cache exists, commands are denied. If cache exists, prior Cedar invariants are strictly enforced offline. |
 | **T6** | **Audit Log Tampering** | Attacker modifies local audit log files to erase evidence of denied unauthorized operations. | Audit records are streamed to `bapcontrolplane` and hashed into a sequential SHA-256 chain ($H_n = \text{SHA256}(H_{n-1} \parallel \text{Event})$). Any retroactive tampering breaks hash verification. |
 | **T7** | **Fleet Instance Impersonation & Rogue Scaling** | Attacker spins up unauthorized excess instances under an existing app ID. | Fleet OTC enforces strict quota limits (`max_instances`). Each instance undergoes independent binary attestation and receives an isolated SPIFFE workload identity. |
+| **T8** | **Synthetic Test Data Pollution** | High-frequency CI or pytest test suites flood central audit stores with fake test records. | `bapedge` inspects test environment flags (`BAP_TEST_MODE=1`) and command patterns, writing events to local `ltd-audit.jsonl` while completely suppressing network transmission to the server. |
+| **T9** | **Ghost / Unmonitored Agent Sessions** | Rogue or orphaned agent processes execute commands without administrative oversight. | The Session Lifecycle Engine tracks all active agent PIDs and durations, displaying live presence indicators on the Radar and alerting on unmonitored tool use. |
+
+---
+
+## 8. Database Architecture & High-Scale Ingestion Strategy
+
+Enterprise agent deployments scale to hundreds of concurrent coding sessions generating thousands of tool invocations per minute. BAP implements a dual-tier storage and ingestion model designed for zero-latency edge execution and multi-thousand event/sec central ingestion:
+
+### 8.1. Performance Test (PT) Benchmark: 50,000 Events
+The central control plane ingestion pipeline was benchmarked using `tests/perf_test_50k.py`:
+- **Total Ingested Events**: 50,000 events streamed in 50 batches of 1,000 events.
+- **Ingestion Time**: **1.40 seconds** total execution time.
+- **Throughput**: **35,620 events / second**.
+- **Batch Latency**: Average of **60.5 ms** per 1,000-event batch.
+- **Cryptographic Hash Verification**: Sequential SHA-256 chain verification of all 50,000 records completed in **32.6 ms**.
+
+### 8.2. Dual-Tier Storage Architecture
+
+```mermaid
+graph LR
+    subgraph Edge_Tier ["Edge Storage Tier (Zero Overhead)"]
+        EDGE_LOG["Append-Only JSONL (ltd-audit.jsonl)"]
+        EDGE_LOG -->|Local Fast Sub-1ms Append| DISK1[Local Host Disk]
+    end
+
+    subgraph Central_Tier ["Central Governance Storage Tier"]
+        INGEST["POST /api/v1/audit/ingest (Batch Endpoint)"]
+        HASH["Sequential SHA-256 Hash Chainer"]
+        INGEST --> HASH
+        
+        subgraph Deployment_Profiles ["Deployment Profiles"]
+            PROFILE_DEV["Single-Node / Appliance"]
+            PROFILE_CORP["Cloud / Distributed Enterprise"]
+        end
+        
+        HASH --> PROFILE_DEV
+        HASH --> PROFILE_CORP
+        
+        PROFILE_DEV --> SQLITE["Embedded SQLite (WAL Mode) or DuckDB"]
+        PROFILE_CORP --> CLICK["ClickHouse / TimescaleDB"]
+    end
+
+    EDGE_LOG -.->|150ms HTTP Push| INGEST
+```
+
+1. **Edge Tier (`bapedge`)**:
+   - **Storage Engine**: Append-only JSON Lines (`ltd-audit.jsonl`).
+   - **Rationale**: Requires zero native database drivers or external services on developer laptops. Writes complete in under 1 millisecond. If the operating system crashes or power is interrupted, prior append-only lines remain intact.
+2. **Central Tier (`bapcontrolplane`)**:
+   - **Single-Node / Appliance Profile**: Embedded **SQLite in WAL (Write-Ahead Logging) mode** or **DuckDB**.
+     - *Advantages*: Zero-maintenance single-binary deployment; concurrency support via WAL mode; ACID transactions; sub-millisecond query performance for sessions and events; single-file backup (`bap-audit.db`).
+   - **Cloud Enterprise / Fleet Deployment Profile**: **ClickHouse** or **TimescaleDB**.
+     - *Advantages*: Optimized for multi-billion record analytical queries; 10:1 columnar compression ratios; sub-second aggregation across thousands of developer machines and CI nodes; native partitioning by date, app, and tenant.
 
