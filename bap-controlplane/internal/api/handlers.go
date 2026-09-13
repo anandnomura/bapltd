@@ -76,6 +76,8 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/v1/sessions/end", s.handleSessionEnd)
 	s.mux.HandleFunc("/api/v1/sessions", s.handleListSessions)
 	s.mux.HandleFunc("/api/v1/sessions/", s.handleGetSession)
+	s.mux.HandleFunc("/api/v1/auth/envoy", s.handleEnvoyExtAuthz)
+	s.mux.HandleFunc("/api/v1/financial-records", s.handleFinancialRecords)
 	s.mux.HandleFunc("/inspector", s.handleInspectorUI)
 	s.mux.HandleFunc("/api/v1/inspector/data", s.handleInspectorData)
 }
@@ -319,6 +321,59 @@ func (s *Server) handleConsumeGrant(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) handleEnvoyExtAuthz(w http.ResponseWriter, r *http.Request) {
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" || !strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
+		w.Header().Set("X-BAP-Decision", "DENY")
+		writeError(w, http.StatusUnauthorized, "Blocked by BAP Gateway PEP: Missing or malformed BAP Bearer Grant")
+		return
+	}
+
+	token := strings.TrimSpace(authHeader[7:])
+	resource := r.Header.Get("X-Original-Uri")
+	if resource == "" {
+		resource = r.Header.Get("X-Forwarded-Uri")
+	}
+	if resource == "" {
+		resource = r.URL.Path
+	}
+
+	claims, err := s.minter.Consume(token, resource)
+	if err != nil {
+		w.Header().Set("X-BAP-Decision", "DENY")
+		writeError(w, http.StatusForbidden, "BAP Grant authorization failed: "+err.Error())
+		return
+	}
+
+	w.Header().Set("X-BAP-Decision", "ALLOW")
+	w.Header().Set("X-BAP-Verified-Workload", claims.Sub)
+	w.Header().Set("X-BAP-Verified-App", claims.AppID)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":   "authorized",
+		"workload": claims.Sub,
+		"app_id":   claims.AppID,
+		"scopes":   claims.Scopes,
+	})
+}
+
+func (s *Server) handleFinancialRecords(w http.ResponseWriter, r *http.Request) {
+	workload := r.Header.Get("X-BAP-Verified-Workload")
+	appID := r.Header.Get("X-BAP-Verified-App")
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":            "success",
+		"gateway":           "envoy-podman-pep",
+		"pep_decision":      "ALLOW",
+		"verified_workload": workload,
+		"verified_app":      appID,
+		"security_boundary": "Perimeter Gateway Enforcement Verified (Envoy Proxy)",
+		"accounts": []map[string]any{
+			{"account_id": "ACC-98124", "holder": "Apex Capital Management", "balance": 42500000.00, "currency": "USD", "risk_tier": "Tier-1"},
+			{"account_id": "ACC-54219", "holder": "Global Sovereign Fund LTD", "balance": 18200000.00, "currency": "EUR", "risk_tier": "Tier-1"},
+			{"account_id": "ACC-11048", "holder": "Enterprise Treasury Reserve", "balance": 95000000.00, "currency": "USD", "risk_tier": "Critical"},
+		},
+	})
+}
+
 func (s *Server) handleGetPolicyBundle(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
@@ -553,6 +608,9 @@ func (s *Server) handleSessionStart(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Failed to start session: "+err.Error())
 		return
+	}
+	if s.registry != nil {
+		s.registry.EnsureSessionAgent(sess.AppID, sess.InstanceID, sess.SPIFFEID, sess.UserEmail, sess.Hostname)
 	}
 	writeJSON(w, http.StatusOK, sess)
 }

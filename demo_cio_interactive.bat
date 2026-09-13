@@ -20,7 +20,14 @@ echo.
 echo ====================================================================================================
 echo.
 
-set SERVER_URL=http://localhost:8080
+:: Resolve Central Control Plane URL from environment or bap-config.json
+set SERVER_URL=%BAP_SERVER_URL%
+if "%SERVER_URL%"=="" (
+    if exist "bap-config.json" (
+        for /f "usebackq delims=" %%U in (`powershell -NoProfile -Command "(Get-Content bap-config.json -Raw | ConvertFrom-Json).controlplane_url"`) do set "SERVER_URL=%%U"
+    )
+)
+if "%SERVER_URL%"=="" set SERVER_URL=http://localhost:8080
 set SESS_ID=sess-cio-demo-%RANDOM%
 set AGENT_PID=%RANDOM%
 
@@ -223,29 +230,104 @@ bapedge.exe verify-log
 echo.
 echo  ==^> Cryptographic verification confirmed: Every action is immutable and tamper-evident.
 echo.
-echo Press [ENTER] to advance to Step 7 (Live Claude Code Agent and Session Wrap-up)...
+echo Press [ENTER] to advance to Step 7 (Autonomous Python AI Agent via SDK)...
 pause >nul
 
 :: =============================================================================
-:: STEP 7: Live Claude Code Integration and Graceful Teardown
+:: STEP 7: Autonomous Python AI Agent Integration (SDK Pattern)
 :: =============================================================================
 cls
 echo ====================================================================================================
-echo  STEP 7 of 7: LIVE CLAUDE CODE INTEGRATION AND SESSION TEARDOWN
+echo  STEP 7 of 8: AUTONOMOUS PYTHON AI AGENT INTEGRATION (SDK PATTERN)
 echo ====================================================================================================
 echo.
 echo  EXECUTIVE NARRATIVE FOR CIO:
-echo  "BAP is not a synthetic simulation -- it governs real Claude Code and Copilot sessions.
+echo  "BAP is not limited to Claude Code or Copilot. ANY internal Python agent -- built with
+echo   LangChain, CrewAI, AutoGen, or custom LLM loops -- integrates with BAP in 3 lines of code:
+echo.
+echo       with BAPSession(app_id='financial-analyst') as bap:
+echo           bap.exec('git status')
+echo.
+echo   Watch our test Python agent run live: it enrolls with its own SPIFFE ID, runs safe tools,
+echo   and has prompt injection attacks (cat .env, curl leak) intercepted with zero crashes."
+echo.
+echo  Press [ENTER] to launch the Autonomous Python Agent live...
+pause >nul
+echo.
+
+python .\python-agent\agent.py
+
+echo.
+echo  ==^> LOOK AT YOUR BROWSER DASHBOARD NOW:
+echo      1. Notice the AMBER 'Python Agent' chip and toast that appeared on the Live Radar
+echo      2. Both ALLOW and DENY counters incremented on the dashboard
+echo      3. The Agent Sessions tab shows the exact session lifecycle and user attribution
+echo.
+echo Press [ENTER] to advance to Step 8 (The Rogue Agent Defense: Gateway PEP)...
+pause >nul
+
+:: =============================================================================
+:: STEP 8: The Rogue Agent Defense (Gateway PEP vs Raw Direct Sockets)
+:: =============================================================================
+cls
+echo ====================================================================================================
+echo  STEP 8 of 9: THE ROGUE AGENT DEFENSE (GATEWAY PEP vs RAW DIRECT SOCKETS)
+echo ====================================================================================================
+echo.
+echo  EXECUTIVE NARRATIVE FOR CIO:
+echo  "A critical question enterprise security teams ask: 'What if a rogue agent refuses to use the
+echo   BAP SDK and opens raw network sockets directly to our banking APIs or databases?'
+echo   BAP enforces a Dual-PEP model: client-side speed on the edge + non-bypassable Gateway PEP at
+echo   the network boundary.
+echo   * Option 3 (Active Demo): Zero-dependency native PEP (bapgateway.exe) running right now.
+echo   * Option 1 (Cloud-Native): Production Envoy Proxy on Podman/Docker (see envoy\ENVOY_PODMAN_GUIDE.md).
+echo   Without a BAP Grant, raw socket calls are terminated with HTTP 401/403 at the perimeter."
+echo.
+echo  [1/2] Launching Rogue Agent (bypasses bap-sdk, attempts direct raw socket access)...
+python .\python-agent\rogue_agent.py
+
+echo.
+echo  [2/2] Launching Governed Agent (uses bap-sdk, acquires BAP Grant, authorized at Gateway)...
+python .\python-agent\governed_agent.py
+
+echo.
+echo  ==^> KEY TAKEAWAY FOR CIO:
+echo      Even with ZERO client cooperation, rogue agents CANNOT touch internal systems.
+echo      The Gateway Policy Enforcement Point guarantees Zero-Standing Privilege at the network perimeter.
+echo.
+echo Press [ENTER] to advance to Step 9 (Live Claude Code and Final Wrap-up)...
+pause >nul
+
+:: =============================================================================
+:: STEP 9: Live Claude Code Integration and Session Teardown
+:: =============================================================================
+cls
+echo ====================================================================================================
+echo  STEP 9 of 9: LIVE CLAUDE CODE INTEGRATION AND SESSION TEARDOWN
+echo ====================================================================================================
+echo.
+echo  EXECUTIVE NARRATIVE FOR CIO:
+echo  "BAP provides full environment portability:
 echo   Detected binary on this machine: %CLAUDE_BIN%
 echo   Environment configuration:      %CLAUDE_ENV%"
 echo.
-echo  Would you like to launch an interactive Claude Code session right now? (Y/N)
-set /p LAUNCH_CLAUDE="> "
+echo  Options:
+echo  [1] Run automated governed prompt ("run git status and check .env")
+echo  [2] Launch full interactive Claude Code terminal (governed by BAP)
+echo  [3] Skip to demonstration summary
+echo.
+set /p LAUNCH_CLAUDE="Select option (1, 2, or 3): "
 
-if /i "%LAUNCH_CLAUDE%"=="Y" (
+if "%LAUNCH_CLAUDE%"=="1" (
     echo.
-    echo [*] Launching Claude Code with local interceptor...
+    echo [*] Executing automated Claude prompt with BAP interceptor...
     call run_claude_ollama.bat "run git status and check .env"
+)
+if "%LAUNCH_CLAUDE%"=="2" (
+    echo.
+    echo [*] Launching interactive Claude Code in dedicated governed window...
+    echo [*] Type 'exit' inside Claude Code when finished to return here.
+    start /wait cmd.exe /c "call run_claude_ollama.bat"
 )
 
 echo.
@@ -262,11 +344,14 @@ echo.
 echo  WHAT WE DEMONSTRATED TO THE CIO:
 echo  1. Zero-Standing Privilege: All commands executed under short-lived, bounded authority.
 echo  2. Dual-Identity Binding: Corporate apiKeyHelper user bound to SPIFFE workload identity.
-echo  3. Sub-2ms Latency: Legitimate developer commands run at full machine speed.
+echo  3. Sub-2ms Latency: Legitimate developer commands run at full machine speed on the edge.
 echo  4. Zero-Trust Shield: Secret reads, evasive renames, and network exfiltration blocked.
-echo  5. Executive Observability: Real-time Live Radar, toast alerts, and interactive session cards.
-echo  6. Cryptographic Integrity: SHA-256 hash chains prevent log tampering.
-echo  7. Seamless Portability: Runs via claude-code.cmd at work or claude on personal laptops.
+echo  5. Dual-PEP Architecture: Cooperative Edge PEP + Non-bypassable Ingress Gateway PEP (Envoy/Istio).
+echo  6. Rogue Agent Defense: Direct socket calls without BAP grants blocked with 401 at the gateway.
+echo  7. Executive Observability: Real-time Live Radar, toast alerts, and interactive session cards.
+echo  8. Cryptographic Integrity: SHA-256 hash chains prevent log tampering.
+echo  9. Seamless Portability: Runs via claude-code.cmd at work or claude on personal laptops.
+echo 10. Universal SDK Integration: Python agents (LangChain/CrewAI/AutoGen) governed in 3 lines of code.
 echo.
 echo ====================================================================================================
 echo Press any key to exit...

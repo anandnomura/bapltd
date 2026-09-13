@@ -927,7 +927,10 @@ when {
         // Check for newly started workloads
         activeSessions.forEach(s => {
           if (!knownActiveSessionIds.has(s.session_id)) {
-            const agentName = (s.app_id || "").includes("claude") ? "Claude Code" : (s.app_id || "Autonomous Agent");
+            const isClaude = (s.app_id || "").includes("claude");
+            const isCopilot = (s.app_id || "").includes("copilot");
+            const isPython = (s.app_id || "").includes("python");
+            const agentName = isClaude ? "Claude Code" : isCopilot ? "Copilot CLI" : isPython ? "Python Agent (SDK)" : (s.app_id || "Autonomous Agent");
             showToast("⚡ NEW WORKLOAD ENROLLED (LIVE)", `${agentName} [PID: ${s.client_pid || 'active'}] initiated session ${s.session_id}`, "agent_start");
           }
         });
@@ -954,7 +957,7 @@ when {
           summaryTextEl.textContent = `Zero-Trust broker actively intercepting ${totalActive} live workload session(s) in sub-2ms`;
           summaryTextEl.className = "text-[11px] text-emerald-400 font-mono mt-0.5 font-semibold";
         } else {
-          summaryTextEl.textContent = "Monitoring edge sessions & heartbeats on port 8080. Start Claude or Copilot to watch presence live.";
+          summaryTextEl.textContent = "Monitoring edge sessions & heartbeats on port 8080. Start Claude, Copilot, or Python Agent to watch presence live.";
           summaryTextEl.className = "text-[11px] text-slate-400 font-mono mt-0.5";
         }
       }
@@ -968,8 +971,9 @@ when {
           activeSessions.forEach(s => {
             const isClaude = (s.app_id || "").includes("claude");
             const isCopilot = (s.app_id || "").includes("copilot");
-            const appLabel = isClaude ? "Claude Code" : isCopilot ? "Copilot CLI" : (s.app_id || "AI Agent");
-            const avatarColor = isClaude ? "bg-purple-600 text-purple-100" : isCopilot ? "bg-sky-600 text-sky-100" : "bg-emerald-600 text-emerald-100";
+            const isPython = (s.app_id || "").includes("python");
+            const appLabel = isClaude ? "Claude Code" : isCopilot ? "Copilot CLI" : isPython ? "Python Agent" : (s.app_id || "AI Agent");
+            const avatarColor = isClaude ? "bg-purple-600 text-purple-100" : isCopilot ? "bg-sky-600 text-sky-100" : isPython ? "bg-amber-600 text-amber-100" : "bg-emerald-600 text-emerald-100";
 
             const chip = document.createElement("button");
             chip.className = "px-3 py-1.5 rounded-xl bg-slate-950 border border-emerald-500/60 hover:border-emerald-400 shadow-lg shadow-emerald-950/50 text-xs font-mono flex items-center space-x-2 transition group";
@@ -998,7 +1002,10 @@ when {
       if (nodeAgent && totalActive > 0) {
         const topAgent = activeSessions[0];
         const isClaude = (topAgent.app_id || "").includes("claude");
-        document.getElementById("flow-agent-name").textContent = isClaude ? "Claude Code" : (topAgent.app_id || "Live Agent");
+        const isCopilot = (topAgent.app_id || "").includes("copilot");
+        const isPython = (topAgent.app_id || "").includes("python");
+        const agentName = isClaude ? "Claude Code" : isCopilot ? "Copilot CLI" : isPython ? "Python Agent" : (topAgent.app_id || "Live Agent");
+        document.getElementById("flow-agent-name").textContent = agentName;
         document.getElementById("flow-agent-pid").textContent = `PID: ${topAgent.client_pid || 'Active'}`;
         nodeAgent.classList.add("border-emerald-500", "shadow-lg", "shadow-emerald-950/50");
       }

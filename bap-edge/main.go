@@ -14,6 +14,7 @@ Usage:
   bapedge <command> [arguments]
 
 Available Commands:
+  config    View or update central control plane and gateway host URLs
   register  Enroll edge LTD with central BAP Control Plane using one-time code (OTC)
   sync      Synchronize or inspect local policy cache from control plane (with offline fallback)
   serve     Start the zero-trust attestation server on Unix domain socket
@@ -62,6 +63,11 @@ func main() {
 	case "attest":
 		if err := cmd.RunAttest(args); err != nil {
 			fmt.Fprintf(os.Stderr, "Error running attestation client: %v\n", err)
+			os.Exit(1)
+		}
+	case "config":
+		if err := cmd.RunConfig(args); err != nil {
+			fmt.Fprintf(os.Stderr, "Error managing configuration: %v\n", err)
 			os.Exit(1)
 		}
 	case "verify-log":

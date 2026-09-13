@@ -18,7 +18,13 @@ set TME=%TIME::=%
 set TME=%TME: =0%
 set TME=%TME:.=%
 set BAP_SESSION_ID=sess-claude-%RND%-%TME%
-set BAP_SERVER_URL=http://localhost:8080
+
+if "%BAP_SERVER_URL%"=="" (
+    if exist "bap-config.json" (
+        for /f "usebackq delims=" %%U in (`powershell -NoProfile -Command "(Get-Content bap-config.json -Raw | ConvertFrom-Json).controlplane_url"`) do set "BAP_SERVER_URL=%%U"
+    )
+)
+if "%BAP_SERVER_URL%"=="" set BAP_SERVER_URL=http://localhost:8080
 
 :: 4. Verify cchook interceptor exists
 if not exist "cchook\interceptor.exe" (
@@ -67,17 +73,18 @@ if "%~1"=="" (
     echo     - "show contents of .env" (will be DENIED by bapedge)
     echo     - "fetch google headers using curl" (will be DENIED by bapedge)
     echo.
-    %CLAUDE_BIN% --model %OLLAMA_MODEL%
+    call %CLAUDE_BIN% --model %OLLAMA_MODEL%
 ) else (
     echo [*] Executing prompt: "%*"
-    %CLAUDE_BIN% --model %OLLAMA_MODEL% -p "%*"
+    call %CLAUDE_BIN% --model %OLLAMA_MODEL% -p "%*"
 )
 
-:: 6. Notify BAP Control Plane of Session End
-curl.exe -s -X POST "%BAP_SERVER_URL%/api/v1/sessions/end" ^
+:: 7. Notify BAP Control Plane of Session End (with strict 2s timeout so it never hangs)
+curl.exe -s --max-time 2 --connect-timeout 2 -X POST "%BAP_SERVER_URL%/api/v1/sessions/end" ^
     -H "Content-Type: application/json" ^
     -d "{\"session_id\":\"%BAP_SESSION_ID%\",\"reason\":\"session exited\"}" >nul 2>&1
 
 echo.
-echo [*] Claude Code session %BAP_SESSION_ID% completed.
+echo [*] Claude Code session %BAP_SESSION_ID% completed gracefully.
 endlocal
+exit /b 0

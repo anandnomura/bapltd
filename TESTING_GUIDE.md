@@ -55,6 +55,39 @@ python tests/test_control_plane.py
   [PASS] 11d. Kill-switch persisted offline: network partition cannot bypass emergency lock
   ```
 
+### 1.3 Python Agent SDK Test Suite (Pytest)
+Verifies the zero-dependency Python SDK (`bap-sdk`), context manager lifecycle, permitted toolchain execution, threat interception (`cat .env`, `curl`), and graceful session teardown:
+```cmd
+pytest tests/test_python_agent.py
+```
+- **Execution Time**: ~0.25 seconds
+- **Expected Output**:
+  ```text
+  tests\test_python_agent.py . [100%]
+  1 passed in 0.25s
+  ```
+
+### 1.4 Autonomous Python AI Agent Demo Runner
+Executes the autonomous financial analytics agent workflow with live BAP Edge governance and visual threat interception:
+```cmd
+run_python_agent.bat
+:: Or directly via python:
+python python-agent/agent.py
+```
+
+### 1.5 Enterprise Nexus Package Build Verification
+Compiles the universal wheel and source distribution into `python-agent/dist/` and prints Nexus publishing instructions:
+```cmd
+python-agent\build_package.bat
+```
+- **Expected Output**:
+  ```text
+  PACKAGE BUILD SUCCESSFUL!
+  Generated Artifacts in .\dist:
+  bap-sdk-0.1.0.tar.gz
+  bap_sdk-0.1.0-py3-none-any.whl
+  ```
+
 ---
 
 ## 2. Manual Test Section 1: `bapcontrolplane` UP Testing

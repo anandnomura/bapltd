@@ -59,6 +59,11 @@ The following table summarizes all capabilities implemented in the BAP architect
 | **28** | **Agent Session Lifecycle Engine** | `bapcontrolplane` | Session APIs (`/api/v1/sessions/start`, `/end`, list) tracking active workloads, PIDs, and allow/deny metrics. | Comprehensive session-level governance; tracks agent lifecycles across Claude Code, Copilot, and CLI workers. |
 | **29** | **Live Workload Radar & Presence Detection** | Inspector UI | Real-time presence banner with pulsing beacon, active agent chips, PID tracking, and live toast alerts. | Executive-ready (CIO) visibility: instantly shows who is actively running, what tools they invoke, and blocked threats. |
 | **30** | **50K Ingestion Scale & Tiered Storage** | Platform Architecture | High-throughput ingestion benchmarked at 35,620 events/sec; dual-tier edge JSONL + central SQLite/DuckDB/ClickHouse. | Scalable enterprise data architecture; handles intensive agent fleets with sub-second queries and verifiable chains. |
+| **31** | **Python Agent SDK (`bap-sdk`)** | `python-agent` | Lightweight, zero-dependency client (`BAPSession`, `BAPExecResult`, `@bap.tool`) integrating with LangChain, CrewAI, AutoGen. | Enables any Python AI agent to adopt zero-trust governance in 3 lines of code with sub-2ms enforcement. |
+| **32** | **Enterprise Nexus / Artifactory Distribution** | Packaging Pipeline | Standardized PEP 517/621 `.whl` and `.tar.gz` distribution via `build_package.bat` for internal PyPI mirrors. | Frictionless enterprise distribution; development teams install via corporate Nexus without public internet access. |
+| **33** | **Rogue & Non-Registered Agent Prevention** | Multi-Subsystem | 6-Layer security perimeter: binary attestation, OTC fleet tokens, Cedar default-deny, atomic token burning, kill-switch, dual-identity. | Guarantees non-registered, rogue, or spoofed agents cannot execute shell actions or access corporate resources. |
+| **34** | **Zero-Trust Gateway PEP (Envoy / Istio)** | `bap-gateway` & Envoy | Ingress perimeter authorization via `ext_authz` validating and burning BAP Grants. | Defeats rogue agents bypassing client SDKs; unauthenticated or replayed raw socket calls are terminated with 401/403. |
+| **35** | **Central Endpoint & Fleet Configuration** | `bap-config.json` & `bapedge config` | Single source of truth for corporate hosts (`controlplane_url`, `gateway_url`, `envoy_url`) resolved across laptops, MDM, and environment variables. | Effortless enterprise deployment; all Claude Code, Copilot, and Python agents automatically connect to the corporate network. |
 
 ---
 
@@ -263,6 +268,116 @@ graph TD
 
 ---
 
+### Pillar 13: Python Agent SDK (`bap-sdk`) & Zero-Trust Tool Wrapper
+- **The Gap**: Modern AI development occurs predominantly in Python using frameworks like LangChain, CrewAI, AutoGen, and LlamaIndex. Requiring developers to write custom REST boilerplate or learn complex proxy configurations creates adoption friction.
+- **BAP Implementation**:
+  - **3-Line Integration**: Provides an enterprise Python package (`bap-sdk`) with a clean context manager:
+    ```python
+    with BAPSession(app_id="financial-analyst") as bap:
+        res = bap.exec("git status")  # Permitted (<2ms)
+        bap.exec("cat .env")          # Raises BAPPolicyViolation
+    ```
+  - **Zero Third-Party Dependencies**: Built exclusively on the Python standard library (`urllib`, `subprocess`, `json`). Eliminates dependency conflicts, supply-chain vulnerabilities, and heavy virtualenv bloat.
+  - **Dynamic Agent Registry Enrollment**: Automatically invokes `EnsureSessionAgent` on the control plane upon session start (`/api/v1/sessions/start`), registering the agent's SPIFFE ID, owner email, host environment, and process PID into the central Agent Registry without manual onboarding.
+  - **Tool Decorator Pattern**: Exposes `@bap.tool` to effortlessly wrap agent function-calling tools in LangChain and CrewAI with zero-trust validation.
+
+---
+
+### Pillar 14: Enterprise Nexus / Artifactory Distribution Architecture
+- **The Gap**: Corporate environments prohibit direct internet access (`pip install from pypi.org`). Python packages must be vetted, built into standard wheels (`.whl`), and hosted on internal enterprise package managers (Sonatype Nexus or JFrog Artifactory).
+- **BAP Implementation**:
+  - **Standardized Packaging**: Dual PEP 517/621 (`pyproject.toml`) and setuptools (`setup.py`) structure supporting Python 3.8 through 3.12+.
+  - **One-Click Build Pipeline**: `python-agent/build_package.bat` automates building pristine source distributions (`bap-sdk-0.1.0.tar.gz`) and universal wheels (`bap_sdk-0.1.0-py3-none-any.whl`) into `./dist`.
+  - **Corporate Nexus Publishing & Installation**:
+    ```bash
+    # Publish to Internal Enterprise PyPI
+    twine upload --repository-url https://nexus.internal.company.com/repository/pypi-internal/ dist/*
+    
+    # Developer Team Installation
+    pip install bap-sdk --index-url https://nexus.internal.company.com/repository/pypi-internal/simple
+    ```
+
+---
+
+### Pillar 15: Rogue & Non-Registered Agent Prevention (6-Layer Security Model)
+- **The Gap**: What prevents a rogue insider, compromised service, or unauthorized developer script from running outside BAP governance or spoofing an approved agent?
+- **BAP Implementation**: BAP enforces a multi-layered defensive perimeter where no single bypass allows unauthorized execution:
+  1. **Cryptographic Binary Hash Attestation**: The control plane validates the SHA-256 digest of executing agent binaries against pre-registered whitelists (`POST /api/v1/agents/register`). Unregistered or altered binaries are denied enrollment (`403 Forbidden`).
+  2. **Single-Use OTC & Fleet Quotas**: Registration requires high-entropy One-Time Credentials (`LTD-OTC-xxxx-xxxx`) that burn atomically upon first use, or Fleet Tokens (`BAP-FLEET-xxxx-xxxx`) that strictly enforce maximum instance quotas (`max_instances`). Rogue scripts cannot self-issue credentials.
+  3. **In-Process Cedar Default-Deny**: The edge policy enforcement point operates under a strict **Default-Deny** paradigm. Even if a script runs locally, any tool invocation dispatched through `bapedge` that lacks an explicit `permit` rule is blocked before process creation ($<2\text{ms}$).
+  4. **Atomic Grant Burning (Anti-Replay)**: Authority grants (JWT-SVIDs) minted by the control plane are single-use. Downstream internal microservices call `/api/v1/grants/consume` to destroy the grant upon execution, preventing token theft and replay attacks.
+  5. **Dynamic Central Kill-Switch**: Security operators can instantly revoke any compromised instance (`/api/v1/agents/revoke`) or entire application fleet (`/api/v1/apps/revoke`). Revocation writes persistent state (`kill_switch: true`) to the edge, surviving restarts and network disconnections.
+  6. **Dual Identity Attribution & Immutable Audit**: Every action binds the human identity (`apiKeyHelper` token or authenticated OS user) to the workload SPIFFE ID. Telemetry is hashed into a sequential SHA-256 chain ($H_n = \text{SHA256}(H_{n-1} \parallel \text{Event})$), preventing rogue agents from hiding their forensic trail.
+
+---
+
+### Pillar 16: Zero-Trust Gateway PEP & Dual Gateway Strategies (Envoy / Istio & Native PEP)
+- **The Gap**: Client-side SDKs (`bap-sdk`) and developer hooks (`cchook`) are **cooperative PEPs**. If an adversarial prompt injection or rogue script intentionally bypasses `bap-sdk` and invokes raw networking sockets directly (`import requests; requests.get(...)`), no userspace client-side hook can physically prevent that packet from leaving the network card without OS-level kernel drivers.
+- **BAP Implementation (The Dual-PEP Architecture)**:
+  - **Cooperative Edge PEP**: `bapedge` provides sub-2ms local governance for developer toolchain execution (`git`, `python`, `cat .env`, destructive shell commands).
+  - **Non-Bypassable Gateway PEP**: All internal microservices, databases, and core banking APIs are shielded behind an API Gateway (Envoy Proxy, Istio Service Mesh, or `bap-gateway`).
+  - **Mandatory Ingress Verification**: The Gateway PEP inspects every incoming HTTP request for a valid BAP Grant Bearer Token (`Authorization: Bearer <BAP_GRANT>`).
+
+- **Two Complementary Implementation Strategies**:
+  | Strategy | Implementation | Enterprise Fit | Deployment Model |
+  | :--- | :--- | :--- | :--- |
+  | **Option 3: Pure-Go Native PEP** | `bapgateway.exe` (`bap-gateway/`) | **Developer Workstations & Live Demos**: Zero external dependencies, instant startup (<5ms), 100% reliable on Windows/Mac/Linux laptops without requiring Docker/Podman or hypervisor permissions. Eliminates the **2-month Infosec review** delay required when distributing third-party executables across corporate laptop fleets. | Integrated into `demo_cio_interactive.bat` and `run_all_tests.bat`. |
+  | **Option 1: Cloud-Native Envoy Proxy** | Envoy on Podman / Docker (`envoy/`) | **Enterprise Linux Servers & Kubernetes/OpenShift**: Uses the pre-approved, industry-standard `docker.io/envoyproxy/envoy` container image with native `envoy.filters.http.ext_authz`. Ideal for cloud-native clusters where custom binaries are discouraged in favor of containerized sidecars/gateways. | Standalone showcase in `envoy/` (`run_envoy_podman.sh`, `demo_envoy.py`, `ENVOY_PODMAN_GUIDE.md`). |
+
+- **Envoy `ext_authz` Integration**:
+  ```yaml
+  # Production Envoy External Authorization Filter (PEP)
+  - name: envoy.filters.http.ext_authz
+    typed_config:
+      "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
+      http_service:
+        server_uri:
+          uri: "http://host.containers.internal:8080/api/v1/auth/envoy"
+          cluster: bap_controlplane_authz_cluster
+          timeout: 0.5s
+        authorization_request:
+          allowed_headers:
+            patterns:
+            - exact: "authorization"
+            - exact: "x-bap-session-id"
+            - exact: "x-original-uri"
+        authorization_response:
+          allowed_upstream_headers:
+            patterns:
+            - exact: "x-bap-verified-workload"
+            - exact: "x-bap-verified-app"
+            - exact: "x-bap-decision"
+        failure_mode_allow: false  # Fail-secure: Drop traffic if auth service is down
+  ```
+- **Atomic Grant Destruction**: When a governed agent presents a grant, the Gateway calls `/api/v1/auth/envoy` (or `/api/v1/grants/consume`) to validate signature, verify SPIFFE workload claims, and atomically burn the token. Replayed tokens return `403 Forbidden`.
+- **Rogue Neutralization**: When a rogue agent attempts direct socket access without going through BAP, the Gateway terminates the connection with `401 Unauthorized`. The backend service is **never contacted**, and no data is exposed.
+
+---
+
+### Pillar 17: Central Endpoint Configuration & Corporate Fleet Routing
+- **The Gap**: In corporate enterprise deployments, `bapcontrolplane` runs on a central enterprise network (e.g., `https://bap-controlplane.corp.internal:8080`), while Claude Code, Copilot, and Python agents run across hundreds of developer laptops. Developers should not need to manually configure IPs, edit code, or tweak scripts across individual repositories.
+- **BAP Implementation (The Single Source of Truth)**:
+  - **Single Config File (`bap-config.json`)**:
+    ```json
+    {
+      "controlplane_url": "https://bap-controlplane.corp.internal:8080",
+      "gateway_url": "https://bap-gateway.corp.internal:9090",
+      "envoy_url": "https://bap-envoy.corp.internal:10000",
+      "trust_domain": "bap.corp.internal",
+      "environment": "production"
+    }
+    ```
+  - **Hierarchical Endpoint Resolution**:
+    1. **Environment Variables**: `BAP_SERVER_URL`, `BAP_GATEWAY_URL` (highest precedence for CI/CD).
+    2. **Project Root**: `./bap-config.json` (checked into repo for team alignment).
+    3. **User Profile**: `~/.bap/config.json` (machine-wide developer preferences).
+    4. **System-Wide Managed Path**: `%PROGRAMDATA%\BAP\config.json` (Windows) or `/etc/bap/config.json` (Linux) for zero-touch IT/InTune/MDM fleet distribution.
+    5. **Default Fallback**: `http://localhost:8080` (safe developer laptop fallback).
+  - **CLI Command**: `bapedge config show` and `bapedge config set --server <url> [--global]`.
+  - **Universal Reach**: `bapedge`, `cchook` (Claude Code), `copilot`, `bap-sdk` (Python), and `bapgateway` all automatically bind to this single central host.
+
+---
+
 ## 4. End-to-End Threat & Evasion Defense Matrix
 
 | Threat ID | Threat Vector | Malicious Agent Action | BAP Defense-in-Depth Mitigation |
@@ -279,6 +394,9 @@ graph TD
 | **E10** | **Audit Log Tampering** | Attacker deletes or edits lines in local audit logs. | Central audit logs are linked into a sequential SHA-256 chain. Tampering breaks the hash chain. |
 | **E11** | **Telemetry Flooding / Test Poisoning** | Synthetic test suites flood central server with fake audit records. | `bapedge` filters test-mode events (`BAP_TEST_MODE=1`, test patterns) from network transmission; zero server pollution. |
 | **E12** | **Ghost / Unmonitored Sessions** | Rogue or zombie agent processes execute commands without supervision. | Session Lifecycle Engine enforces session start/end tracking and displays live client badges on the Radar. |
+| **E13** | **Unregistered / Rogue Script Execution** | Attacker runs an unauthorized standalone Python script without BAP registration. | Cedar default-deny blocks unpermitted tools; control plane rejects unauthenticated grant requests. |
+| **E14** | **Spoofed SPIFFE Identity Claim** | Malicious agent fabricates `spiffe://bap.internal/...` header to impersonate another service. | Control plane validates HMAC signature and instance enrollment record; forged claims return `401/403`. |
+| **E15** | **Direct Socket Bypass (Rogue Script vs Gateway)** | Rogue agent script ignores `bap-sdk` and calls protected microservices via raw HTTP sockets (`requests.get`). | Ingress Gateway PEP (Envoy / `bap-gateway`) drops request immediately (`401 Unauthorized`). Backend core systems are 100% isolated. |
 
 ---
 

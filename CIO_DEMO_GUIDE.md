@@ -44,8 +44,9 @@ When you begin the meeting with your CIO, set the stage with this opening statem
 | **4** | **Evasive Attack Bypasses Thwarted** | *"Naive filters look for `cat .env`. What if the agent tries to evade detection by renaming the file first with `ren .env notes.txt`?"* | Press `[Enter]` on **Step 4** | Evasive rename is caught and blocked immediately. Denied counter increments. |
 | **5** | **Data Loss Prevention (Egress)** | *"What if an agent tries to exfiltrate proprietary source code to an external server via `curl`?"* | Press `[Enter]` on **Step 5** | Egress blocked cold at the process boundary. |
 | **6** | **Cryptographic Anti-Tamper Audit** | *"Can a rogue actor or malicious script modify or delete local logs on the laptop? Every event is chained with SHA-256. Let's verify."* | Press `[Enter]` on **Step 6** | Console runs `bapedge verify-log` and verifies the sequential hash chain: `[+] HASH CHAIN INTACT`. |
-| **7** | **Real Claude Code & Environment Portability** | *"BAP runs seamlessly across environments. In the office, it detects `claude-code.cmd`. On a personal laptop, it detects `claude`."* | Select `Y` to run live Claude prompt or `N` to wrap up | Live Claude Code executes with the `cchook` zero-trust interceptor active. |
-| **8** | **Session Teardown & Burden Pruning** | *"When the session ends, telemetry is synced to the control plane, and local logs are pruned upon verified cryptographic handshake so laptops carry zero disk burden."* | Press `[Enter]` to conclude | Browser displays `○ WORKLOAD TERMINATED` toast; session transitions to `CLOSED`. |
+| **7** | **Autonomous Python Agent (SDK Pattern)** | *"BAP is not limited to Claude Code. ANY internal Python agent -- built with LangChain, CrewAI, AutoGen, or custom LLM loops -- integrates in 3 lines using our Python SDK."* | Press `[Enter]` on **Step 7** | Watch the **AMBER** `Python Agent` chip pulse on the Live Radar. Toast appears: `⚡ NEW WORKLOAD ENROLLED`. Both ALLOW and DENY counters increment as its attacks (`cat .env`, `curl`) are intercepted! |
+| **8** | **The Rogue Agent Defense (Gateway PEP)** | *"What if an autonomous rogue script ignores the BAP SDK and opens raw network sockets directly to our core banking APIs? BAP enforces a Dual-PEP model: edge speed + non-bypassable Gateway PEP at the perimeter."* | Press `[Enter]` on **Step 8** | Watch `rogue_agent.py` get dropped at the perimeter (`401 Unauthorized`), while `governed_agent.py` presents its BAP Grant and retrieves protected financial records (`200 OK`). |
+| **9** | **Real Claude Code & Session Teardown** | *"BAP runs seamlessly across environments. In the office, it detects `claude-code.cmd`. On a personal laptop, it detects `claude`. Now let's conclude with graceful teardown and burden pruning."* | Select `1` (automated prompt), `2` (interactive terminal), or `3` (skip) | Live Claude Code executes if selected; browser displays `○ WORKLOAD TERMINATED` toast; session transitions to `CLOSED`. |
 
 ---
 
@@ -57,12 +58,25 @@ When you begin the meeting with your CIO, set the stage with this opening statem
 ### Q2: *"What happens when developers are on a plane or the network drops?"*
 > **Answer**: *"BAP is 100% fail-secure and offline-capable. Invariants and policies are cached cryptographically on the device. If the central control plane is unreachable, the agent continues working safely without failing open."*
 
-### Q3: *"Does this require disturbing our corporate SSO or Claude Code's `apiKeyHelper`?"*
+### Q3: *"Can we govern our own internal Python AI agents (LangChain, CrewAI, AutoGen)?"*
+> **Answer**: *"Yes. We provide a lightweight, zero-dependency Python SDK (`bap-sdk`). Any Python agent wraps tool execution with `with BAPSession(...) as bap: bap.exec(...)`. It automatically acquires ephemeral SPIFFE credentials, enforces Cedar invariants, and streams telemetry to the control plane in real time."*
+
+### Q4: *"Does this require disturbing our corporate SSO or Claude Code's `apiKeyHelper`?"*
 > **Answer**: *"Not at all. Corporate `apiKeyHelper` operates strictly upstream between the developer and Anthropic/LLM gateway. BAP operates strictly downstream at the operating system execution boundary. BAP Stage 1 natively parses the corporate ID token to bind user identity without touching or disturbing the authentication flow."*
 
-### Q4: *"Can a developer or compromised process tamper with the local audit trail?"*
+### Q5: *"Can a developer or compromised process tamper with the local audit trail?"*
 > **Answer**: *"No. Local logs are protected by a sequential SHA-256 cryptographic hash-chain ($H_n = \text{SHA256}(H_{n-1} \parallel \text{EventData})$). Modifying or deleting a line immediately breaks the chain and triggers a tamper alarm on `bapedge verify-log`."*
 
-### Q5: *"Can we see fleet-wide activity across 1,000 developers?"*
+### Q6: *"Can we see fleet-wide activity across 1,000 developers?"*
 > **Answer**: *"Yes. Edge nodes stream structured telemetry to the BAP Control Plane. We tested central log aggregation at **35,620 events/second** under a 50,000-event stress test with 100% hash-chain validity."*
+
+### Q7: *"What stops a rogue or malicious agent from just bypassing the Python SDK and writing raw `requests.post()` socket calls directly to our microservices?"*
+> **Answer**: *"That is the exact reason enterprise security requires our **Dual-PEP Architecture**. Client-side SDKs provide cooperative speed on developer machines, but all internal microservices and core banking databases are placed behind an **API Gateway Policy Enforcement Point (Envoy Proxy, Istio, or BAP Gateway)**. The Gateway demands a cryptographically signed BAP Grant (JWT-SVID) on every request via `ext_authz`. If a rogue agent attempts direct socket access without going through BAP, the Gateway terminates the connection with `401 Unauthorized`. The internal database is never contacted."*
+
+### Q8: *"Deploying new custom executables across corporate fleets takes 2 months of Infosec review. How do we deploy this in production?"*
+> **Answer**: *"We architected two deployment options specifically to address enterprise deployment friction:
+> - **Option 1 (Production Enterprise Cloud & Linux)**: Uses **Envoy Proxy on Podman / Docker / Kubernetes**. The `envoyproxy/envoy` container image is an open-source CNCF standard already vetted and pre-approved in corporate container registries. It uses standard `envoy.filters.http.ext_authz` filters with zero custom binaries required on the network perimeter.
+> - **Option 3 (Instant Desktop Demo & Edge Nodes)**: For developer workstations, edge brokers, and executive demos, we provide a zero-dependency pure-Go native PEP (`bapgateway.exe`) that starts in under 5ms without requiring containers, hypervisors, or complex virtualization setup. Both options share identical authorization semantics and BAP Grant consumption protocols."*
+
+
 

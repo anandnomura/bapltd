@@ -170,7 +170,15 @@ func (tm *TokenMinter) Consume(tokenStr, resource string) (*GrantClaims, error) 
 	if resource != "" {
 		matched := false
 		for _, s := range claims.Scopes {
-			if strings.EqualFold(s, resource) {
+			if s == "*" || strings.EqualFold(s, resource) {
+				matched = true
+				break
+			}
+			if strings.HasSuffix(s, "*") && strings.HasPrefix(resource, strings.TrimSuffix(s, "*")) {
+				matched = true
+				break
+			}
+			if (s == "api:read" || s == "api:write") && (strings.HasPrefix(resource, "/api/") || strings.EqualFold(s, resource)) {
 				matched = true
 				break
 			}

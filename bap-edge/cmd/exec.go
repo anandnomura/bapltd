@@ -10,6 +10,7 @@ import (
 
 	"bap-edge/internal/audit"
 	"bap-edge/internal/authz"
+	"bap-edge/internal/config"
 	"bap-edge/internal/sandbox"
 	"bap-edge/pkg/types"
 )
@@ -81,14 +82,8 @@ func RunExec(args []string) {
 	}
 	sessionFlag := fs.String("session-id", defaultSession, "Session identifier for grouping agent actions")
 
-	defaultServer := os.Getenv("BAP_SERVER_URL")
-	if defaultServer == "" {
-		defaultServer = os.Getenv("LTD_SERVER_URL")
-	}
-	if defaultServer == "" {
-		defaultServer = "http://localhost:8080"
-	}
-	serverFlag := fs.String("server", defaultServer, "Central control plane URL for telemetry streaming")
+	epCfg := config.ResolveEndpoints()
+	serverFlag := fs.String("server", epCfg.ControlPlaneURL, "Central control plane URL for telemetry streaming")
 
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintf(os.Stderr, "Error parsing arguments: %v\n", err)

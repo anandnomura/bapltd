@@ -100,6 +100,11 @@ cd ..
 cd copilot
 go build -o copilot_interceptor.exe copilot_interceptor.go
 cd ..
+
+:: Build Gateway Policy Enforcement Point (Envoy ext_authz emulator)
+cd bap-gateway
+go build -o bapgateway.exe .
+cd ..
 ```
 
 ### Linux / WSL (AMD64)
@@ -438,10 +443,106 @@ A fundamental invariant of BAP is that **edge agents must continue operating nor
 
 ---
 
-## 9. Comprehensive Documentation & Guides
+## 9. Python Agent SDK (`bap-sdk`) & Corporate Nexus / Artifactory Distribution
 
-- [ARCHITECTURE.md](file:///c:/Users/User/pyprj/bapltd/ARCHITECTURE.md): Full technical architecture, system topology, sequence diagrams, and threat models.
-- [API_GUIDE.md](file:///c:/Users/User/pyprj/bapltd/API_GUIDE.md): Complete REST API specification and CLI reference for all 10 control plane endpoints and edge commands.
-- [TESTING_GUIDE.md](file:///c:/Users/User/pyprj/bapltd/TESTING_GUIDE.md): Step-by-step manual test guide for Control Plane UP, Control Plane DOWN resilience, kill-switch, and Claude/Copilot live testing.
+For autonomous Python AI agents (e.g., built on **LangChain**, **CrewAI**, **AutoGen**, or **LlamaIndex**), BAP provides a zero-dependency SDK package (`bap-sdk`).
+
+### 3-Line Integration
+```python
+from bap_sdk import BAPSession, BAPPolicyViolation
+
+with BAPSession(app_id="python-analytics-worker") as bap:
+    # 1. Permitted developer tool execution (<2ms)
+    res = bap.exec("python --version")
+    print("Runtime:", res.stdout)
+
+    # 2. Threat interception: cat .env is blocked before shell creation!
+    try:
+        bap.exec("cat .env")
+    except BAPPolicyViolation as e:
+        print("[SHIELD ACTIVATED] BAP blocked credential disclosure:", e)
+```
+
+### Building & Publishing to Corporate Nexus
+Corporate environments with air-gapped repositories or private PyPI mirrors can package and publish `bap-sdk` with one command:
+
+```cmd
+:: Build universal wheel (.whl) and source distribution (.tar.gz)
+.\python-agent\build_package.bat
+
+:: Publish to Enterprise Nexus / Artifactory via Twine
+twine upload --repository-url https://nexus.internal.company.com/repository/pypi-internal/ python-agent\dist\*
+```
+
+Developer teams then simply install from the internal repository:
+```bash
+pip install bap-sdk --index-url https://nexus.internal.company.com/repository/pypi-internal/simple
+```
+
+---
+
+## 10. Rogue & Non-Registered Agent Prevention (6-Layer Security Perimeter)
+
+To guarantee that rogue insiders, compromised worker processes, or unauthorized scripts cannot execute actions outside BAP governance, BAP enforces a strict 6-layer defense model:
+
+1. **Cryptographic Binary Hash Attestation**: Control plane verifies the SHA-256 digest of executing agent binaries against pre-registered whitelists (`/api/v1/agents/register`). Unregistered binaries return `403 Forbidden`.
+2. **Single-Use OTC & Fleet Quota Enforcement**: Agent enrollment requires high-entropy One-Time Credentials (`LTD-OTC-xxxx-xxxx`) that burn atomically on first use, or Fleet Tokens (`BAP-FLEET-xxxx-xxxx`) strictly bounded by `max_instances`. Unregistered clones return `401 Unauthorized`.
+3. **In-Process Cedar Default-Deny**: The edge policy broker (`bapedge`) evaluates all commands under strict **Default-Deny**. Any unpermitted tool invocation is intercepted before process spawn ($<2\text{ms}$).
+4. **Atomic Authority Grant Burning**: Authority tokens (JWT-SVIDs) minted for elevated operations are destroyed upon first presentation via `/api/v1/grants/consume`, neutralizing replay attacks.
+5. **Dynamic Central & Persistent Kill-Switch**: Compromised agents or entire application fleets are revoked instantly (`/api/v1/agents/revoke` or `/apps/revoke`). Revocation writes persistent state to edge disks, surviving restarts and network cut-offs.
+6. **Dual-Identity Binding & Tamper-Evident Blockchain**: Telemetry binds the human user (`apiKeyHelper` token or authenticated OS user) to the workload SPIFFE ID, with every event chained into a sequential SHA-256 hash log. Rogue actions cannot be wiped or hidden from auditors.
+
+---
+
+## 11. Zero-Trust Gateway PEP: Option 3 (Native Go) & Option 1 (Envoy on Podman)
+
+Client-side hooks and SDKs are **cooperative PEPs**. If an autonomous rogue script or prompt injection refuses to use `bap-sdk` and opens raw HTTP sockets (`import requests; requests.get(...)`), client-side wrappers cannot prevent packets from leaving the network card.
+
+Therefore, **real-world enterprise security requires an Ingress Gateway PEP** (Envoy Proxy, Istio Service Mesh, or `bap-gateway`):
+- All backend microservices, core banking APIs, and customer databases are placed behind the Gateway.
+- The Gateway intercepts every request via `ext_authz` and requires `Authorization: Bearer <BAP_GRANT>`.
+- The Gateway calls `/api/v1/auth/envoy` or `/api/v1/grants/consume` to validate signature, verify SPIFFE claims, and atomically burn the token.
+- **Rogue Neutralization**: Any unauthenticated or replayed request is terminated immediately with **HTTP 401/403**. The backend core API is **never reached**.
+
+### Option 3: Pure-Go Native PEP (`bapgateway.exe`) - Integrated Demo
+Best for developer laptops, Windows environments, and CIO demos without container runtime friction. Avoids the 2-month infosec approval delay for third-party executables.
+```cmd
+:: 1. Run the Gateway PEP (port 9090)
+.\bapgateway.exe -port 9090 -controlplane http://localhost:8080
+
+:: 2. Test Rogue Script Bypass (Blocked with HTTP 401)
+python .\python-agent\rogue_agent.py
+
+:: 3. Test Governed Agent (Authorized with HTTP 200)
+python .\python-agent\governed_agent.py
+```
+
+### Option 1: Cloud-Native Envoy Proxy on Podman / Docker - Standalone Showcase
+Best for Linux production servers, Red Hat OpenShift, and Kubernetes where Envoy is pre-approved:
+```bash
+# 1. Turn on Envoy Proxy with Podman (port 10000)
+cd envoy
+./run_envoy_podman.sh       # Linux / WSL / macOS
+run_envoy_podman.bat        # Windows
+
+# 2. Run standalone demonstration
+python demo_envoy.py        # or demo_envoy_podman.bat / .sh
+
+# 3. Stop Envoy container
+./stop_envoy_podman.sh      # or stop_envoy_podman.bat
+```
+*(For complete details, see [envoy/ENVOY_PODMAN_GUIDE.md](file:///c:/Users/User/pyprj/bapltd/envoy/ENVOY_PODMAN_GUIDE.md)).*
+
+---
+
+## 12. Comprehensive Documentation & Guides
+
+- [ENDPOINT_CONFIGURATION.md](file:///c:/Users/User/pyprj/bapltd/ENDPOINT_CONFIGURATION.md): Complete guide for configuring central BAP Control Plane hosts and gateways for developer laptops via `bap-config.json` and `configure_endpoints.bat`.
+- [FEATURES_AND_ARCHITECTURE.md](file:///c:/Users/User/pyprj/bapltd/FEATURES_AND_ARCHITECTURE.md): Master architectural reference, 34-feature matrix, and complete threat defense guide.
+- [CIO_DEMO_GUIDE.md](file:///c:/Users/User/pyprj/bapltd/CIO_DEMO_GUIDE.md): Complete executive walkthrough, interactive demo script, talking points, and FAQ for CIO/CISO presentations.
+- [envoy/ENVOY_PODMAN_GUIDE.md](file:///c:/Users/User/pyprj/bapltd/envoy/ENVOY_PODMAN_GUIDE.md): Guide for Option 1: Envoy Proxy on Podman/Docker, container commands, and troubleshooting.
+- [python-agent/README.md](file:///c:/Users/User/pyprj/bapltd/python-agent/README.md): Developer guide for `bap-sdk`, LangChain/CrewAI integrations, and Nexus distribution.
+- [API_GUIDE.md](file:///c:/Users/User/pyprj/bapltd/API_GUIDE.md): Complete REST API specification and CLI reference for all control plane endpoints and edge commands.
+- [TESTING_GUIDE.md](file:///c:/Users/User/pyprj/bapltd/TESTING_GUIDE.md): Step-by-step testing guide for automated and manual verification across offline resilience, kill-switch, and multi-agent workflows.
 
 

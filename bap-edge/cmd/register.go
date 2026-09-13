@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"bap-edge/internal/attest"
+	"bap-edge/internal/config"
 	"bap-edge/internal/policystore"
 )
 
@@ -62,7 +63,8 @@ func DefaultCredentialsPath() string {
 // RunRegister executes the edge agent self-registration against bap-controlplane.
 func RunRegister(args []string) error {
 	fs := flag.NewFlagSet("register", flag.ContinueOnError)
-	serverURL := fs.String("server", "http://localhost:8080", "bap-controlplane URL")
+	epCfg := config.ResolveEndpoints()
+	serverURL := fs.String("server", epCfg.ControlPlaneURL, "bap-controlplane URL")
 	code := fs.String("code", "", "One-time registration code (e.g. LTD-OTC-XXXX or BAP-FLEET-XXXX)")
 	configPath := fs.String("config", DefaultCredentialsPath(), "Path to store enrolled credentials")
 	customInstanceID := fs.String("instance-id", "", "Custom instance identifier (optional)")

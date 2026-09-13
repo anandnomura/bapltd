@@ -6,19 +6,17 @@ import (
 	"os"
 	"time"
 
+	"bap-edge/internal/config"
 	"bap-edge/internal/policystore"
 )
 
 // RunSync implements the 'bapedge sync' command to synchronize or inspect local policy cache.
 func RunSync(args []string) error {
 	fs := flag.NewFlagSet("sync", flag.ContinueOnError)
-	serverURL := fs.String("server", os.Getenv("BAP_CONTROL_PLANE_URL"), "bapcontrolplane URL (e.g. http://localhost:8080)")
+	epCfg := config.ResolveEndpoints()
+	serverURL := fs.String("server", epCfg.ControlPlaneURL, "bapcontrolplane URL (e.g. http://localhost:8080)")
 	policyDir := fs.String("policy-dir", policystore.DefaultPolicyDir(), "Path to local edge policy cache directory")
 	agentID := fs.String("agent-id", os.Getenv("BAP_AGENT_ID"), "Registered Agent ID (optional)")
-
-	if *serverURL == "" {
-		*serverURL = "http://localhost:8080"
-	}
 
 	if err := fs.Parse(args); err != nil {
 		return err

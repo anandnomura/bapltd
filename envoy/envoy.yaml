@@ -1,0 +1,117 @@
+# ==============================================================================
+# BAP (Bounded Authority Plane) - Production Envoy Proxy Ingress PEP
+# Emulates Zero-Trust Perimeter Gateway Enforcement via ext_authz Filter
+# ==============================================================================
+
+static_resources:
+  listeners:
+  - name: bap_ingress_listener
+    address:
+      socket_address:
+        address: 0.0.0.0
+        port_value: 10000
+    filter_chains:
+    - filters:
+      - name: envoy.filters.network.http_connection_manager
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+          stat_prefix: bap_ingress_http
+          codec_type: AUTO
+          route_config:
+            name: bap_protected_routes
+            virtual_hosts:
+            - name: backend_services
+              domains: ["*"]
+              routes:
+              - match:
+                  prefix: "/api/v1/financial-records"
+                route:
+                  cluster: backend_service_cluster
+                  timeout: 5s
+              - match:
+                  prefix: "/api/v1/health"
+                route:
+                  cluster: backend_service_cluster
+                  timeout: 2s
+              - match:
+                  prefix: "/"
+                route:
+                  cluster: backend_service_cluster
+                  timeout: 5s
+
+          http_filters:
+          # --------------------------------------------------------------------
+          # 1. BAP External Authorization Policy Enforcement Point (PEP)
+          # Intercepts every inbound HTTP request before contacting backend.
+          # Forwards client Bearer token to bapcontrolplane /api/v1/auth/envoy.
+          # Drops rogue agents with HTTP 401/403 at the perimeter.
+          # --------------------------------------------------------------------
+          - name: envoy.filters.http.ext_authz
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
+              http_service:
+                server_uri:
+                  uri: "http://host.containers.internal:8080/api/v1/auth/envoy"
+                  cluster: bap_controlplane_authz_cluster
+                  timeout: 0.5s
+                authorization_request:
+                  allowed_headers:
+                    patterns:
+                    - exact: "authorization"
+                    - exact: "x-bap-session-id"
+                    - exact: "x-original-uri"
+                authorization_response:
+                  allowed_upstream_headers:
+                    patterns:
+                    - exact: "x-bap-verified-workload"
+                    - exact: "x-bap-verified-app"
+                    - exact: "x-bap-decision"
+                  allowed_client_headers:
+                    patterns:
+                    - exact: "x-bap-decision"
+              failure_mode_allow: false  # FAIL-SECURE: Drop traffic if auth service unreachable
+
+          # --------------------------------------------------------------------
+          # 2. Router Filter (Forwards authorized traffic to upstream services)
+          # --------------------------------------------------------------------
+          - name: envoy.filters.http.router
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+
+  clusters:
+  # ----------------------------------------------------------------------------
+  # BAP Control Plane Authorization Cluster (PEP Target)
+  # ----------------------------------------------------------------------------
+  - name: bap_controlplane_authz_cluster
+    type: LOGICAL_DNS
+    dns_lookup_family: V4_ONLY
+    connect_timeout: 0.5s
+    lb_policy: ROUND_ROBIN
+    load_assignment:
+      cluster_name: bap_controlplane_authz_cluster
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: host.containers.internal
+                port_value: 8080
+
+  # ----------------------------------------------------------------------------
+  # Protected Backend Enterprise Services Cluster
+  # ----------------------------------------------------------------------------
+  - name: backend_service_cluster
+    type: LOGICAL_DNS
+    dns_lookup_family: V4_ONLY
+    connect_timeout: 1s
+    lb_policy: ROUND_ROBIN
+    load_assignment:
+      cluster_name: backend_service_cluster
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: host.containers.internal
+                port_value: 8080
+

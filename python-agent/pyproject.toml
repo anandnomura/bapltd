@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bap-sdk"
+version = "0.1.0"
+description = "Zero-dependency Python SDK for Bounded Authority Plane (BAP) AI Agent Governance"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "Proprietary / Enterprise Confidential"}
+authors = [
+    {name = "Enterprise Security Architecture Team"}
+]
+keywords = ["bap", "ai-safety", "security", "spiffe", "agent-governance", "zero-trust"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = []
+
+[project.urls]
+"Homepage" = "https://github.com/anandnomura/bapltd"
+"Documentation" = "https://github.com/anandnomura/bapltd/blob/main/python-agent/README.md"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["bap_sdk*"]
+

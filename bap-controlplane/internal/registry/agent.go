@@ -216,3 +216,46 @@ func (s *Store) TrustDomain() string {
 	defer s.mu.RUnlock()
 	return s.trustDomain
 }
+
+// EnsureSessionAgent guarantees that any active agent session is tracked in the registry.
+func (s *Store) EnsureSessionAgent(appID, instanceID, spiffeID, userEmail, hostname string) *types.RegisteredAgent {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now()
+	if instanceID == "" {
+		instanceID = "default"
+	}
+	agentID := fmt.Sprintf("agent-%s-%s", strings.ToLower(appID), instanceID)
+	if existing, found := s.agents[agentID]; found {
+		existing.LastHeartbeatAt = &now
+		if spiffeID != "" && spiffeID != "NA" {
+			existing.SPIFFEID = spiffeID
+		}
+		if userEmail != "" && userEmail != "NA" {
+			existing.OwnerEmail = userEmail
+		}
+		if hostname != "" {
+			existing.Hostname = hostname
+		}
+		return existing
+	}
+
+	agent := &types.RegisteredAgent{
+		AgentID:         agentID,
+		AppID:           appID,
+		InstanceID:      instanceID,
+		SPIFFEID:        spiffeID,
+		TrustDomain:     s.trustDomain,
+		OwnerEmail:      userEmail,
+		AgentName:       appID,
+		EnvProfile:      types.ProfileDev,
+		Status:          types.StatusActive,
+		Hostname:        hostname,
+		CreatedAt:       now,
+		EnrolledAt:      &now,
+		LastHeartbeatAt: &now,
+	}
+	s.agents[agentID] = agent
+	return agent
+}
