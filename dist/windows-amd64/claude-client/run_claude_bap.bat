@@ -33,29 +33,50 @@ echo.
 echo [*] Checking connectivity to Linux BAP Control Plane at !SERVER_URL!...
 curl.exe -s --max-time 3 --connect-timeout 2 -X GET "!SERVER_URL!/api/v1/health" | findstr /i "ok healthy ltd-service" >nul 2>&1
 if !ERRORLEVEL! equ 0 (
-    echo [+] SUCCESS: Connected to Linux BAP Control Plane!
+    echo [+] SUCCESS: Connected to Linux BAP Control Plane.
 ) else (
-    echo [!] WARNING: Could not reach !SERVER_URL!/api/v1/health.
+    echo [-] WARNING: Could not reach !SERVER_URL!/api/v1/health.
     echo     Please verify the Linux server IP, port, and firewall.
-    echo     Proceeding in local-edge mode (Cedar policies still enforced locally).
+    echo     Proceeding in local-edge mode - Cedar policies still enforced locally.
 )
 
-:: 2. Persist to bap-config.json so bapedge and cchook automatically connect
-if exist "bapedge.exe" (
-    bapedge.exe config set --server "!SERVER_URL!" >nul 2>&1
+:: 2. Resolve bapedge binary
+set "BAPEDGE_BIN="
+if exist "%~dp0bapedge.exe" (
+    set "BAPEDGE_BIN=%~dp0bapedge.exe"
+) else (
+    where bapedge.exe >nul 2>&1
+    if !ERRORLEVEL! equ 0 (
+        set "BAPEDGE_BIN=bapedge.exe"
+    ) else (
+        if exist "%USERPROFILE%\bin\bapedge.exe" (
+            set "BAPEDGE_BIN=%USERPROFILE%\bin\bapedge.exe"
+        ) else (
+            if exist "%~dp0bap-edge\bapedge.exe" (
+                copy /y "%~dp0bap-edge\bapedge.exe" "%~dp0bapedge.exe" >nul
+                set "BAPEDGE_BIN=%~dp0bapedge.exe"
+            )
+        )
+    )
+)
+
+:: Persist to bap-config.json so bapedge and cchook automatically connect
+if not "!BAPEDGE_BIN!"=="" (
+    !BAPEDGE_BIN! config set --server "!SERVER_URL!" >nul 2>&1
 ) else (
     powershell -NoProfile -Command ^
         "$p = 'bap-config.json'; if (Test-Path $p) { $j = Get-Content $p -Raw | ConvertFrom-Json; $j.controlplane_url = '!SERVER_URL!'; $j | ConvertTo-Json -Depth 5 | Set-Content $p -Encoding UTF8 }" >nul 2>&1
 )
 
-:: 3. Verify cchook interceptor and bapedge binaries exist
-if not exist "cchook\interceptor.exe" (
-    echo [*] Building cchook\interceptor.exe...
-    cd cchook && go build -o interceptor.exe interceptor.go && cd ..
-)
-if not exist "bapedge.exe" (
-    if exist "bap-edge\bapedge.exe" (
-        copy /y bap-edge\bapedge.exe bapedge.exe >nul
+:: 3. Verify cchook interceptor binary exists
+if not exist "%~dp0cchook\interceptor.exe" (
+    if exist "%USERPROFILE%\bin\interceptor.exe" (
+        rem Found in user bin
+    ) else (
+        if exist "%~dp0cchook\interceptor.go" (
+            echo [*] Building cchook\interceptor.exe...
+            pushd "%~dp0cchook" && go build -o interceptor.exe interceptor.go && popd
+        )
     )
 )
 
@@ -106,8 +127,8 @@ curl.exe -s --max-time 2 --connect-timeout 2 -X POST "!SERVER_URL!/api/v1/sessio
     -d "{\"session_id\":\"!BAP_SESSION_ID!\",\"app_id\":\"claude-code\",\"user_id\":\"%USERNAME%\",\"hostname\":\"%COMPUTERNAME%\",\"client_pid\":0}" >nul 2>&1
 
 :: Start native bapedge background watcher thread to guarantee deregistration even on Ctrl+C or window close [X]
-if exist "bapedge.exe" (
-    bapedge.exe watch --server "!SERVER_URL!" --session-id "!BAP_SESSION_ID!" --detach >nul 2>&1
+if not "!BAPEDGE_BIN!"=="" (
+    !BAPEDGE_BIN! watch --server "!SERVER_URL!" --session-id "!BAP_SESSION_ID!" --detach >nul 2>&1
 ) else (
     start "" /b powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "%~dp0scripts\watch_session.ps1" -ServerUrl "!SERVER_URL!" -SessionId "!BAP_SESSION_ID!" >nul 2>&1
 )

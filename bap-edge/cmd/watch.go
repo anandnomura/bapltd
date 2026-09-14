@@ -135,6 +135,9 @@ func runWatchLoop(watchPID int, serverURL, sessionID, appID string) {
 		// Keep alive & sync state periodically
 		heartbeatCount++
 		if heartbeatCount%2 == 0 { // every ~4 seconds
+			_ = postJSONQuick(serverURL+"/api/v1/sessions/heartbeat", map[string]any{
+				"session_id": sessionID,
+			})
 			_ = postJSONQuick(serverURL+"/api/v1/instances/heartbeat", map[string]any{
 				"agent_id": sessionID,
 			})

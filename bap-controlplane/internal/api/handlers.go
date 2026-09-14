@@ -87,6 +87,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/v1/audit/ingest", s.handleAuditIngest)
 	s.mux.HandleFunc("/api/v1/audit/events", s.handleListAuditEvents)
 	s.mux.HandleFunc("/api/v1/sessions/start", s.handleSessionStart)
+	s.mux.HandleFunc("/api/v1/sessions/heartbeat", s.handleHeartbeat)
 	s.mux.HandleFunc("/api/v1/sessions/end", s.handleSessionEnd)
 	s.mux.HandleFunc("/api/v1/sessions/reset", s.handleResetSessions)
 	s.mux.HandleFunc("/api/v1/sessions", s.handleListSessions)
@@ -528,27 +529,49 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req struct {
-		AgentID string `json:"agent_id"`
+		AgentID   string `json:"agent_id"`
+		SessionID string `json:"session_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "Invalid JSON body: "+err.Error())
 		return
 	}
 
-	if req.AgentID == "" {
-		writeError(w, http.StatusBadRequest, "agent_id is required")
+	id := req.SessionID
+	if id == "" {
+		id = req.AgentID
+	}
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "agent_id or session_id is required")
 		return
 	}
 
-	if err := s.registry.Heartbeat(req.AgentID); err != nil {
-		writeError(w, http.StatusNotFound, "Heartbeat failed: "+err.Error())
+	var sessionFound, agentFound bool
+
+	if s.sessionStore != nil {
+		if _, err := s.sessionStore.Heartbeat(id); err == nil {
+			sessionFound = true
+		}
+	}
+
+	if s.registry != nil {
+		if err := s.registry.Heartbeat(id); err == nil {
+			agentFound = true
+		}
+	}
+
+	if !sessionFound && !agentFound {
+		writeError(w, http.StatusNotFound, fmt.Sprintf("Neither active agent nor session found for ID %q", id))
 		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"agent_id": req.AgentID,
+		"id":       id,
+		"agent_id": id,
 		"status":   "alive",
-		"time":     time.Now(),
+		"time":     time.Now().UTC(),
+		"session":  sessionFound,
+		"agent":    agentFound,
 	})
 }
 
@@ -558,7 +581,7 @@ func (s *Server) handleInspectorData(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	idleTimeout := 45 * time.Second
+	idleTimeout := 10 * time.Minute
 	if envTimeout := os.Getenv("BAP_SESSION_TIMEOUT"); envTimeout != "" {
 		if d, err := time.ParseDuration(envTimeout); err == nil {
 			idleTimeout = d

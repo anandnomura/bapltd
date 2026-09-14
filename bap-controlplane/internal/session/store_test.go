@@ -116,6 +116,15 @@ func TestSessionStore_Lifecycle(t *testing.T) {
 		t.Errorf("expected purged session to be closed, got %s", purgedSess.Status)
 	}
 
+	// 7b. Test Heartbeat resurrects and updates LastActiveAt
+	resurrected, err := store.Heartbeat("sess-stale-test")
+	if err != nil {
+		t.Fatalf("Heartbeat failed: %v", err)
+	}
+	if resurrected.Status != "active" {
+		t.Errorf("expected session to be resurrected to active, got %s", resurrected.Status)
+	}
+
 	// 8. Test Reset
 	_, _ = store.Start(SessionStartRequest{SessionID: "sess-reset-1", AppID: "test"})
 	_, _ = store.Start(SessionStartRequest{SessionID: "sess-reset-2", AppID: "test"})

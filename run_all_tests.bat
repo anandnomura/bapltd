@@ -11,7 +11,7 @@ cd /d "%ROOT_DIR%"
 set "LTD_AUDIT_LOG=%ROOT_DIR%ltd-audit.jsonl"
 if exist "%LTD_AUDIT_LOG%" del /f /q "%LTD_AUDIT_LOG%" >nul 2>&1
 set "BAP_TEST_MODE=1"
-set "GOTOOLCHAIN=local"
+set "GOTOOLCHAIN=auto"
 
 set "PASS_COUNT=0"
 set "FAIL_COUNT=0"
@@ -28,7 +28,20 @@ if "!GW_URL!"=="" set "GW_URL=http://localhost:9090"
 
 set "CP_IS_LOCAL=0"
 echo !CP_URL! | findstr /i "localhost 127.0.0.1 ::1" >nul 2>&1
-if !errorlevel! equ 0 set "CP_IS_LOCAL=1"
+if !errorlevel! equ 0 (
+    set "CP_IS_LOCAL=1"
+) else (
+    curl.exe -s --max-time 2 --connect-timeout 2 "!CP_URL!/api/v1/health" >nul 2>&1
+    if !errorlevel! neq 0 (
+        echo [-] Configured remote ControlPlane at !CP_URL! is unreachable from current network.
+        echo [*] Falling back to local test ControlPlane at http://localhost:8080 for test run.
+        set "CP_URL=http://localhost:8080"
+        set "CP_IS_LOCAL=1"
+        set "BAP_SERVER_URL=http://localhost:8080"
+        set "BAP_CONTROL_PLANE_URL=http://localhost:8080"
+        set "BAP_CONTROLPLANE_URL=http://localhost:8080"
+    )
+)
 
 set "GW_IS_LOCAL=0"
 echo !GW_URL! | findstr /i "localhost 127.0.0.1 ::1" >nul 2>&1
