@@ -5,13 +5,42 @@ Enrolls 5 (or 25) simulated live Claude Code developer agent instances across en
 Sends heartbeats to BAP Control Plane so the Live Workload Radar pulses in real time.
 """
 
+import os
 import sys
 import time
 import json
 import random
+import signal
+import atexit
 import argparse
 import urllib.request
 import urllib.error
+
+def is_pid_alive(pid):
+    if not pid or pid <= 0:
+        return True
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            SYNCHRONIZE = 0x00100000
+            kernel32 = ctypes.windll.kernel32
+            handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, False, pid)
+            if not handle:
+                return False
+            exit_code = ctypes.c_ulong()
+            kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code))
+            kernel32.CloseHandle(handle)
+            STILL_ACTIVE = 259
+            return exit_code.value == STILL_ACTIVE
+        except Exception:
+            return True
+    else:
+        try:
+            os.kill(pid, 0)
+            return True
+        except OSError:
+            return False
 
 SQUADS_5 = [
     {
@@ -145,13 +174,27 @@ def send_heartbeats(server_url, agents):
         payload = {"agent_id": a["instance_id"]}
         post_json(f"{server_url}/api/v1/instances/heartbeat", payload)
 
+def cleanup_fleet(server_url):
+    print(f"\n[*] Deregistering all agent workloads from BAP Control Plane ({server_url})...")
+    code, resp = post_json(f"{server_url}/api/v1/sessions/reset", {})
+    if code == 200:
+        print(f"  [+] Cleanly deregistered {resp.get('closed_sessions', 0)} active session(s). Dashboard updated.")
+    else:
+        print(f"  [-] Note on session reset: {resp}")
+
 def main():
     parser = argparse.ArgumentParser(description="BAP Enterprise Fleet Workload Simulator")
     parser.add_argument("--server", default="http://localhost:8080", help="BAP Control Plane URL")
     parser.add_argument("--count", type=int, default=5, choices=[5, 25], help="Fleet density: 5 or 25 agents")
     parser.add_argument("--once", action="store_true", help="Enroll sessions once and exit")
+    parser.add_argument("--cleanup", action="store_true", help="Deregister all agents from control plane and exit")
+    parser.add_argument("--parent-pid", type=int, default=0, help="Parent process PID to monitor for automatic teardown")
     parser.add_argument("--interval", type=int, default=10, help="Heartbeat interval in seconds")
     args = parser.parse_args()
+
+    if args.cleanup:
+        cleanup_fleet(args.server)
+        return
 
     agents = SQUADS_5 if args.count == 5 else generate_25_fleet()
 
@@ -164,14 +207,35 @@ def main():
         print("[*] One-time enrollment complete.")
         return
 
+    def handle_exit(signum=None, frame=None):
+        cleanup_fleet(args.server)
+        sys.exit(0)
+
+    try:
+        signal.signal(signal.SIGINT, handle_exit)
+        signal.signal(signal.SIGTERM, handle_exit)
+    except Exception:
+        pass
+
+    atexit.register(lambda: cleanup_fleet(args.server))
+
     print(f"\n[*] Heartbeat daemon active. Keeping {len(agents)} workloads alive on port 8080.")
+    if args.parent_pid > 0:
+        print(f"    Parent PID monitor active: PID {args.parent_pid} (Auto-deregisters when demo shell exits).")
     print("    Press Ctrl+C to terminate fleet.\n")
+
     try:
         while True:
-            time.sleep(args.interval)
+            # Check parent PID liveness every second
+            for _ in range(max(1, args.interval)):
+                time.sleep(1)
+                if args.parent_pid > 0 and not is_pid_alive(args.parent_pid):
+                    print(f"\n[*] Parent shell (PID {args.parent_pid}) exited. Automatically deregistering agent workloads...")
+                    cleanup_fleet(args.server)
+                    sys.exit(0)
             send_heartbeats(args.server, agents)
     except KeyboardInterrupt:
-        print("\n[*] Fleet simulator stopped.")
+        handle_exit()
 
 if __name__ == "__main__":
     main()

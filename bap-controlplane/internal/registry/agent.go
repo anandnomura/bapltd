@@ -174,6 +174,43 @@ func (s *Store) RevokeApp(appID string) (int, error) {
 	return count, nil
 }
 
+func (s *Store) RevokeTarget(target string) (*types.RegisteredAgent, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	targetLower := strings.ToLower(target)
+	now := time.Now()
+	for _, a := range s.agents {
+		if strings.Contains(strings.ToLower(a.AgentID), targetLower) ||
+			strings.Contains(strings.ToLower(a.InstanceID), targetLower) ||
+			strings.Contains(strings.ToLower(a.OwnerEmail), targetLower) ||
+			strings.Contains(strings.ToLower(a.AgentName), targetLower) {
+			a.Status = types.StatusRevoked
+			a.RevokedAt = &now
+			return a, nil
+		}
+	}
+	return nil, fmt.Errorf("no agent found matching %q", target)
+}
+
+func (s *Store) RestoreTarget(target string) (*types.RegisteredAgent, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	targetLower := strings.ToLower(target)
+	for _, a := range s.agents {
+		if strings.Contains(strings.ToLower(a.AgentID), targetLower) ||
+			strings.Contains(strings.ToLower(a.InstanceID), targetLower) ||
+			strings.Contains(strings.ToLower(a.OwnerEmail), targetLower) ||
+			strings.Contains(strings.ToLower(a.AgentName), targetLower) {
+			a.Status = types.StatusActive
+			a.RevokedAt = nil
+			return a, nil
+		}
+	}
+	return nil, fmt.Errorf("no agent found matching %q", target)
+}
+
 func (s *Store) Heartbeat(agentID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -101,9 +101,38 @@ def action_verify():
     else:
         print(f"  [-] Verification error: {res}")
 
+def action_kill_agent(target="carol"):
+    print(f"[*] Triggering surgical zero-trust kill-switch for target: '{target}'...")
+    code, res = post_json("/api/v1/control/agent/kill", {"target": target})
+    if code == 200:
+        status = res.get("kill_status", "REVOKED")
+        name = res.get("agent_name", target)
+        if status == "REVOKED":
+            print(f"  [!] AGENT ISOLATED: {name} status -> REVOKED (CISO Surgical Override)")
+            print(f"  [!] Security Action : Ephemeral authority revoked & burned immediately.")
+            print(f"  [!] Blast Radius    : ZERO enterprise downtime. Other engineering squads continue operating uninterrupted.")
+            print(f"\n  ==> Visual feedback: {name}'s card turned RED [REVOKED]; toast alert fired on browser dashboard.")
+        else:
+            print(f"  [+] AGENT RESTORED: {name} status -> ACTIVE")
+            print(f"  [+] Authority       : Cryptographic attestation restored.")
+            print(f"\n  ==> Visual feedback: {name}'s card restored to EMERALD GREEN on browser dashboard.")
+    else:
+        print(f"  [-] Targeted kill failed: {res}")
+
+def action_cleanup():
+    print("[*] Deregistering simulated fleet workloads from Control Plane...")
+    code, res = post_json("/api/v1/sessions/reset")
+    if code == 200:
+        closed = res.get("closed_sessions", 0)
+        print(f"  [+] Successfully deregistered {closed} active agent workload(s).")
+        print("  ==> Visual feedback: Live Radar updated to 0 ACTIVE AGENTS (all workloads deregistered cleanly).")
+    else:
+        print(f"  [-] Failed to deregister fleet: {res}")
+
 def main():
     parser = argparse.ArgumentParser(description="BAP Executive Demo Actions")
-    parser.add_argument("action", choices=["safe", "attack", "toggle-scale", "toggle-kill", "verify"], help="Demo action to run")
+    parser.add_argument("action", choices=["safe", "attack", "toggle-scale", "toggle-kill", "kill-agent", "verify", "cleanup"], help="Demo action to run")
+    parser.add_argument("--target", default="carol", help="Target agent name or instance ID for kill-agent (default: carol)")
     args = parser.parse_args()
 
     if args.action == "safe":
@@ -114,8 +143,12 @@ def main():
         action_toggle_scale()
     elif args.action == "toggle-kill":
         action_toggle_kill()
+    elif args.action == "kill-agent":
+        action_kill_agent(args.target)
     elif args.action == "verify":
         action_verify()
+    elif args.action == "cleanup":
+        action_cleanup()
 
 if __name__ == "__main__":
     main()

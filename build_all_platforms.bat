@@ -17,3 +17,4 @@ if %ERRORLEVEL% neq 0 (
 )
 
 echo [SUCCESS] Multi-platform build complete. Binaries available in dist\
+
