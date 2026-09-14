@@ -85,6 +85,11 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error managing configuration: %v\n", err)
 			os.Exit(1)
 		}
+	case "watch":
+		if err := cmd.RunWatch(args); err != nil {
+			fmt.Fprintf(os.Stderr, "Error running watcher: %v\n", err)
+			os.Exit(1)
+		}
 	case "verify-log":
 		if err := cmd.RunVerifyLog(args); err != nil {
 			os.Exit(1)

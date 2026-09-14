@@ -1444,11 +1444,44 @@ when {
               <span class="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 font-bold">${s.allowed_count || 0} ALLOW</span>
               <span class="px-2 py-0.5 rounded bg-rose-500/10 text-rose-400 border border-rose-500/30 font-bold">${s.denied_count || 0} DENY</span>
             </div>
-            <button class="filter-to-sess-btn px-2.5 py-1 bg-slate-800 hover:bg-cyan-600/20 hover:text-cyan-300 hover:border-cyan-500/40 text-slate-300 rounded border border-slate-700 text-[10px] transition" data-session-id="${escapeHtml(s.session_id)}">
-              Inspect Stream &rarr;
-            </button>
+            <div class="flex items-center space-x-2">
+              ${isActive ? `
+                <button class="card-kill-btn px-2 py-1 bg-rose-950/80 hover:bg-rose-700 text-rose-300 hover:text-white rounded border border-rose-500/50 text-[10px] font-bold transition cursor-pointer" data-session-id="${escapeHtml(s.session_id)}" title="Revoke this session">
+                  🚨 Revoke
+                </button>
+              ` : s.status === 'revoked' ? `
+                <button class="card-restore-btn px-2 py-1 bg-emerald-950/80 hover:bg-emerald-700 text-emerald-300 hover:text-white rounded border border-emerald-500/50 text-[10px] font-bold transition cursor-pointer" data-session-id="${escapeHtml(s.session_id)}" title="Restore this session">
+                  ⚡ Restore
+                </button>
+              ` : ''}
+              <button class="filter-to-sess-btn px-2.5 py-1 bg-slate-800 hover:bg-cyan-600/20 hover:text-cyan-300 hover:border-cyan-500/40 text-slate-300 rounded border border-slate-700 text-[10px] transition cursor-pointer" data-session-id="${escapeHtml(s.session_id)}">
+                Inspect &rarr;
+              </button>
+            </div>
           </div>
         `;
+
+        card.querySelector(".card-kill-btn")?.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          await fetch("/api/v1/control/agent/kill", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ target: s.session_id, action: "revoke" })
+          });
+          showToast("🚨 SURGICAL KILL ENGAGED", `Session ${s.session_id} revoked by CISO. Authority burned.`, "deny");
+          checkLiveConnection();
+        });
+
+        card.querySelector(".card-restore-btn")?.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          await fetch("/api/v1/control/agent/kill", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ target: s.session_id, action: "restore" })
+          });
+          showToast("⚡ SESSION RESTORED", `Session ${s.session_id} authority restored by administrator.`, "agent_start");
+          checkLiveConnection();
+        });
 
         card.querySelector(".filter-to-sess-btn")?.addEventListener("click", () => {
           if (filterSessionSelect) filterSessionSelect.value = s.session_id;

@@ -106,7 +106,42 @@ func main() {
 		sessionID = os.Getenv("LTD_SESSION_ID")
 	}
 	if sessionID == "" {
-		sessionID = fmt.Sprintf("sess-claude-pid-%d", os.Getppid())
+		for _, loc := range []string{".bap-session.json", "../.bap-session.json", "cchook/.bap-session.json"} {
+			if data, err := os.ReadFile(loc); err == nil {
+				var sInfo struct {
+					SessionID string `json:"session_id"`
+				}
+				if json.Unmarshal(data, &sInfo) == nil && sInfo.SessionID != "" {
+					sessionID = sInfo.SessionID
+					break
+				}
+			}
+		}
+	}
+	if sessionID == "" {
+		ppid := os.Getppid()
+		sessionID = fmt.Sprintf("sess-claude-pid-%d", ppid)
+		serverURL := "http://localhost:8080"
+		for _, cfgPath := range []string{"bap-config.json", "../bap-config.json"} {
+			if cfgData, err := os.ReadFile(cfgPath); err == nil {
+				var cfg struct {
+					ControlPlaneURL string `json:"controlplane_url"`
+				}
+				if json.Unmarshal(cfgData, &cfg) == nil && cfg.ControlPlaneURL != "" {
+					serverURL = cfg.ControlPlaneURL
+					break
+				}
+			}
+		}
+		_ = os.WriteFile(".bap-session.json", []byte(fmt.Sprintf(`{"session_id":"%s","server_url":"%s","pid":%d}`, sessionID, serverURL, ppid)), 0600)
+		ltdBin := findBinary("bapedge.exe")
+		if ltdBin == "" {
+			ltdBin = findBinary("bapedge")
+		}
+		if ltdBin != "" {
+			wCmd := exec.Command(ltdBin, "watch", fmt.Sprintf("--pid=%d", ppid), fmt.Sprintf("--server=%s", serverURL), fmt.Sprintf("--session-id=%s", sessionID), "--detach")
+			_ = wCmd.Start()
+		}
 	}
 
 	// 5. Resolve bapedge (LTD) or ltd-agent executable

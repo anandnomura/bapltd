@@ -30,6 +30,7 @@ func main() {
 	autoTLS := flag.Bool("tls-auto", false, "Auto-generate self-signed TLS certificates for development")
 	certPath := flag.String("tls-cert", "", "Path to TLS certificate PEM file")
 	keyPath := flag.String("tls-key", "", "Path to TLS private key PEM file")
+	dbPath := flag.String("db", "", "Path to SQLite database file for state persistence (default: bap-controlplane.db, 'memory' for in-memory)")
 	flag.Parse()
 
 	if envSecret := os.Getenv("BAP_SECRET_KEY"); envSecret != "" {
@@ -72,7 +73,22 @@ func main() {
 	schemaContent, _ := os.ReadFile(resolvedSchema)
 	policyStore := policy.NewStore(string(cedarContent), string(schemaContent))
 	auditStore := audit.NewStore()
-	sessionStore := session.NewStore()
+
+	resolvedDB := *dbPath
+	if resolvedDB == "" {
+		resolvedDB = os.Getenv("BAP_DB_PATH")
+	}
+	if resolvedDB == "" {
+		resolvedDB = "bap-controlplane.db"
+	}
+
+	sessionStore, err := session.NewStoreWithDB(resolvedDB)
+	if err != nil {
+		log.Printf("[bapcontrolplane] Warning: Failed to open SQLite DB %q (%v), falling back to in-memory store", resolvedDB, err)
+		sessionStore = session.NewStore()
+	} else if resolvedDB != ":memory:" && resolvedDB != "memory" {
+		log.Printf("[bapcontrolplane] SQLite state persistence active: %s", resolvedDB)
+	}
 
 	server := api.NewServer(regStore, otcStore, minter, policyStore, auditStore, sessionStore)
 
