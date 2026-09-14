@@ -143,7 +143,7 @@ set "TEST_CMD=rm -rf /" & set "TEST_LBL=Destructive command: rm -rf /" & call :r
 echo.
 echo [5/11] Testing Python Sandbox [test_leak.py]...
 cd /d "%ROOT_DIR%"
-"%ROOT_DIR%bap-edge\bapedge.exe" exec --raw "pytest -s tests/test_leak.py"
+"%ROOT_DIR%bap-edge\bapedge.exe" exec --raw "python -m pytest -s tests/test_leak.py"
 if !ERRORLEVEL! neq 0 (
     echo [FAIL] test_leak.py failed unexpectedly!
     set /a FAIL_COUNT+=1
@@ -250,12 +250,12 @@ if !ERRORLEVEL! neq 0 (
 )
 
 :: -----------------------------------------------------------------------------
-:: Step 7c: Test Model Context Protocol (MCP) Server Suite [pytest tests\test_mcp_server.py]
+:: Step 7c: Test Model Context Protocol (MCP) Server Suite [python -m pytest tests\test_mcp_server.py]
 :: -----------------------------------------------------------------------------
 echo.
-echo [7c/12] Testing Model Context Protocol (MCP) Server [pytest tests\test_mcp_server.py]...
+echo [7c/12] Testing Model Context Protocol (MCP) Server [python -m pytest tests\test_mcp_server.py]...
 cd /d "%ROOT_DIR%"
-pytest tests\test_mcp_server.py -q
+python -m pytest tests\test_mcp_server.py -q
 if !ERRORLEVEL! neq 0 (
     echo [FAIL] test_mcp_server.py failed!
     set /a FAIL_COUNT+=1
@@ -334,13 +334,13 @@ if !ERRORLEVEL! neq 0 (
 :: Step 10: Python Agent SDK & Zero-Trust Governance Test Suite
 :: -----------------------------------------------------------------------------
 echo.
-echo [10/12] Testing Python Agent SDK (bap-sdk) Zero-Trust Lifecycle [pytest tests\test_python_agent.py]...
+echo [10/12] Testing Python Agent SDK (bap-sdk) Zero-Trust Lifecycle [python -m pytest tests\test_python_agent.py]...
 cd /d "%ROOT_DIR%"
 taskkill /F /IM bapcontrolplane.exe >nul 2>&1
 taskkill /F /IM bapgateway.exe >nul 2>&1
 start "BAP Control Plane (8080)" /min "%ROOT_DIR%bap-controlplane\bapcontrolplane.exe" -port 8080 -ttl 30 -trust-domain bap.internal
 ping -n 2 127.0.0.1 >nul
-pytest tests\test_python_agent.py -q
+python -m pytest tests\test_python_agent.py -q
 if !ERRORLEVEL! neq 0 (
     echo [FAIL] test_python_agent.py failed!
     set /a FAIL_COUNT+=1
@@ -353,11 +353,11 @@ if !ERRORLEVEL! neq 0 (
 :: Step 11: Gateway Policy Enforcement Point (PEP) Test Suite
 :: -----------------------------------------------------------------------------
 echo.
-echo [11/12] Testing Gateway Policy Enforcement Point (PEP) [pytest tests\test_gateway_pep.py]...
+echo [11/12] Testing Gateway Policy Enforcement Point (PEP) [python -m pytest tests\test_gateway_pep.py]...
 cd /d "%ROOT_DIR%"
 start "BAP Gateway PEP (9090)" /min "%ROOT_DIR%bapgateway.exe" -port 9090 -controlplane http://localhost:8080
 ping -n 2 127.0.0.1 >nul
-pytest tests\test_gateway_pep.py -q
+python -m pytest tests\test_gateway_pep.py -q
 if !ERRORLEVEL! neq 0 (
     echo [FAIL] test_gateway_pep.py failed!
     set /a FAIL_COUNT+=1

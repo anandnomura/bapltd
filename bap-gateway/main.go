@@ -11,7 +11,11 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
+	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -45,10 +49,14 @@ type TokenClaims struct {
 }
 
 func main() {
-	defaultCP := resolveDefaultControlPlane()
-	port := flag.Int("port", 9090, "Port for BAP Gateway PEP HTTP server")
+	defaultCP, defaultPort := resolveConfig()
+	port := flag.Int("port", defaultPort, "Port for BAP Gateway PEP HTTP server")
 	cpURL := flag.String("controlplane", defaultCP, "BAP Control Plane base URL")
-	secret := flag.String("secret", "ltd-service-bounded-authority-secret-key-32b!", "HMAC secret key for offline JWT verification")
+	defaultSecret := "ltd-service-bounded-authority-secret-key-32b!"
+	if envSec := os.Getenv("BAP_SECRET_KEY"); envSec != "" {
+		defaultSecret = envSec
+	}
+	secret := flag.String("secret", defaultSecret, "HMAC secret key for offline JWT verification")
 	consume := flag.Bool("consume", true, "Atomically consume single-use grants via control plane")
 	flag.Parse()
 
@@ -313,22 +321,88 @@ func writeJSON(w http.ResponseWriter, status int, data any) {
 	_ = json.NewEncoder(w).Encode(data)
 }
 
-func resolveDefaultControlPlane() string {
+func resolveConfig() (string, int) {
+	defaultCP := "http://localhost:8080"
+	defaultPort := 9090
+
+	// 1. Check environment variables
 	if v := os.Getenv("BAP_SERVER_URL"); v != "" {
-		return strings.TrimRight(v, "/")
+		defaultCP = strings.TrimRight(v, "/")
+	} else if v := os.Getenv("BAP_CONTROL_PLANE_URL"); v != "" {
+		defaultCP = strings.TrimRight(v, "/")
 	}
-	if v := os.Getenv("BAP_CONTROL_PLANE_URL"); v != "" {
-		return strings.TrimRight(v, "/")
+
+	if v := os.Getenv("BAP_GATEWAY_PORT"); v != "" {
+		if p, err := strconv.Atoi(v); err == nil && p > 0 {
+			defaultPort = p
+		}
+	} else if v := os.Getenv("PORT"); v != "" {
+		if p, err := strconv.Atoi(v); err == nil && p > 0 {
+			defaultPort = p
+		}
 	}
-	for _, p := range []string{"bap-config.json", "../bap-config.json"} {
+
+	// 2. Candidate paths for bap-config.json
+	var candidates []string
+	if custom := os.Getenv("BAP_CONFIG"); custom != "" {
+		candidates = append(candidates, custom)
+	}
+
+	if cwd, err := os.Getwd(); err == nil {
+		curr := cwd
+		for i := 0; i < 4; i++ {
+			candidates = append(candidates, filepath.Join(curr, "bap-config.json"))
+			parent := filepath.Dir(curr)
+			if parent == curr {
+				break
+			}
+			curr = parent
+		}
+	}
+
+	if exe, err := os.Executable(); err == nil {
+		exeDir := filepath.Dir(exe)
+		candidates = append(candidates, filepath.Join(exeDir, "bap-config.json"))
+		candidates = append(candidates, filepath.Join(exeDir, "..", "bap-config.json"))
+	}
+
+	if home, err := os.UserHomeDir(); err == nil {
+		candidates = append(candidates, filepath.Join(home, ".bap", "config.json"))
+		candidates = append(candidates, filepath.Join(home, ".bap", "bap-config.json"))
+	}
+
+	if runtime.GOOS == "windows" {
+		if progData := os.Getenv("ProgramData"); progData != "" {
+			candidates = append(candidates, filepath.Join(progData, "BAP", "bap-config.json"))
+			candidates = append(candidates, filepath.Join(progData, "BAP", "config.json"))
+		}
+	} else {
+		candidates = append(candidates, "/etc/bap/bap-config.json")
+		candidates = append(candidates, "/etc/bap/config.json")
+	}
+
+	for _, p := range candidates {
 		if data, err := os.ReadFile(p); err == nil {
 			var cfg struct {
 				ControlPlaneURL string `json:"controlplane_url"`
+				GatewayURL      string `json:"gateway_url"`
 			}
-			if err := json.Unmarshal(data, &cfg); err == nil && cfg.ControlPlaneURL != "" {
-				return strings.TrimRight(cfg.ControlPlaneURL, "/")
+			if err := json.Unmarshal(data, &cfg); err == nil {
+				if cfg.ControlPlaneURL != "" && os.Getenv("BAP_SERVER_URL") == "" && os.Getenv("BAP_CONTROL_PLANE_URL") == "" {
+					defaultCP = strings.TrimRight(cfg.ControlPlaneURL, "/")
+				}
+				if cfg.GatewayURL != "" && os.Getenv("BAP_GATEWAY_PORT") == "" && os.Getenv("PORT") == "" {
+					if u, err := url.Parse(cfg.GatewayURL); err == nil && u.Port() != "" {
+						if p, err := strconv.Atoi(u.Port()); err == nil && p > 0 {
+							defaultPort = p
+						}
+					}
+				}
+				log.Printf("[bap-gateway] Resolved configuration from: %s", p)
+				break
 			}
 		}
 	}
-	return "http://localhost:8080"
+
+	return defaultCP, defaultPort
 }

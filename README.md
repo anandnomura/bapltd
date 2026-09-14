@@ -78,71 +78,99 @@ The architecture formally converges into two core components:
 
 ## 1. Build Commands
 
-Compile natively or cross-compile for all operating systems (pure Go, `CGO_ENABLED=0`):
+BAP is written in pure, static Go with zero CGO dependencies (`CGO_ENABLED=0`). Binaries can be built natively or cross-compiled for any platform from Windows, Linux, or macOS.
 
-### Windows (AMD64)
+### Automated 1-Click Multi-Platform Build
+To produce stripped, production-ready static binaries and compressed release packages (`.tar.gz` and `.zip`) for **all 5 major enterprise platforms** simultaneously:
+
 ```cmd
-:: Build bap-edge broker (LTD)
-cd bap-edge
-go build -o bapedge.exe .
-copy /y bapedge.exe ltd-agent.exe >nul
-cd ..
-
-:: Build bap-controlplane
-cd bap-controlplane
-go build -o bapcontrolplane.exe ./cmd/server
-cd ..
-
-:: Build Claude Code interceptor
-cd cchook
-go build -o interceptor.exe interceptor.go
-cd ..
-
-:: Build GitHub Copilot interceptor
-cd copilot
-go build -o copilot_interceptor.exe copilot_interceptor.go
-cd ..
-
-:: Build Gateway Policy Enforcement Point (Envoy ext_authz emulator)
-cd bap-gateway
-go build -o bapgateway.exe .
-cd ..
+:: From Windows (Command Prompt or PowerShell)
+build_all_platforms.bat -Archive
+```
+```powershell
+# Directly via PowerShell:
+.\build_all_platforms.ps1 -Archive
 ```
 
-### Linux / WSL (AMD64)
+This populates the `dist/` directory with self-contained, zero-dependency deployment bundles:
+```text
+dist/
+├── bap-windows-amd64.zip           # Complete Windows deployment archive
+├── bap-linux-amd64.tar.gz          # Linux x86_64 deployment archive
+├── bap-linux-arm64.tar.gz          # Linux ARM64 (AWS Graviton, Raspberry Pi)
+├── bap-darwin-amd64.tar.gz         # macOS Intel deployment archive
+├── bap-darwin-arm64.tar.gz         # macOS Apple Silicon (M1/M2/M3/M4) archive
+├── windows-amd64/                  # Raw binaries + bap-config.json + inspector.html
+├── linux-amd64/                    # Raw binaries + bap-config.json + inspector.html
+├── linux-arm64/                    # Raw binaries + bap-config.json + inspector.html
+├── darwin-amd64/                   # Raw binaries + bap-config.json + inspector.html
+└── darwin-arm64/                   # Raw binaries + bap-config.json + inspector.html
+```
+
+Each platform folder contains:
+1. `bapcontrolplane` (Central control plane daemon + Live Workload Radar)
+2. `bapedge` (Local agent PEP / execution sandbox / MCP server)
+3. `bapgateway` (Zero-Trust Gateway Policy Enforcement Point)
+4. `cchook-interceptor` (Claude Code PreToolUse hook filter)
+5. `copilot-interceptor` (GitHub Copilot CLI command wrapper)
+6. `bap-config.json` (Pre-configured endpoint routing)
+7. `inspector.html` (Standalone zero-trust security cockpit)
+
+---
+
+### Manual / Component Builds
+
+#### Windows (AMD64)
+```cmd
+:: Build all Windows binaries and synchronize to root:
+build_binaries.bat
+
+:: Or build individual components:
+cd bap-edge         && go build -o bapedge.exe . && copy /y bapedge.exe ..\ && cd ..
+cd bap-controlplane && go build -o bapcontrolplane.exe ./cmd/server && copy /y bapcontrolplane.exe ..\ && cd ..
+cd bap-gateway      && go build -o bapgateway.exe . && copy /y bapgateway.exe ..\ && cd ..
+cd cchook           && go build -o interceptor.exe interceptor.go && cd ..
+cd copilot          && go build -o copilot_interceptor.exe copilot_interceptor.go && cd ..
+```
+
+#### Linux (AMD64 / ARM64)
 ```bash
 # Build bap-edge broker
 cd bap-edge
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bapedge .
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-s -w" -o bapedge .
 chmod +x bapedge
-cp bapedge ltd-agent
+ln -sf bapedge ltd-agent
 cd ..
 
-# Build bap-controlplane
+# Build bap-controlplane (bapservice)
 cd bap-controlplane
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bapcontrolplane ./cmd/server
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-s -w" -o bapcontrolplane ./cmd/server
 chmod +x bapcontrolplane
+ln -sf bapcontrolplane bapservice
 cd ..
 
-# Build Claude Code interceptor
-cd cchook
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o interceptor interceptor.go
-chmod +x interceptor
+# Build bap-gateway (Gateway PEP)
+cd bap-gateway
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-s -w" -o bapgateway .
+chmod +x bapgateway
 cd ..
 
-# Build GitHub Copilot interceptor
-cd copilot
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o copilot_interceptor copilot_interceptor.go
-chmod +x copilot_interceptor
-cd ..
+# Build Claude Code and GitHub Copilot interceptors
+cd cchook  && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-s -w" -o interceptor interceptor.go && chmod +x interceptor && cd ..
+cd copilot && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-s -w" -o copilot_interceptor copilot_interceptor.go && chmod +x copilot_interceptor && cd ..
 ```
 
-### macOS (Darwin AMD64 / Apple Silicon ARM64)
+#### macOS (Apple Silicon ARM64 & Intel AMD64)
 ```bash
-# Build bap-edge broker for macOS
-cd bap-edge
-CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o bapedge-darwin .
-cd ..
+# Build for Apple Silicon (M1 / M2 / M3 / M4):
+CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags "-s -w" -o bapedge ./bap-edge
+CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags "-s -w" -o bapcontrolplane ./bap-controlplane/cmd/server
+CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags "-s -w" -o bapgateway ./bap-gateway
+
+# Build for Intel Mac (AMD64):
+CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags "-s -w" -o bapedge ./bap-edge
+CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags "-s -w" -o bapcontrolplane ./bap-controlplane/cmd/server
+CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags "-s -w" -o bapgateway ./bap-gateway
 ```
 
 ---
@@ -281,6 +309,143 @@ curl -s http://localhost:8080/api/v1/health
 
 # Open the Live Workload Radar & Inspector UI in your browser:
 # http://<server-ip>:8080/inspector?mode=live
+```
+
+---
+
+### Running `bapgateway` (Gateway PEP) on Linux
+
+The Gateway Policy Enforcement Point (`bapgateway`) emulates an enterprise Envoy Proxy / Istio Ingress with `ext_authz` semantics. It acts as the zero-trust gatekeeper in front of sensitive backend microservices (such as `/api/v1/financial-records` and `/api/v1/core-banking/*`), enforcing cryptographic BAP token verification and atomic single-use grant burning with the control plane before allowing traffic through.
+
+#### 1. Configuration (`bap-config.json`)
+`bapgateway` automatically reads its configuration from `bap-config.json`. On Linux, it searches in the following order:
+1. Environment variable `BAP_CONFIG` (e.g. `export BAP_CONFIG=/etc/bap/bap-config.json`)
+2. Current working directory and parent directories (up to 4 levels)
+3. Directory containing the `bapgateway` executable
+4. User home directory: `~/.bap/config.json`
+5. System configuration: `/etc/bap/bap-config.json`
+
+Example `/etc/bap/bap-config.json`:
+```json
+{
+  "controlplane_url": "http://localhost:8080",
+  "gateway_url": "http://localhost:9090",
+  "trust_domain": "bap.internal",
+  "environment": "production"
+}
+```
+
+> [!TIP]
+> You can override any configuration setting via flags (`-port 9090`, `-controlplane http://localhost:8080`) or environment variables (`BAP_GATEWAY_PORT=9090`, `BAP_CONTROL_PLANE_URL=http://localhost:8080`, `BAP_SECRET_KEY=...`).
+
+#### 2. Compile for Linux
+```bash
+cd bap-gateway
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bapgateway .
+chmod +x bapgateway
+cd ..
+```
+
+#### 3. Quick Start / Foreground Execution
+```bash
+# Uses settings from bap-config.json automatically:
+./bap-gateway/bapgateway
+
+# Or specify custom port and control plane:
+./bap-gateway/bapgateway -port 9090 -controlplane http://localhost:8080
+```
+
+#### 4. Run as a Background Daemon
+```bash
+# Run in background with nohup
+nohup ./bap-gateway/bapgateway > bapgateway.log 2>&1 &
+
+# Verify process and port
+ps aux | grep bapgateway
+ss -tulpn | grep 9090
+```
+
+#### 5. Production Deployment with `systemd`
+For enterprise Linux distributions (Ubuntu, Debian, RHEL, CentOS, Rocky Linux, Amazon Linux):
+
+1. **Install binary and config to system paths**:
+   ```bash
+   sudo cp bap-gateway/bapgateway /usr/local/bin/bapgateway
+   sudo chmod 755 /usr/local/bin/bapgateway
+
+   sudo mkdir -p /etc/bap
+   sudo cp bap-config.json /etc/bap/bap-config.json
+   sudo chmod 644 /etc/bap/bap-config.json
+   ```
+
+2. **Create the systemd service file** (`/etc/systemd/system/bapgateway.service`):
+   ```ini
+   [Unit]
+   Description=Bounded Authority Plane (BAP) Gateway Policy Enforcement Point
+   After=network.target bapservice.service
+   Documentation=https://github.com/bapltd/bapltd
+
+   [Service]
+   Type=simple
+   User=bap
+   Group=bap
+   WorkingDirectory=/var/lib/bapservice
+   ExecStart=/usr/local/bin/bapgateway -port 9090
+   Restart=always
+   RestartSec=5s
+   Environment="BAP_CONFIG=/etc/bap/bap-config.json"
+   Environment="BAP_SECRET_KEY=your-production-secret-key-32b!"
+   LimitNOFILE=65535
+
+   # Hardening & Sandboxing
+   ProtectSystem=full
+   ProtectHome=true
+   NoNewPrivileges=true
+
+   [Install]
+   WantedBy=multi-user.target
+   ```
+
+3. **Enable and start the service**:
+   ```bash
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now bapgateway
+   sudo systemctl status bapgateway
+   ```
+
+4. **Inspect gateway logs**:
+   ```bash
+   sudo journalctl -u bapgateway -f
+   ```
+
+#### 6. Container Deployment (Docker / Podman)
+```bash
+# Run standalone gateway container linked to control plane
+docker run -d \
+  --name bapgateway \
+  --restart unless-stopped \
+  -p 9090:9090 \
+  -v /etc/bap/bap-config.json:/etc/bap/bap-config.json:ro \
+  -e BAP_CONFIG=/etc/bap/bap-config.json \
+  -e BAP_SECRET_KEY="your-production-secret-key-32b!" \
+  bapltd/bapgateway:latest \
+  -port 9090 -controlplane http://bapservice:8080
+```
+
+#### 7. Health & Zero-Trust Verification
+```bash
+# 1. Health check
+curl -s http://localhost:9090/health
+# Expected: {"mode":"envoy-ext-authz-emulator","service":"bap-gateway-pep","status":"healthy",...}
+
+# 2. Test Rogue Agent Access (Denied by Gateway PEP without contacting microservice)
+curl -i http://localhost:9090/api/v1/financial-records
+# Expected Output: HTTP/1.1 401 Unauthorized
+# {"error":"AccessDenied","gateway":"bap-gateway-pep","message":"Blocked by Zero-Trust Gateway PEP: Rogue agent request lacking BAP Bearer Grant.","pep_decision":"DENY"}
+
+# 3. Test Governed Agent Access (Requires valid ephemeral BAP Bearer token)
+curl -i -H "Authorization: Bearer <BAP_GRANT_TOKEN>" http://localhost:9090/api/v1/financial-records
+# Expected Output: HTTP/1.1 200 OK
 ```
 
 ---
