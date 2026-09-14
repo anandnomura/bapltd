@@ -48,10 +48,10 @@ def main():
     
     # Resolve bapcontrolplane (alias ltd-service)
     service_candidates = [
+        os.path.join(root_dir, "dist", "windows-amd64", "controlplane", "bapcontrolplane.exe"),
+        os.path.join(root_dir, "dist", "windows-amd64", "bapcontrolplane.exe"),
         os.path.join(root_dir, "bap-controlplane", "bapcontrolplane.exe"),
-        os.path.join(root_dir, "bap-controlplane", "ltd-service.exe"),
         os.path.join(root_dir, "ltd-service", "bapcontrolplane.exe"),
-        os.path.join(root_dir, "ltd-service", "ltd-service.exe"),
     ]
     service_exe = next((p for p in service_candidates if os.path.exists(p)), None)
     if not service_exe:
@@ -60,10 +60,10 @@ def main():
 
     # Resolve bapedge (LTD) (alias ltd-agent)
     agent_candidates = [
+        os.path.join(root_dir, "dist", "windows-amd64", "claude-client", "bapedge.exe"),
+        os.path.join(root_dir, "dist", "windows-amd64", "bapedge.exe"),
         os.path.join(root_dir, "bap-edge", "bapedge.exe"),
-        os.path.join(root_dir, "bap-edge", "ltd-agent.exe"),
         os.path.join(root_dir, "ltd-agent", "bapedge.exe"),
-        os.path.join(root_dir, "ltd-agent", "ltd-agent.exe"),
     ]
     agent_exe = next((p for p in agent_candidates if os.path.exists(p)), None)
     if not agent_exe:

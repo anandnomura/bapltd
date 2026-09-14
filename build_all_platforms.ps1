@@ -4,7 +4,7 @@
 
 param(
     [string]$DistDir = "dist",
-    [switch]$Archive
+    [switch]$Archive = $true
 )
 
 $ErrorActionPreference = "Stop"
@@ -40,13 +40,20 @@ if (!(Test-Path $distPath)) {
     New-Item -ItemType Directory -Path $distPath | Out-Null
 }
 
+# Purge any stale tar.gz or zip files so only freshly built ones exist
+if ($Archive) {
+    Get-ChildItem -Path $distPath -Filter "*.tar.gz" -File -ErrorAction SilentlyContinue | Remove-Item -Force
+    Get-ChildItem -Path $distPath -Filter "*.zip" -File -ErrorAction SilentlyContinue | Remove-Item -Force
+}
+
 $startTime = Get-Date
 
 foreach ($p in $platforms) {
     $platformDir = Join-Path $distPath $p.Name
-    if (!(Test-Path $platformDir)) {
-        New-Item -ItemType Directory -Path $platformDir | Out-Null
+    if (Test-Path $platformDir) {
+        Remove-Item -Path $platformDir -Recurse -Force -ErrorAction SilentlyContinue
     }
+    New-Item -ItemType Directory -Path $platformDir | Out-Null
 
     Write-Host "`n>>> Compiling for $($p.Name) (OS: $($p.OS), ARCH: $($p.Arch))..." -ForegroundColor Yellow
     $env:GOOS = $p.OS
@@ -58,7 +65,7 @@ foreach ($p in $platforms) {
 
         Push-Location $compDir
         try {
-            go build -ldflags "-s -w" -o $outFile $c.Pkg
+            go build -trimpath -ldflags "-s -w" -o $outFile $c.Pkg
             if ($LASTEXITCODE -ne 0) {
                 throw "Compilation failed for $($c.Name) on $($p.Name)"
             }
@@ -248,27 +255,24 @@ Features:
     Copy-Item (Join-Path $platformDir "bapgateway$($p.Ext)") (Join-Path $gwDir "bapgateway$($p.Ext)") -Force
     Copy-Item (Join-Path $rootDir "bap-config.json") (Join-Path $gwDir "bap-config.json") -Force
 
-    # If windows-amd64, also sync root binaries
-    if ($p.Name -eq "windows-amd64") {
-        Copy-Item (Join-Path $platformDir "bapcontrolplane.exe") (Join-Path $rootDir "bapcontrolplane.exe") -Force
-        Copy-Item (Join-Path $platformDir "bapedge.exe") (Join-Path $rootDir "bapedge.exe") -Force
-        Copy-Item (Join-Path $platformDir "bapedge.exe") (Join-Path $rootDir "bapmcp.exe") -Force
-        Copy-Item (Join-Path $platformDir "bapedge.exe") (Join-Path $rootDir "ltd-agent.exe") -Force
-        Copy-Item (Join-Path $platformDir "bapgateway.exe") (Join-Path $rootDir "bapgateway.exe") -Force
-        Copy-Item (Join-Path $platformDir "cchook-interceptor.exe") (Join-Path $rootDir "cchook\interceptor.exe") -Force
-        Copy-Item (Join-Path $platformDir "copilot-interceptor.exe") (Join-Path $rootDir "copilot\copilot_interceptor.exe") -Force
-    }
-
-    # Create convenient zip/tar.gz archives if requested
+    # Package zip/tar.gz archives (everything is packaged strictly from dist)
     if ($Archive) {
         if ($p.OS -eq "windows") {
+            # 1. Complete platform package (all binaries, configs, and tools)
+            Compress-Archive -Path "$platformDir\*" -DestinationPath (Join-Path $distPath "bap-$($p.Name).zip") -Force
+            # 2. Standalone role packages
             Compress-Archive -Path "$cpDir\*" -DestinationPath (Join-Path $distPath "bap-controlplane-$($p.Name).zip") -Force
             Compress-Archive -Path "$clientDir\*" -DestinationPath (Join-Path $distPath "bap-claude-client-$($p.Name).zip") -Force
-            Write-Host "  [+] Packaged role archives: bap-controlplane-$($p.Name).zip, bap-claude-client-$($p.Name).zip" -ForegroundColor Cyan
+            Compress-Archive -Path "$gwDir\*" -DestinationPath (Join-Path $distPath "bap-gateway-$($p.Name).zip") -Force
+            Write-Host "  [+] Packaged: bap-$($p.Name).zip, bap-controlplane-$($p.Name).zip, bap-claude-client-$($p.Name).zip, bap-gateway-$($p.Name).zip" -ForegroundColor Cyan
         } else {
+            # 1. Complete platform package (all binaries, configs, and tools)
+            tar -czf (Join-Path $distPath "bap-$($p.Name).tar.gz") -C $platformDir .
+            # 2. Standalone role packages
             tar -czf (Join-Path $distPath "bap-controlplane-$($p.Name).tar.gz") -C $cpDir .
             tar -czf (Join-Path $distPath "bap-claude-client-$($p.Name).tar.gz") -C $clientDir .
-            Write-Host "  [+] Packaged role archives: bap-controlplane-$($p.Name).tar.gz, bap-claude-client-$($p.Name).tar.gz" -ForegroundColor Cyan
+            tar -czf (Join-Path $distPath "bap-gateway-$($p.Name).tar.gz") -C $gwDir .
+            Write-Host "  [+] Packaged: bap-$($p.Name).tar.gz, bap-controlplane-$($p.Name).tar.gz, bap-claude-client-$($p.Name).tar.gz, bap-gateway-$($p.Name).tar.gz" -ForegroundColor Cyan
         }
     }
 }

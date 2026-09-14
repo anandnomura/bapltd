@@ -12,9 +12,18 @@ import time
 import pytest
 
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-BAP_EDGE_EXE = os.path.join(ROOT_DIR, "bapedge.exe")
+BAP_EDGE_EXE = os.path.join(ROOT_DIR, "dist", "windows-amd64", "claude-client", "bapedge.exe")
+if not os.path.exists(BAP_EDGE_EXE):
+    BAP_EDGE_EXE = os.path.join(ROOT_DIR, "dist", "windows-amd64", "bapedge.exe")
+if not os.path.exists(BAP_EDGE_EXE):
+    BAP_EDGE_EXE = os.path.join(ROOT_DIR, "bapedge.exe")
+
 BAP_MCP_EXE = os.path.join(ROOT_DIR, "bapmcp.exe")
 AUDIT_LOG_FILE = os.path.join(ROOT_DIR, "ltd-audit.jsonl")
+
+mcp_variants = [(BAP_EDGE_EXE, ["mcp"])]
+if os.path.exists(BAP_MCP_EXE):
+    mcp_variants.append((BAP_MCP_EXE, []))
 
 
 class MCPClient:
@@ -74,7 +83,7 @@ class MCPClient:
             self.proc.kill()
 
 
-@pytest.fixture(params=[(BAP_EDGE_EXE, ["mcp"]), (BAP_MCP_EXE, [])])
+@pytest.fixture(params=mcp_variants)
 def mcp_session(request):
     """Starts MCP server using either 'bapedge mcp' or dedicated 'bapmcp.exe'."""
     bin_path, args = request.param

@@ -25,7 +25,7 @@ if "%IS_LOCAL%"=="1" (
         echo [*] Local bapcontrolplane is already running on %CP_URL%.
     ) else (
         echo [*] Launching local bapcontrolplane daemon on port 8080...
-        powershell -NoProfile -Command "Start-Process -FilePath '.\bap-controlplane\bapcontrolplane.exe' -ArgumentList '-port 8080 -ttl 30 -trust-domain bap.internal' -WindowStyle Hidden"
+        powershell -NoProfile -Command "$p = if (Test-Path '.\dist\windows-amd64\controlplane\bapcontrolplane.exe') { '.\dist\windows-amd64\controlplane\bapcontrolplane.exe' } elseif (Test-Path '.\dist\windows-amd64\bapcontrolplane.exe') { '.\dist\windows-amd64\bapcontrolplane.exe' } else { '.\bap-controlplane\bapcontrolplane.exe' }; Start-Process -FilePath $p -ArgumentList '-port 8080 -ttl 30 -trust-domain bap.internal' -WindowStyle Hidden"
         ping -n 3 127.0.0.1 >nul
     )
 ) else (

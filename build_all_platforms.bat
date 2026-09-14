@@ -9,7 +9,7 @@ echo   Bounded Authority Plane (BAP) - Cross-Platform Multi-OS Build
 echo   Building Windows, Linux (amd64 + arm64), and macOS (Intel + Apple Silicon)
 echo ===============================================================================
 
-powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT_DIR%build_all_platforms.ps1" %*
+powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT_DIR%build_all_platforms.ps1" -Archive %*
 
 if %ERRORLEVEL% neq 0 (
     echo [ERROR] Multi-platform compilation failed.
