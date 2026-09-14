@@ -3,6 +3,7 @@ setlocal EnableDelayedExpansion
 
 set "ROOT_DIR=%~dp0"
 cd /d "%ROOT_DIR%"
+set "GOTOOLCHAIN=local"
 
 echo [1/4] Building bap-controlplane...
 cd /d "%ROOT_DIR%bap-controlplane"

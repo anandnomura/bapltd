@@ -1,6 +1,6 @@
 module bap-edge
 
-go 1.24.13
+go 1.24.0
 
 require (
 	github.com/cedar-policy/cedar-go v1.8.0 // indirect
