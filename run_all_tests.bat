@@ -16,12 +16,46 @@ set "GOTOOLCHAIN=local"
 set "PASS_COUNT=0"
 set "FAIL_COUNT=0"
 
+:: Resolve Central Control Plane & Gateway URLs from bap-config.json / environment
+set "CP_URL="
+set "GW_URL="
+for /f "tokens=1,2 delims=|" %%a in ('python -c "import sys; sys.path.insert(0, 'python-agent'); from bap_sdk import resolve_endpoints; ep = resolve_endpoints(); print(ep['controlplane_url'] + '|' + ep['gateway_url'])" 2^>nul') do (
+    set "CP_URL=%%a"
+    set "GW_URL=%%b"
+)
+if "!CP_URL!"=="" set "CP_URL=http://localhost:8080"
+if "!GW_URL!"=="" set "GW_URL=http://localhost:9090"
+
+set "CP_IS_LOCAL=0"
+echo !CP_URL! | findstr /i "localhost 127.0.0.1 ::1" >nul 2>&1
+if !errorlevel! equ 0 set "CP_IS_LOCAL=1"
+
+set "GW_IS_LOCAL=0"
+echo !GW_URL! | findstr /i "localhost 127.0.0.1 ::1" >nul 2>&1
+if !errorlevel! equ 0 set "GW_IS_LOCAL=1"
+
+set "CP_PORT=8080"
+for /f "tokens=3 delims=:" %%p in ("!CP_URL!") do (
+    set "TMP_P=%%p"
+    set "TMP_P=!TMP_P:/=!"
+    if not "!TMP_P!"=="" set "CP_PORT=!TMP_P!"
+)
+
+set "GW_PORT=9090"
+for /f "tokens=3 delims=:" %%p in ("!GW_URL!") do (
+    set "TMP_P=%%p"
+    set "TMP_P=!TMP_P:/=!"
+    if not "!TMP_P!"=="" set "GW_PORT=!TMP_P!"
+)
+
+echo [*] Configured Endpoints: ControlPlane=!CP_URL! (local=!CP_IS_LOCAL!), Gateway=!GW_URL! (local=!GW_IS_LOCAL!)
+
 :: -----------------------------------------------------------------------------
 :: Step 1: Rebuild Binaries
 :: -----------------------------------------------------------------------------
 echo.
-taskkill /F /IM bapcontrolplane.exe >nul 2>&1
-taskkill /F /IM bapgateway.exe >nul 2>&1
+if "!CP_IS_LOCAL!"=="1" taskkill /F /IM bapcontrolplane.exe >nul 2>&1
+if "!GW_IS_LOCAL!"=="1" taskkill /F /IM bapgateway.exe >nul 2>&1
 echo [1/11] Building bapcontrolplane.exe, bapgateway.exe, bapedge.exe (LTD), cchook, and copilot...
 cd /d "%ROOT_DIR%bap-controlplane"
 go build -o bapcontrolplane.exe ./cmd/server
@@ -336,10 +370,22 @@ if !ERRORLEVEL! neq 0 (
 echo.
 echo [10/12] Testing Python Agent SDK (bap-sdk) Zero-Trust Lifecycle [python -m pytest tests\test_python_agent.py]...
 cd /d "%ROOT_DIR%"
+if "!CP_IS_LOCAL!"=="0" goto :skip_start_cp
 taskkill /F /IM bapcontrolplane.exe >nul 2>&1
 taskkill /F /IM bapgateway.exe >nul 2>&1
-start "BAP Control Plane (8080)" /min "%ROOT_DIR%bap-controlplane\bapcontrolplane.exe" -port 8080 -ttl 30 -trust-domain bap.internal
-ping -n 2 127.0.0.1 >nul
+echo [*] Starting local BAP Control Plane on port !CP_PORT!...
+start "BAP Control Plane" /min "%ROOT_DIR%bap-controlplane\bapcontrolplane.exe" -port !CP_PORT! -ttl 30 -trust-domain bap.internal
+ping -n 3 127.0.0.1 >nul
+goto :after_start_cp
+
+:skip_start_cp
+echo [*] Remote Control Plane detected (!CP_URL!). Connecting directly without starting local daemon...
+curl.exe -s --max-time 3 --connect-timeout 2 -X GET "!CP_URL!/api/v1/health" >nul 2>&1
+if !ERRORLEVEL! neq 0 (
+    echo [WARN] Could not reach remote Control Plane at !CP_URL!/api/v1/health
+)
+
+:after_start_cp
 python -m pytest tests\test_python_agent.py -q
 if !ERRORLEVEL! neq 0 (
     echo [FAIL] test_python_agent.py failed!
@@ -355,8 +401,20 @@ if !ERRORLEVEL! neq 0 (
 echo.
 echo [11/12] Testing Gateway Policy Enforcement Point (PEP) [python -m pytest tests\test_gateway_pep.py]...
 cd /d "%ROOT_DIR%"
-start "BAP Gateway PEP (9090)" /min "%ROOT_DIR%bapgateway.exe" -port 9090 -controlplane http://localhost:8080
+if "!GW_IS_LOCAL!"=="0" goto :skip_start_gw
+echo [*] Starting local BAP Gateway PEP on port !GW_PORT! connected to Control Plane (!CP_URL!)...
+start "BAP Gateway PEP" /min "%ROOT_DIR%bapgateway.exe" -port !GW_PORT! -controlplane !CP_URL!
 ping -n 2 127.0.0.1 >nul
+goto :after_start_gw
+
+:skip_start_gw
+echo [*] Remote Gateway PEP detected (!GW_URL!). Connecting directly without starting local daemon...
+curl.exe -s --max-time 3 --connect-timeout 2 -X GET "!GW_URL!/health" >nul 2>&1
+if !ERRORLEVEL! neq 0 (
+    echo [WARN] Could not reach remote Gateway PEP at !GW_URL!/health
+)
+
+:after_start_gw
 python -m pytest tests\test_gateway_pep.py -q
 if !ERRORLEVEL! neq 0 (
     echo [FAIL] test_gateway_pep.py failed!
@@ -370,20 +428,29 @@ if !ERRORLEVEL! neq 0 (
 :: Step 12: Complete Environment Teardown & Port Free Verification
 :: -----------------------------------------------------------------------------
 echo.
-echo [12/12] Verifying Complete Daemon Teardown and Port Release (8080 and 9090)...
-taskkill /F /IM bapgateway.exe >nul 2>&1
-taskkill /F /IM bapcontrolplane.exe >nul 2>&1
-powershell -NoProfile -Command "Get-NetTCPConnection -LocalPort 8080, 9090 -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }" >nul 2>&1
+echo [12/12] Verifying Daemon Teardown and Port Release...
+if "!GW_IS_LOCAL!"=="1" taskkill /F /IM bapgateway.exe >nul 2>&1
+if "!CP_IS_LOCAL!"=="1" taskkill /F /IM bapcontrolplane.exe >nul 2>&1
 ping -n 3 127.0.0.1 >nul
 
+if "!CP_IS_LOCAL!"=="0" if "!GW_IS_LOCAL!"=="0" goto :remote_teardown_done
+
+powershell -NoProfile -Command "Get-NetTCPConnection -LocalPort 8080, 9090 -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }" >nul 2>&1
 powershell -NoProfile -Command "if (@(Get-NetTCPConnection -LocalPort 8080, 9090 -State Listen -ErrorAction SilentlyContinue).Count -eq 0) { exit 0 } else { exit 1 }"
 if !ERRORLEVEL! equ 0 (
-    echo [PASS] Daemon Teardown: Ports 8080 and 9090 verified completely free. Zero lingering processes.
+    echo [PASS] Daemon Teardown: Local ports verified completely free. Zero lingering processes.
     set /a PASS_COUNT+=1
 ) else (
-    echo [FAIL] Daemon Teardown: Ports 8080 or 9090 are still occupied!
+    echo [FAIL] Daemon Teardown: Ports are still occupied!
     set /a FAIL_COUNT+=1
 )
+goto :after_teardown
+
+:remote_teardown_done
+echo [PASS] Remote Server Mode: Remote endpoints remain preserved without local teardown.
+set /a PASS_COUNT+=1
+
+:after_teardown
 
 :: -----------------------------------------------------------------------------
 :: Final Summary

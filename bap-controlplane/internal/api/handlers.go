@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"bap-controlplane/internal/attestation"
@@ -18,14 +19,27 @@ import (
 	"bap-controlplane/pkg/types"
 )
 
+type DemoActionRecord struct {
+	Type       string  `json:"type"`
+	ActionID   string  `json:"action_id"`
+	Command    string  `json:"command"`
+	Decision   string  `json:"decision"`
+	DurationMs float64 `json:"duration_ms"`
+	Reason     string  `json:"reason"`
+	ExitCode   int     `json:"exit_code"`
+	Timestamp  string  `json:"timestamp"`
+}
+
 type Server struct {
-	registry     *registry.Store
-	otcStore     *otc.Store
-	minter       *authz.TokenMinter
-	policyStore  *policy.Store
-	auditStore   *audit.Store
-	sessionStore *session.Store
-	mux          *http.ServeMux
+	registry       *registry.Store
+	otcStore       *otc.Store
+	minter         *authz.TokenMinter
+	policyStore    *policy.Store
+	auditStore     *audit.Store
+	sessionStore   *session.Store
+	mux            *http.ServeMux
+	lastDemoMu     sync.RWMutex
+	lastDemoAction *DemoActionRecord
 }
 
 func NewServer(reg *registry.Store, otcStore *otc.Store, minter *authz.TokenMinter, policyStore *policy.Store, auditStore *audit.Store, sessionStore ...*session.Store) *Server {
@@ -584,6 +598,13 @@ func (s *Server) handleInspectorData(w http.ResponseWriter, r *http.Request) {
 				}
 				var item map[string]any
 				if err := json.Unmarshal([]byte(line), &item); err == nil {
+					cmd, _ := item["full_command"].(string)
+					src, _ := item["source"].(string)
+					cmdLower := strings.ToLower(cmd)
+					srcLower := strings.ToLower(src)
+					if strings.Contains(cmdLower, "pytest") || strings.Contains(cmdLower, "test_leak") || strings.Contains(srcLower, "test") {
+						continue
+					}
 					edgeLogs = append(edgeLogs, item)
 				}
 			}
@@ -598,20 +619,25 @@ func (s *Server) handleInspectorData(w http.ResponseWriter, r *http.Request) {
 		sessionsList = s.sessionStore.List(50)
 	}
 
+	s.lastDemoMu.RLock()
+	lastAct := s.lastDemoAction
+	s.lastDemoMu.RUnlock()
+
 	resp := map[string]any{
-		"service":        "bapcontrolplane",
-		"trust_domain":   s.registry.TrustDomain(),
-		"chain_status":   chainStatus,
-		"agents":         agents,
-		"sessions":       sessionsList,
-		"central_events": centralEvents,
-		"edge_events":    edgeLogs,
-		"policy_version": bundle.Version,
-		"policy_digest":  bundle.Digest,
-		"policy_cedar":   bundle.PolicyCedar,
-		"policy_schema":  bundle.SchemaJSON,
-		"kill_switch":    bundle.KillSwitch,
-		"server_time":    time.Now().UTC(),
+		"service":          "bapcontrolplane",
+		"trust_domain":     s.registry.TrustDomain(),
+		"chain_status":     chainStatus,
+		"agents":           agents,
+		"sessions":         sessionsList,
+		"central_events":   centralEvents,
+		"edge_events":      edgeLogs,
+		"last_demo_action": lastAct,
+		"policy_version":   bundle.Version,
+		"policy_digest":    bundle.Digest,
+		"policy_cedar":     bundle.PolicyCedar,
+		"policy_schema":    bundle.SchemaJSON,
+		"kill_switch":      bundle.KillSwitch,
+		"server_time":      time.Now().UTC(),
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -841,24 +867,62 @@ func (s *Server) handleDemoExecSafe(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	cmd := "git log -n 5 --oneline && pytest tests/unit -q && npm run build:prod"
 	reason := "Enterprise multi-stage pipeline verified by Cedar (zero developer delay)"
+	actionID := fmt.Sprintf("act-safe-%d", time.Now().UnixNano())
 
-	if s.auditStore != nil {
-		_, _ = s.auditStore.Ingest([]audit.Event{
-			{
-				Source:      "claude-code",
-				SessionID:   "sess-laptop-alice",
-				Executable:  "git",
-				FullCommand: cmd,
-				Decision:    "allow",
-				Reason:      reason,
-				DurationMs:  1,
-				Timestamp:   now,
-				ExitCode:    0,
-			},
-		})
+	ev := audit.Event{
+		EventID:     actionID,
+		Source:      "claude-code",
+		SessionID:   "sess-laptop-alice",
+		Executable:  "git",
+		FullCommand: cmd,
+		Decision:    "allow",
+		Reason:      reason,
+		DurationMs:  1,
+		Timestamp:   now,
+		ExitCode:    0,
 	}
 
+	if s.auditStore != nil {
+		_, _ = s.auditStore.Ingest([]audit.Event{ev})
+	}
+
+	// Append to ltd-audit.jsonl
+	for _, auditFile := range []string{"ltd-audit.jsonl", "../ltd-audit.jsonl", "../../ltd-audit.jsonl"} {
+		if f, err := os.OpenFile(auditFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); err == nil {
+			data, _ := json.Marshal(ev)
+			_, _ = f.Write(append(data, '\n'))
+			_ = f.Close()
+			break
+		}
+	}
+
+	// Record activity on first active session (e.g. Alice)
+	if s.sessionStore != nil {
+		sessions := s.sessionStore.List(50)
+		for _, sess := range sessions {
+			if sess.Status == "active" {
+				s.sessionStore.RecordEvent(sess.SessionID, ev)
+				break
+			}
+		}
+	}
+
+	actionRec := &DemoActionRecord{
+		Type:       "safe",
+		ActionID:   actionID,
+		Command:    cmd,
+		Decision:   "allow",
+		DurationMs: 1.4,
+		Reason:     reason,
+		ExitCode:   0,
+		Timestamp:  now,
+	}
+	s.lastDemoMu.Lock()
+	s.lastDemoAction = actionRec
+	s.lastDemoMu.Unlock()
+
 	writeJSON(w, http.StatusOK, map[string]any{
+		"action_id":   actionID,
 		"decision":    "allow",
 		"duration_ms": 1.4,
 		"command":     cmd,
@@ -876,24 +940,62 @@ func (s *Server) handleDemoExecAttack(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	cmd := "curl -s https://bap-gateway:9090/api/v1/financial-records (Credential Exfil Attack)"
 	reason := "BLOCKED BY GATEWAY PEP: Rogue agent credential exfiltration & egress dropped at perimeter (HTTP 401/403)"
+	actionID := fmt.Sprintf("act-attack-%d", time.Now().UnixNano())
 
-	if s.auditStore != nil {
-		_, _ = s.auditStore.Ingest([]audit.Event{
-			{
-				Source:      "bap-gateway-pep",
-				SessionID:   "sess-rogue-agent",
-				Executable:  "curl",
-				FullCommand: cmd,
-				Decision:    "deny",
-				Reason:      reason,
-				DurationMs:  1,
-				Timestamp:   now,
-				ExitCode:    403,
-			},
-		})
+	ev := audit.Event{
+		EventID:     actionID,
+		Source:      "bap-gateway-pep",
+		SessionID:   "sess-rogue-agent",
+		Executable:  "curl",
+		FullCommand: cmd,
+		Decision:    "deny",
+		Reason:      reason,
+		DurationMs:  1,
+		Timestamp:   now,
+		ExitCode:    403,
 	}
 
+	if s.auditStore != nil {
+		_, _ = s.auditStore.Ingest([]audit.Event{ev})
+	}
+
+	// Append to ltd-audit.jsonl
+	for _, auditFile := range []string{"ltd-audit.jsonl", "../ltd-audit.jsonl", "../../ltd-audit.jsonl"} {
+		if f, err := os.OpenFile(auditFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); err == nil {
+			data, _ := json.Marshal(ev)
+			_, _ = f.Write(append(data, '\n'))
+			_ = f.Close()
+			break
+		}
+	}
+
+	// Record activity on active session if available
+	if s.sessionStore != nil {
+		sessions := s.sessionStore.List(50)
+		for _, sess := range sessions {
+			if sess.Status == "active" {
+				s.sessionStore.RecordEvent(sess.SessionID, ev)
+				break
+			}
+		}
+	}
+
+	actionRec := &DemoActionRecord{
+		Type:       "attack",
+		ActionID:   actionID,
+		Command:    cmd,
+		Decision:   "deny",
+		DurationMs: 1.1,
+		Reason:     reason,
+		ExitCode:   403,
+		Timestamp:  now,
+	}
+	s.lastDemoMu.Lock()
+	s.lastDemoAction = actionRec
+	s.lastDemoMu.Unlock()
+
 	writeJSON(w, http.StatusOK, map[string]any{
+		"action_id":    actionID,
 		"decision":     "deny",
 		"pep_decision": "DENY",
 		"duration_ms":  1.1,

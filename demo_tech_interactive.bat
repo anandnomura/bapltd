@@ -6,7 +6,7 @@ mode con: cols=100 lines=35
 color 0B
 
 echo ====================================================================================================
-echo        BOUNDED AUTHORITY PLANE (BAP) - TECHNICAL ARCHITECTURE & SECURITY DEMONSTRATION
+echo        BOUNDED AUTHORITY PLANE (BAP) - TECHNICAL ARCHITECTURE and SECURITY DEMONSTRATION
 echo                  Zero-Trust Pre-Execution Broker and Observability for AI Coding Agents
 echo ====================================================================================================
 echo.
@@ -391,7 +391,7 @@ echo [*] Deregistering demonstration session %SESS_ID% from Central Control Plan
 curl.exe -s -X POST "%SERVER_URL%/api/v1/sessions/end" ^
     -H "Content-Type: application/json" ^
     -d "{\"session_id\":\"%SESS_ID%\",\"reason\":\"CIO executive demo completed gracefully\"}" >nul
-echo [+] Demonstration session closed & deregistered.
+echo [+] Demonstration session closed and deregistered.
 
 :: Clean up any other active agent sessions so the radar has 0 stale ghosts
 curl.exe -s --max-time 2 --connect-timeout 2 -X POST "%SERVER_URL%/api/v1/sessions/reset" >nul 2>&1
@@ -418,7 +418,7 @@ echo  DEMO ENVIRONMENT TEARDOWN
 echo ====================================================================================================
 echo.
 echo  Choose teardown option:
-echo  [1] Clean shutdown: Stop all background services (ports 8080 & 9090)
+echo  [1] Clean shutdown: Stop all background services (ports 8080 and 9090)
 echo  [2] Keep Control Plane running for continued Activity Inspector browser inspection [Default]
 echo.
 set /p TEARDOWN_CHOICE="Select option (1 or 2) [default: 2]: "
