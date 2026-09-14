@@ -33,11 +33,11 @@ echo.
 echo [*] Checking connectivity to Linux BAP Control Plane at !SERVER_URL!...
 curl.exe -s --max-time 3 --connect-timeout 2 -X GET "!SERVER_URL!/api/v1/health" | findstr /i "ok healthy ltd-service" >nul 2>&1
 if !ERRORLEVEL! equ 0 (
-    echo [+] SUCCESS: Connected to Linux BAP Control Plane!
+    echo [+] SUCCESS: Connected to Linux BAP Control Plane.
 ) else (
-    echo [!] WARNING: Could not reach !SERVER_URL!/api/v1/health.
+    echo [-] WARNING: Could not reach !SERVER_URL!/api/v1/health.
     echo     Please verify the Linux server IP, port, and firewall.
-    echo     Proceeding in local-edge mode (Cedar policies still enforced locally).
+    echo     Proceeding in local-edge mode - Cedar policies still enforced locally.
 )
 
 :: 2. Persist to bap-config.json so bapedge and cchook automatically connect

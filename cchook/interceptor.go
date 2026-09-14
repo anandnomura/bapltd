@@ -106,7 +106,11 @@ func main() {
 		sessionID = os.Getenv("LTD_SESSION_ID")
 	}
 	if sessionID == "" {
-		for _, loc := range []string{".bap-session.json", "../.bap-session.json", "cchook/.bap-session.json"} {
+		sessCandidates := []string{".bap-session.json", "../.bap-session.json", "cchook/.bap-session.json"}
+		if exePath, err := os.Executable(); err == nil {
+			sessCandidates = append(sessCandidates, filepath.Join(filepath.Dir(exePath), ".bap-session.json"))
+		}
+		for _, loc := range sessCandidates {
 			if data, err := os.ReadFile(loc); err == nil {
 				var sInfo struct {
 					SessionID string `json:"session_id"`
@@ -122,7 +126,14 @@ func main() {
 		ppid := os.Getppid()
 		sessionID = fmt.Sprintf("sess-claude-pid-%d", ppid)
 		serverURL := "http://localhost:8080"
-		for _, cfgPath := range []string{"bap-config.json", "../bap-config.json"} {
+		cfgCandidates := []string{"bap-config.json", "../bap-config.json"}
+		if exePath, err := os.Executable(); err == nil {
+			cfgCandidates = append(cfgCandidates, filepath.Join(filepath.Dir(exePath), "bap-config.json"))
+		}
+		if home, err := os.UserHomeDir(); err == nil {
+			cfgCandidates = append(cfgCandidates, filepath.Join(home, ".bap", "bap-config.json"))
+		}
+		for _, cfgPath := range cfgCandidates {
 			if cfgData, err := os.ReadFile(cfgPath); err == nil {
 				var cfg struct {
 					ControlPlaneURL string `json:"controlplane_url"`
