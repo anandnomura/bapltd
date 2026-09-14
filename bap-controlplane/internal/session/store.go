@@ -425,6 +425,29 @@ func (s *Store) Get(sessionID string) (*Session, error) {
 	return &cp, nil
 }
 
+// Heartbeat updates the LastActiveAt timestamp for a session, and resurrects it if prematurely timed out.
+func (s *Store) Heartbeat(sessionID string) (*Session, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	sess, exists := s.sessions[sessionID]
+	if !exists {
+		return nil, fmt.Errorf("session %q not found", sessionID)
+	}
+
+	now := time.Now().UTC()
+	sess.LastActiveAt = now
+	// If prematurely closed by idle timeout while process is still actively pinging, resurrect to active
+	if sess.Status == "closed" && sess.CloseReason == "idle_timeout" {
+		sess.Status = "active"
+		sess.EndedAt = nil
+		sess.CloseReason = ""
+	}
+	s.saveSessionToDB(sess)
+	cp := *sess
+	return &cp, nil
+}
+
 // PurgeStale marks any active sessions that have been idle for longer than maxIdle as closed.
 func (s *Store) PurgeStale(maxIdle time.Duration) int {
 	s.mu.Lock()
