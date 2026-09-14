@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -125,6 +127,18 @@ func RunExec(args []string) {
 	}
 	fullCommand = sandbox.CleanCommandString(fullCommand)
 	ec.fullCommand = fullCommand
+
+	// Fast sync of remote revocations from control plane if reachable
+	syncRevocationsFast(ec.serverURL, *policyPath)
+
+	// Check if this session or the system has been revoked by CISO administrator
+	if revErr := authz.CheckSessionRevocation(*policyPath, ec.sessionID); revErr != nil {
+		resp := types.ExecResponse{
+			Allowed: false,
+			Reason:  fmt.Sprintf("EXECUTION BLOCKED: %v", revErr),
+		}
+		ec.exit(resp, 1)
+	}
 
 	// 1. Initialize Cedar authorizer
 	authorizer, err := authz.NewAuthorizer(*policyPath)
@@ -292,4 +306,43 @@ func quoteArg(arg string) string {
 		return `"` + arg + `"`
 	}
 	return arg
+}
+
+func syncRevocationsFast(serverURL, policyPath string) {
+	if serverURL == "" || os.Getenv("BAP_OFFLINE") == "1" || os.Getenv("BAP_TEST_MODE") == "1" {
+		return
+	}
+	client := &http.Client{Timeout: 200 * time.Millisecond}
+	resp, err := client.Get(serverURL + "/api/v1/control/revocations")
+	if err != nil || resp.StatusCode != http.StatusOK {
+		return
+	}
+	defer resp.Body.Close()
+
+	var data struct {
+		KillSwitch      bool     `json:"kill_switch"`
+		RevokedSessions []string `json:"revoked_sessions"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return
+	}
+
+	// Update local policy-state.json
+	statePath := "policy-state.json"
+	if policyPath != "" {
+		statePath = filepath.Join(filepath.Dir(policyPath), "policy-state.json")
+	}
+	var existing map[string]any
+	if content, err := os.ReadFile(statePath); err == nil {
+		_ = json.Unmarshal(content, &existing)
+	}
+	if existing == nil {
+		existing = make(map[string]any)
+	}
+	existing["kill_switch"] = data.KillSwitch
+	existing["revoked_sessions"] = data.RevokedSessions
+	existing["last_sync"] = time.Now().UTC()
+	if updated, err := json.MarshalIndent(existing, "", "  "); err == nil {
+		_ = os.WriteFile(statePath, updated, 0600)
+	}
 }

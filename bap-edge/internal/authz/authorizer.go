@@ -160,3 +160,44 @@ func findFile(customPath, defaultName string) (string, error) {
 
 	return "", fmt.Errorf("%s not found in custom path, current directory, executable directory, or ~/.ltd/policy/", defaultName)
 }
+
+// CheckSessionRevocation checks if the given sessionID or system is blocked by local or cached policy state.
+func CheckSessionRevocation(policyPath, sessionID string) error {
+	resolvedPolicyPath, err := findFile(policyPath, "policy.cedar")
+	if err != nil {
+		// Fallback to checking local policy-state.json
+		resolvedPolicyPath = "policy.cedar"
+	}
+	policyDir := filepath.Dir(resolvedPolicyPath)
+	statePath := filepath.Join(policyDir, "policy-state.json")
+	stateData, err := os.ReadFile(statePath)
+	if err != nil {
+		return nil
+	}
+
+	var state struct {
+		KillSwitch      bool     `json:"kill_switch"`
+		RevokedSessions []string `json:"revoked_sessions"`
+	}
+	if err := json.Unmarshal(stateData, &state); err != nil {
+		return nil
+	}
+
+	if state.KillSwitch {
+		return fmt.Errorf("emergency kill-switch is active; all executions are blocked")
+	}
+
+	if sessionID != "" {
+		sessLower := strings.ToLower(sessionID)
+		for _, rev := range state.RevokedSessions {
+			revLower := strings.ToLower(strings.TrimSpace(rev))
+			if revLower == "" {
+				continue
+			}
+			if strings.Contains(sessLower, revLower) || strings.Contains(revLower, sessLower) {
+				return fmt.Errorf("session %q has been revoked by CISO administrator; execution blocked", sessionID)
+			}
+		}
+	}
+	return nil
+}

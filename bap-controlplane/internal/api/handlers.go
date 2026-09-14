@@ -96,9 +96,11 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/inspector", s.handleInspectorUI)
 	s.mux.HandleFunc("/api/v1/inspector/data", s.handleInspectorData)
 	s.mux.HandleFunc("/api/v1/control/kill-switch", s.handleKillSwitch)
+	s.mux.HandleFunc("/api/v1/control/revocations", s.handleGetRevocations)
 	s.mux.HandleFunc("/api/v1/control/chain/verify", s.handleVerifyChain)
 	s.mux.HandleFunc("/api/v1/control/agent/kill", s.handleTargetedKillAgent)
 	s.mux.HandleFunc("/api/v1/control/agent/revoke", s.handleTargetedKillAgent)
+	s.mux.HandleFunc("/api/v1/sessions/revoke", s.handleTargetedKillAgent)
 	s.mux.HandleFunc("/api/v1/demo/exec-safe", s.handleDemoExecSafe)
 	s.mux.HandleFunc("/api/v1/demo/exec-attack", s.handleDemoExecAttack)
 	s.mux.HandleFunc("/api/v1/demo/fleet-scale", s.handleDemoFleetScale)
@@ -556,7 +558,7 @@ func (s *Server) handleInspectorData(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	idleTimeout := 15 * time.Minute
+	idleTimeout := 45 * time.Second
 	if envTimeout := os.Getenv("BAP_SESSION_TIMEOUT"); envTimeout != "" {
 		if d, err := time.ParseDuration(envTimeout); err == nil {
 			idleTimeout = d
@@ -615,8 +617,10 @@ func (s *Server) handleInspectorData(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var sessionsList any = []any{}
+	var revokedSessions []string
 	if s.sessionStore != nil {
 		sessionsList = s.sessionStore.List(50)
+		revokedSessions = s.sessionStore.ListRevoked()
 	}
 
 	s.lastDemoMu.RLock()
@@ -629,6 +633,7 @@ func (s *Server) handleInspectorData(w http.ResponseWriter, r *http.Request) {
 		"chain_status":     chainStatus,
 		"agents":           agents,
 		"sessions":         sessionsList,
+		"revoked_sessions": revokedSessions,
 		"central_events":   centralEvents,
 		"edge_events":      edgeLogs,
 		"last_demo_action": lastAct,
@@ -640,6 +645,23 @@ func (s *Server) handleInspectorData(w http.ResponseWriter, r *http.Request) {
 		"server_time":      time.Now().UTC(),
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) handleGetRevocations(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	bundle := s.policyStore.GetBundle()
+	var revokedSessions []string
+	if s.sessionStore != nil {
+		revokedSessions = s.sessionStore.ListRevoked()
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"kill_switch":      bundle.KillSwitch,
+		"revoked_sessions": revokedSessions,
+		"updated_at":       time.Now().UTC(),
+	})
 }
 
 func (s *Server) handleSessionStart(w http.ResponseWriter, r *http.Request) {

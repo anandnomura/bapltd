@@ -2,6 +2,7 @@ package session
 
 import (
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"fmt"
 	"strings"
@@ -9,6 +10,8 @@ import (
 	"time"
 
 	"bap-controlplane/internal/audit"
+
+	_ "modernc.org/sqlite"
 )
 
 // Session represents an active or historical agent execution session (e.g., a Claude Code or Copilot run).
@@ -19,7 +22,7 @@ type Session struct {
 	UserID       string        `json:"user_id,omitempty"`
 	UserEmail    string        `json:"user_email,omitempty"`
 	SPIFFEID     string        `json:"spiffe_id,omitempty"`
-	Status       string        `json:"status"` // "active" or "closed"
+	Status       string        `json:"status"` // "active", "closed", or "revoked"
 	StartedAt    time.Time     `json:"started_at"`
 	EndedAt      *time.Time    `json:"ended_at,omitempty"`
 	LastActiveAt time.Time     `json:"last_active_at"`
@@ -44,19 +47,72 @@ type SessionStartRequest struct {
 	Hostname   string `json:"hostname,omitempty"`
 }
 
-// Store manages sessions in memory with thread safety.
+// Store manages sessions in memory with thread safety and optional SQLite durability.
 type Store struct {
 	mu       sync.RWMutex
 	sessions map[string]*Session
 	order    []string // chronological order of session IDs
+	db       *sql.DB  // persistent SQLite storage
 }
 
-// NewStore creates an initialized Store.
+// NewStore creates an in-memory Store (for tests or backward compatibility).
 func NewStore() *Store {
 	return &Store{
 		sessions: make(map[string]*Session),
 		order:    make([]string, 0),
 	}
+}
+
+// NewStoreWithDB creates an initialized Store with SQLite persistence.
+func NewStoreWithDB(dbPath string) (*Store, error) {
+	if dbPath == "" || dbPath == ":memory:" || dbPath == "memory" {
+		return NewStore(), nil
+	}
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open sqlite database at %s: %w", dbPath, err)
+	}
+
+	_, _ = db.Exec("PRAGMA journal_mode=WAL;")
+	_, _ = db.Exec("PRAGMA busy_timeout=5000;")
+
+	createTableSQL := `
+	CREATE TABLE IF NOT EXISTS sessions (
+		session_id TEXT PRIMARY KEY,
+		app_id TEXT NOT NULL,
+		instance_id TEXT,
+		user_id TEXT,
+		user_email TEXT,
+		spiffe_id TEXT,
+		status TEXT NOT NULL,
+		started_at TEXT NOT NULL,
+		ended_at TEXT,
+		last_active_at TEXT NOT NULL,
+		client_pid INTEGER,
+		hostname TEXT,
+		total_events INTEGER DEFAULT 0,
+		allowed_count INTEGER DEFAULT 0,
+		denied_count INTEGER DEFAULT 0,
+		close_reason TEXT
+	);`
+	if _, err := db.Exec(createTableSQL); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("failed to initialize sqlite sessions schema: %w", err)
+	}
+
+	store := &Store{
+		sessions: make(map[string]*Session),
+		order:    make([]string, 0),
+		db:       db,
+	}
+
+	if err := store.loadFromDB(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("failed to restore sessions from sqlite: %w", err)
+	}
+
+	return store, nil
 }
 
 // GenerateSessionID creates a unique session identifier.
@@ -102,6 +158,7 @@ func (s *Store) Start(req SessionStartRequest) (*Session, error) {
 		if req.SPIFFEID != "" {
 			existing.SPIFFEID = req.SPIFFEID
 		}
+		s.saveSessionToDB(existing)
 		return existing, nil
 	}
 
@@ -143,6 +200,7 @@ func (s *Store) Start(req SessionStartRequest) (*Session, error) {
 
 	s.sessions[sessionID] = sess
 	s.order = append(s.order, sessionID)
+	s.saveSessionToDB(sess)
 	return sess, nil
 }
 
@@ -161,7 +219,63 @@ func (s *Store) End(sessionID string, reason string) error {
 	sess.EndedAt = &now
 	sess.LastActiveAt = now
 	sess.CloseReason = reason
+	s.saveSessionToDB(sess)
 	return nil
+}
+
+// RevokeSession explicitly revokes a session by exact ID.
+func (s *Store) RevokeSession(sessionID string, reason string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	sess, found := s.sessions[sessionID]
+	if !found {
+		// Even if not found, create a placeholder revoked session to prevent future enrollment
+		now := time.Now().UTC()
+		s.sessions[sessionID] = &Session{
+			SessionID:    sessionID,
+			AppID:        "unknown",
+			Status:       "revoked",
+			StartedAt:    now,
+			LastActiveAt: now,
+			CloseReason:  reason,
+		}
+		s.order = append(s.order, sessionID)
+		s.saveSessionToDB(s.sessions[sessionID])
+		return nil
+	}
+
+	now := time.Now().UTC()
+	sess.Status = "revoked"
+	sess.CloseReason = reason
+	sess.LastActiveAt = now
+	s.saveSessionToDB(sess)
+	return nil
+}
+
+// ListRevoked returns a slice of all currently revoked session IDs.
+func (s *Store) ListRevoked() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	revoked := make([]string, 0)
+	for id, sess := range s.sessions {
+		if sess.Status == "revoked" {
+			revoked = append(revoked, id)
+		}
+	}
+	return revoked
+}
+
+// IsRevoked checks if a specific session ID is currently revoked.
+func (s *Store) IsRevoked(sessionID string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if sess, found := s.sessions[sessionID]; found {
+		return sess.Status == "revoked"
+	}
+	return false
 }
 
 // RevokeTarget finds an active session matching target (by session_id, instance_id, user_id, or user_email) and marks it revoked.
@@ -179,6 +293,7 @@ func (s *Store) RevokeTarget(target string, reason string) (*Session, error) {
 			sess.Status = "revoked"
 			sess.CloseReason = reason
 			sess.LastActiveAt = now
+			s.saveSessionToDB(sess)
 			return sess, nil
 		}
 	}
@@ -200,6 +315,7 @@ func (s *Store) RestoreTarget(target string) (*Session, error) {
 			sess.Status = "active"
 			sess.CloseReason = ""
 			sess.LastActiveAt = now
+			s.saveSessionToDB(sess)
 			return sess, nil
 		}
 	}
@@ -242,8 +358,8 @@ func (s *Store) RecordEvent(sessionID string, ev audit.Event) {
 		s.order = append(s.order, sessionID)
 	}
 
-	// Re-activate session on new activity if it was previously closed due to idle timeout
-	if sess.Status != "active" {
+	// Re-activate session on new activity only if it was closed due to idle timeout; NEVER if revoked!
+	if sess.Status != "active" && sess.Status != "revoked" {
 		sess.Status = "active"
 		sess.EndedAt = nil
 		sess.CloseReason = ""
@@ -267,6 +383,7 @@ func (s *Store) RecordEvent(sessionID string, ev audit.Event) {
 		sess.DeniedCount++
 	}
 	sess.Events = append(sess.Events, ev)
+	s.saveSessionToDB(sess)
 }
 
 // List returns the latest N sessions in reverse chronological order.
@@ -320,6 +437,7 @@ func (s *Store) PurgeStale(maxIdle time.Duration) int {
 			sess.Status = "closed"
 			sess.EndedAt = &now
 			sess.CloseReason = "idle_timeout"
+			s.saveSessionToDB(sess)
 			closed++
 		}
 	}
@@ -338,8 +456,108 @@ func (s *Store) Reset() int {
 			sess.Status = "closed"
 			sess.EndedAt = &now
 			sess.CloseReason = "system_reset"
+			s.saveSessionToDB(sess)
 			closed++
 		}
 	}
 	return closed
+}
+
+func (s *Store) loadFromDB() error {
+	if s.db == nil {
+		return nil
+	}
+	rows, err := s.db.Query(`SELECT session_id, app_id, instance_id, user_id, user_email, spiffe_id, status, started_at, ended_at, last_active_at, client_pid, hostname, total_events, allowed_count, denied_count, close_reason FROM sessions ORDER BY started_at ASC`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			sessID, appID, instID, uID, uEmail, spiffeID, status, startedAtStr, endedAtStr, lastActiveStr, hostname, closeReason sql.NullString
+			clientPID, totalEv, allowCnt, denyCnt                                                                                sql.NullInt64
+		)
+		if err := rows.Scan(&sessID, &appID, &instID, &uID, &uEmail, &spiffeID, &status, &startedAtStr, &endedAtStr, &lastActiveStr, &clientPID, &hostname, &totalEv, &allowCnt, &denyCnt, &closeReason); err != nil {
+			continue
+		}
+		startedAt, _ := time.Parse(time.RFC3339, startedAtStr.String)
+		lastActiveAt, _ := time.Parse(time.RFC3339, lastActiveStr.String)
+		var endedAt *time.Time
+		if endedAtStr.Valid && endedAtStr.String != "" {
+			if t, err := time.Parse(time.RFC3339, endedAtStr.String); err == nil {
+				endedAt = &t
+			}
+		}
+
+		sess := &Session{
+			SessionID:    sessID.String,
+			AppID:        appID.String,
+			InstanceID:   instID.String,
+			UserID:       uID.String,
+			UserEmail:    uEmail.String,
+			SPIFFEID:     spiffeID.String,
+			Status:       status.String,
+			StartedAt:    startedAt,
+			EndedAt:      endedAt,
+			LastActiveAt: lastActiveAt,
+			ClientPID:    int(clientPID.Int64),
+			Hostname:     hostname.String,
+			TotalEvents:  int(totalEv.Int64),
+			AllowedCount: int(allowCnt.Int64),
+			DeniedCount:  int(denyCnt.Int64),
+			CloseReason:  closeReason.String,
+			Events:       make([]audit.Event, 0),
+		}
+		s.sessions[sess.SessionID] = sess
+		s.order = append(s.order, sess.SessionID)
+	}
+	return nil
+}
+
+func (s *Store) saveSessionToDB(sess *Session) {
+	if s.db == nil || sess == nil {
+		return
+	}
+	endedAtStr := ""
+	if sess.EndedAt != nil {
+		endedAtStr = sess.EndedAt.UTC().Format(time.RFC3339)
+	}
+	query := `
+	INSERT INTO sessions (session_id, app_id, instance_id, user_id, user_email, spiffe_id, status, started_at, ended_at, last_active_at, client_pid, hostname, total_events, allowed_count, denied_count, close_reason)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	ON CONFLICT(session_id) DO UPDATE SET
+		status = excluded.status,
+		ended_at = excluded.ended_at,
+		last_active_at = excluded.last_active_at,
+		total_events = excluded.total_events,
+		allowed_count = excluded.allowed_count,
+		denied_count = excluded.denied_count,
+		close_reason = excluded.close_reason;`
+	_, _ = s.db.Exec(query,
+		sess.SessionID,
+		sess.AppID,
+		sess.InstanceID,
+		sess.UserID,
+		sess.UserEmail,
+		sess.SPIFFEID,
+		sess.Status,
+		sess.StartedAt.UTC().Format(time.RFC3339),
+		endedAtStr,
+		sess.LastActiveAt.UTC().Format(time.RFC3339),
+		sess.ClientPID,
+		sess.Hostname,
+		sess.TotalEvents,
+		sess.AllowedCount,
+		sess.DeniedCount,
+		sess.CloseReason,
+	)
+}
+
+// Close gracefully closes the SQLite database connection.
+func (s *Store) Close() error {
+	if s.db != nil {
+		return s.db.Close()
+	}
+	return nil
 }
