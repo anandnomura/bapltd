@@ -51,5 +51,8 @@ def test_network_sandbox_prevents_leak():
 
 
 if __name__ == "__main__":
+    if sys.platform != "linux":
+        print("Skipping Linux kernel namespace sandbox test on non-Linux host.")
+        sys.exit(0)
     test_network_sandbox_prevents_leak()
 

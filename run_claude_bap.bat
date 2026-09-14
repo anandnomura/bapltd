@@ -1,19 +1,28 @@
 @echo off
 setlocal EnableDelayedExpansion
-cd /d "%~dp0"
+set "BAP_HOME=%~dp0"
 title Claude Code (Governed by BAP Zero-Trust)
 
 echo ===============================================================================
 echo       CLAUDE CODE - BOUNDED AUTHORITY PLANE (BAP) GOVERNANCE LAUNCHER
 echo ===============================================================================
+echo [*] Working Directory: %CD%
 echo.
 
 :: 1. Resolve Linux Control Plane Server URL
 set "SERVER_URL=%~1"
 if "!SERVER_URL!"=="" set "SERVER_URL=%BAP_SERVER_URL%"
 if "!SERVER_URL!"=="" (
+    set "CFG_FILE="
     if exist "bap-config.json" (
-        for /f "usebackq delims=" %%U in (`powershell -NoProfile -Command "(Get-Content bap-config.json -Raw | ConvertFrom-Json).controlplane_url" 2^>nul`) do set "SERVER_URL=%%U"
+        set "CFG_FILE=bap-config.json"
+    ) else if exist "%BAP_HOME%bap-config.json" (
+        set "CFG_FILE=%BAP_HOME%bap-config.json"
+    ) else if exist "%USERPROFILE%\bin\bap-config.json" (
+        set "CFG_FILE=%USERPROFILE%\bin\bap-config.json"
+    )
+    if not "!CFG_FILE!"=="" (
+        for /f "usebackq delims=" %%U in (`powershell -NoProfile -Command "(Get-Content '!CFG_FILE!' -Raw | ConvertFrom-Json).controlplane_url" 2^>nul`) do set "SERVER_URL=%%U"
     )
 )
 if "!SERVER_URL!"=="" set "SERVER_URL=http://localhost:8080"
@@ -40,14 +49,14 @@ if !ERRORLEVEL! equ 0 (
     echo     Proceeding in local-edge mode - Cedar policies still enforced locally.
 )
 
-:: 2. Resolve bapedge binary (checks dist role folder first)
+:: 2. Resolve bapedge binary
 set "BAPEDGE_BIN="
-if exist "%~dp0dist\windows-amd64\claude-client\bapedge.exe" (
-    set "BAPEDGE_BIN=%~dp0dist\windows-amd64\claude-client\bapedge.exe"
-) else if exist "%~dp0dist\windows-amd64\bapedge.exe" (
-    set "BAPEDGE_BIN=%~dp0dist\windows-amd64\bapedge.exe"
-) else if exist "%~dp0bapedge.exe" (
-    set "BAPEDGE_BIN=%~dp0bapedge.exe"
+if exist "%BAP_HOME%dist\windows-amd64\claude-client\bapedge.exe" (
+    set "BAPEDGE_BIN=%BAP_HOME%dist\windows-amd64\claude-client\bapedge.exe"
+) else if exist "%BAP_HOME%dist\windows-amd64\bapedge.exe" (
+    set "BAPEDGE_BIN=%BAP_HOME%dist\windows-amd64\bapedge.exe"
+) else if exist "%BAP_HOME%bapedge.exe" (
+    set "BAPEDGE_BIN=%BAP_HOME%bapedge.exe"
 ) else if exist "%USERPROFILE%\bin\bapedge.exe" (
     set "BAPEDGE_BIN=%USERPROFILE%\bin\bapedge.exe"
 ) else (
@@ -60,19 +69,30 @@ if not "!BAPEDGE_BIN!"=="" (
     !BAPEDGE_BIN! config set --server "!SERVER_URL!" >nul 2>&1
 ) else (
     powershell -NoProfile -Command ^
-        "$p = 'bap-config.json'; if (Test-Path $p) { $j = Get-Content $p -Raw | ConvertFrom-Json; $j.controlplane_url = '!SERVER_URL!'; $j | ConvertTo-Json -Depth 5 | Set-Content $p -Encoding UTF8 }" >nul 2>&1
+        "$p = if (Test-Path 'bap-config.json') { 'bap-config.json' } elseif (Test-Path '%BAP_HOME%bap-config.json') { '%BAP_HOME%bap-config.json' } else { $null }; if ($p) { $j = Get-Content $p -Raw | ConvertFrom-Json; $j.controlplane_url = '!SERVER_URL!'; $j | ConvertTo-Json -Depth 5 | Set-Content $p -Encoding UTF8 }" >nul 2>&1
 )
 
 :: 3. Verify cchook interceptor binary exists
 set "INTERCEPTOR_BIN="
-if exist "%~dp0dist\windows-amd64\claude-client\cchook\interceptor.exe" (
-    set "INTERCEPTOR_BIN=%~dp0dist\windows-amd64\claude-client\cchook\interceptor.exe"
-) else if exist "%~dp0dist\windows-amd64\cchook-interceptor.exe" (
-    set "INTERCEPTOR_BIN=%~dp0dist\windows-amd64\cchook-interceptor.exe"
+if exist "%BAP_HOME%dist\windows-amd64\claude-client\cchook\interceptor.exe" (
+    set "INTERCEPTOR_BIN=%BAP_HOME%dist\windows-amd64\claude-client\cchook\interceptor.exe"
+) else if exist "%BAP_HOME%dist\windows-amd64\cchook-interceptor.exe" (
+    set "INTERCEPTOR_BIN=%BAP_HOME%dist\windows-amd64\cchook-interceptor.exe"
+) else if exist "%BAP_HOME%interceptor.exe" (
+    set "INTERCEPTOR_BIN=%BAP_HOME%interceptor.exe"
 ) else if exist "%USERPROFILE%\bin\interceptor.exe" (
     set "INTERCEPTOR_BIN=%USERPROFILE%\bin\interceptor.exe"
-) else if exist "%~dp0cchook\interceptor.exe" (
-    set "INTERCEPTOR_BIN=%~dp0cchook\interceptor.exe"
+) else if exist "%BAP_HOME%cchook\interceptor.exe" (
+    set "INTERCEPTOR_BIN=%BAP_HOME%cchook\interceptor.exe"
+) else (
+    where interceptor.exe >nul 2>&1
+    if !ERRORLEVEL! equ 0 set "INTERCEPTOR_BIN=interceptor.exe"
+)
+
+:: Formulate hook command (prefer forward-slash absolute path, fallback to interceptor.exe in PATH)
+set "SAFE_HOOK_CMD=interceptor.exe"
+if not "!INTERCEPTOR_BIN!"=="" (
+    set "SAFE_HOOK_CMD=!INTERCEPTOR_BIN:\=/!"
 )
 
 :: 4. Ensure .claude/settings.json hook is configured in workspace
@@ -87,7 +107,7 @@ if not exist ".claude\settings.json" (
         echo         "hooks": [
         echo           {
         echo             "type": "command",
-        echo             "command": "./cchook/interceptor.exe"
+        echo             "command": "!SAFE_HOOK_CMD!"
         echo           }
         echo         ]
         echo       }

@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -31,15 +32,17 @@ type DemoActionRecord struct {
 }
 
 type Server struct {
-	registry       *registry.Store
-	otcStore       *otc.Store
-	minter         *authz.TokenMinter
-	policyStore    *policy.Store
-	auditStore     *audit.Store
-	sessionStore   *session.Store
-	mux            *http.ServeMux
-	lastDemoMu     sync.RWMutex
-	lastDemoAction *DemoActionRecord
+	registry         *registry.Store
+	otcStore         *otc.Store
+	minter           *authz.TokenMinter
+	policyStore      *policy.Store
+	auditStore       *audit.Store
+	sessionStore     *session.Store
+	mux              *http.ServeMux
+	adminToken       string
+	allowRemoteAdmin bool
+	lastDemoMu       sync.RWMutex
+	lastDemoAction   *DemoActionRecord
 }
 
 func NewServer(reg *registry.Store, otcStore *otc.Store, minter *authz.TokenMinter, policyStore *policy.Store, auditStore *audit.Store, sessionStore ...*session.Store) *Server {
@@ -68,18 +71,39 @@ func NewServer(reg *registry.Store, otcStore *otc.Store, minter *authz.TokenMint
 	return s
 }
 
+func (s *Server) SetAdminSecurity(token string, allowRemote bool) {
+	s.adminToken = strings.TrimSpace(token)
+	s.allowRemoteAdmin = allowRemote
+}
+
 func (s *Server) Handler() http.Handler {
-	return s.mux
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		if origin != "" {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-BAP-Admin-Token, X-Requested-With, Accept")
+		} else {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-BAP-Admin-Token, X-Requested-With, Accept")
+		}
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		s.mux.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) registerRoutes() {
+	// Public and Agent Endpoints
 	s.mux.HandleFunc("/api/v1/health", s.handleHealth)
 	s.mux.HandleFunc("/api/v1/agents/pre-register", s.handlePreRegister)
 	s.mux.HandleFunc("/api/v1/agents/register", s.handleRegisterEdge)
 	s.mux.HandleFunc("/api/v1/grants/acquire", s.handleAcquireGrant)
 	s.mux.HandleFunc("/api/v1/grants/consume", s.handleConsumeGrant)
-	s.mux.HandleFunc("/api/v1/agents/revoke", s.handleRevoke)
-	s.mux.HandleFunc("/api/v1/apps/revoke", s.handleRevokeApp)
 	s.mux.HandleFunc("/api/v1/instances/heartbeat", s.handleHeartbeat)
 	s.mux.HandleFunc("/api/v1/agents", s.handleListAgents)
 	s.mux.HandleFunc("/api/v1/policy/bundle", s.handleGetPolicyBundle)
@@ -89,22 +113,30 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/v1/sessions/start", s.handleSessionStart)
 	s.mux.HandleFunc("/api/v1/sessions/heartbeat", s.handleHeartbeat)
 	s.mux.HandleFunc("/api/v1/sessions/end", s.handleSessionEnd)
-	s.mux.HandleFunc("/api/v1/sessions/reset", s.handleResetSessions)
 	s.mux.HandleFunc("/api/v1/sessions", s.handleListSessions)
 	s.mux.HandleFunc("/api/v1/sessions/", s.handleGetSession)
 	s.mux.HandleFunc("/api/v1/auth/envoy", s.handleEnvoyExtAuthz)
 	s.mux.HandleFunc("/api/v1/financial-records", s.handleFinancialRecords)
 	s.mux.HandleFunc("/inspector", s.handleInspectorUI)
 	s.mux.HandleFunc("/api/v1/inspector/data", s.handleInspectorData)
-	s.mux.HandleFunc("/api/v1/control/kill-switch", s.handleKillSwitch)
 	s.mux.HandleFunc("/api/v1/control/revocations", s.handleGetRevocations)
 	s.mux.HandleFunc("/api/v1/control/chain/verify", s.handleVerifyChain)
-	s.mux.HandleFunc("/api/v1/control/agent/kill", s.handleTargetedKillAgent)
-	s.mux.HandleFunc("/api/v1/control/agent/revoke", s.handleTargetedKillAgent)
-	s.mux.HandleFunc("/api/v1/sessions/revoke", s.handleTargetedKillAgent)
-	s.mux.HandleFunc("/api/v1/demo/exec-safe", s.handleDemoExecSafe)
-	s.mux.HandleFunc("/api/v1/demo/exec-attack", s.handleDemoExecAttack)
-	s.mux.HandleFunc("/api/v1/demo/fleet-scale", s.handleDemoFleetScale)
+
+	// Web Inspector & React Admin Handshake / Login
+	s.mux.HandleFunc("/api/v1/auth/inspector-handshake", s.handleInspectorHandshake)
+	s.mux.HandleFunc("/api/v1/auth/admin-login", s.handleAdminLogin)
+
+	// Administrative & Mutating Operations (Protected by Admin Token)
+	s.mux.HandleFunc("/api/v1/control/kill-switch", s.requireAdminAuth(s.handleKillSwitch))
+	s.mux.HandleFunc("/api/v1/control/agent/kill", s.requireAdminAuth(s.handleTargetedKillAgent))
+	s.mux.HandleFunc("/api/v1/control/agent/revoke", s.requireAdminAuth(s.handleTargetedKillAgent))
+	s.mux.HandleFunc("/api/v1/sessions/revoke", s.requireAdminAuth(s.handleTargetedKillAgent))
+	s.mux.HandleFunc("/api/v1/sessions/reset", s.requireAdminAuth(s.handleResetSessions))
+	s.mux.HandleFunc("/api/v1/agents/revoke", s.requireAdminAuth(s.handleRevoke))
+	s.mux.HandleFunc("/api/v1/apps/revoke", s.requireAdminAuth(s.handleRevokeApp))
+	s.mux.HandleFunc("/api/v1/demo/exec-safe", s.requireAdminAuth(s.handleDemoExecSafe))
+	s.mux.HandleFunc("/api/v1/demo/exec-attack", s.requireAdminAuth(s.handleDemoExecAttack))
+	s.mux.HandleFunc("/api/v1/demo/fleet-scale", s.requireAdminAuth(s.handleDemoFleetScale))
 }
 
 func writeJSON(w http.ResponseWriter, status int, data any) {
@@ -650,22 +682,37 @@ func (s *Server) handleInspectorData(w http.ResponseWriter, r *http.Request) {
 	lastAct := s.lastDemoAction
 	s.lastDemoMu.RUnlock()
 
+	isAdmin := s.isAdminCaller(r)
+	if !isAdmin {
+		maskedCentral := make([]audit.Event, len(centralEvents))
+		for i, ev := range centralEvents {
+			maskedEv := ev
+			if maskedEv.UserPrompt != "" {
+				maskedEv.UserPrompt = "[Protected: Leadership Authentication Required]"
+			}
+			maskedCentral[i] = maskedEv
+		}
+		centralEvents = maskedCentral
+	}
+
 	resp := map[string]any{
-		"service":          "bapcontrolplane",
-		"trust_domain":     s.registry.TrustDomain(),
-		"chain_status":     chainStatus,
-		"agents":           agents,
-		"sessions":         sessionsList,
-		"revoked_sessions": revokedSessions,
-		"central_events":   centralEvents,
-		"edge_events":      edgeLogs,
-		"last_demo_action": lastAct,
-		"policy_version":   bundle.Version,
-		"policy_digest":    bundle.Digest,
-		"policy_cedar":     bundle.PolicyCedar,
-		"policy_schema":    bundle.SchemaJSON,
-		"kill_switch":      bundle.KillSwitch,
-		"server_time":      time.Now().UTC(),
+		"service":                "bapcontrolplane",
+		"trust_domain":           s.registry.TrustDomain(),
+		"chain_status":           chainStatus,
+		"agents":                 agents,
+		"sessions":               sessionsList,
+		"revoked_sessions":       revokedSessions,
+		"central_events":         centralEvents,
+		"edge_events":            edgeLogs,
+		"last_demo_action":       lastAct,
+		"policy_version":         bundle.Version,
+		"policy_digest":          bundle.Digest,
+		"policy_cedar":           bundle.PolicyCedar,
+		"policy_schema":          bundle.SchemaJSON,
+		"kill_switch":            bundle.KillSwitch,
+		"admin_authorized":       isAdmin,
+		"user_prompt_visibility": map[string]any{"admin_only": true, "unlocked": isAdmin},
+		"server_time":            time.Now().UTC(),
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -1241,5 +1288,202 @@ func (s *Server) handleTargetedKillAgent(w http.ResponseWriter, r *http.Request)
 		"action":      "isolated",
 		"message":     fmt.Sprintf("Targeted agent %s (%s) isolated & revoked. All authority burned.", revokedName, spiffeID),
 		"kill_status": "REVOKED",
+	})
+}
+
+func isLoopbackAddress(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		host = addr
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return host == "localhost" || host == "127.0.0.1" || host == "::1"
+	}
+	return ip.IsLoopback()
+}
+
+func (s *Server) logSecurityAlert(r *http.Request, category string, reason string) {
+	if s.auditStore == nil {
+		return
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, _ = s.auditStore.Ingest([]audit.Event{
+		{
+			EventID:     fmt.Sprintf("sec-alert-%d", time.Now().UnixNano()),
+			Source:      "controlplane-auth",
+			Executable:  r.URL.Path,
+			FullCommand: fmt.Sprintf("%s %s from %s", r.Method, r.URL.Path, r.RemoteAddr),
+			Decision:    "deny",
+			Reason:      reason,
+			Timestamp:   now,
+			ExitCode:    403,
+		},
+	})
+}
+
+func (s *Server) requireAdminAuth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if s.adminToken != "" {
+			token := ""
+			if authHeader := r.Header.Get("Authorization"); strings.HasPrefix(authHeader, "Bearer ") {
+				token = strings.TrimPrefix(authHeader, "Bearer ")
+			}
+			if token == "" {
+				token = r.Header.Get("X-BAP-Admin-Token")
+			}
+			if token == "" {
+				if cookie, err := r.Cookie("bap_admin_token"); err == nil {
+					token = cookie.Value
+				}
+			}
+
+			isLoopback := isLoopbackAddress(r.RemoteAddr)
+			if !s.allowRemoteAdmin && !isLoopback {
+				s.logSecurityAlert(r, "BLOCKED_REMOTE_ADMIN", fmt.Sprintf("Remote administrative call blocked from %s (loopback only)", r.RemoteAddr))
+				writeJSON(w, http.StatusForbidden, map[string]string{
+					"error": "Forbidden: Administrative control APIs are restricted to local host (127.0.0.1).",
+				})
+				return
+			}
+
+			if token == "" {
+				s.logSecurityAlert(r, "UNAUTHENTICATED_ADMIN_CALL", "Unauthorized admin attempt: Missing admin token.")
+				w.Header().Set("WWW-Authenticate", `Bearer realm="bap-controlplane-admin"`)
+				writeJSON(w, http.StatusUnauthorized, map[string]string{
+					"error": "Unauthorized: Administrative bearer token or X-BAP-Admin-Token required.",
+				})
+				return
+			}
+
+			if token != s.adminToken {
+				s.logSecurityAlert(r, "INVALID_ADMIN_TOKEN", fmt.Sprintf("Forbidden: Invalid admin token attempted from %s.", r.RemoteAddr))
+				writeJSON(w, http.StatusForbidden, map[string]string{
+					"error": "Forbidden: Invalid administrative token.",
+				})
+				return
+			}
+		}
+
+		next(w, r)
+	}
+}
+
+func (s *Server) handleInspectorHandshake(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	isLoopback := isLoopbackAddress(r.RemoteAddr)
+	reqToken := r.Header.Get("X-BAP-Admin-Token")
+	if reqToken == "" {
+		if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
+			reqToken = strings.TrimPrefix(auth, "Bearer ")
+		}
+	}
+	if reqToken == "" {
+		if cookie, err := r.Cookie("bap_admin_token"); err == nil {
+			reqToken = cookie.Value
+		}
+	}
+
+	// If request is from localhost/loopback, or provided token matches s.adminToken, or no admin token required:
+	if isLoopback || (reqToken != "" && reqToken == s.adminToken) || s.adminToken == "" {
+		http.SetCookie(w, &http.Cookie{
+			Name:     "bap_admin_token",
+			Value:    s.adminToken,
+			Path:     "/",
+			HttpOnly: false,
+			SameSite: http.SameSiteStrictMode,
+		})
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status":      "authorized",
+			"admin_token": s.adminToken,
+			"is_loopback": isLoopback,
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusUnauthorized, map[string]string{
+		"status": "unauthorized",
+		"error":  "Admin key required for remote inspector management",
+	})
+}
+
+func (s *Server) isAdminCaller(r *http.Request) bool {
+	if s.adminToken == "" {
+		return true
+	}
+	token := ""
+	if authHeader := r.Header.Get("Authorization"); strings.HasPrefix(authHeader, "Bearer ") {
+		token = strings.TrimPrefix(authHeader, "Bearer ")
+	}
+	if token == "" {
+		token = r.Header.Get("X-BAP-Admin-Token")
+	}
+	if token == "" {
+		if cookie, err := r.Cookie("bap_admin_token"); err == nil {
+			token = cookie.Value
+		}
+	}
+	if token != "" && token == s.adminToken {
+		return true
+	}
+	return isLoopbackAddress(r.RemoteAddr)
+}
+
+func (s *Server) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	var req struct {
+		Token string `json:"token"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	token := strings.TrimSpace(req.Token)
+	if token == "" {
+		if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
+			token = strings.TrimPrefix(auth, "Bearer ")
+		}
+	}
+	if token == "" {
+		token = r.Header.Get("X-BAP-Admin-Token")
+	}
+	if token == "" {
+		if cookie, err := r.Cookie("bap_admin_token"); err == nil {
+			token = cookie.Value
+		}
+	}
+
+	isLoopback := isLoopbackAddress(r.RemoteAddr)
+	if s.adminToken == "" || token == s.adminToken || (isLoopback && token == "") {
+		http.SetCookie(w, &http.Cookie{
+			Name:     "bap_admin_token",
+			Value:    s.adminToken,
+			Path:     "/",
+			HttpOnly: false,
+			SameSite: http.SameSiteStrictMode,
+		})
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status":      "authorized",
+			"role":        "ciso_admin",
+			"admin_token": s.adminToken,
+			"is_loopback": isLoopback,
+			"permissions": []string{
+				"kill_switch",
+				"isolate_agent",
+				"view_prompts",
+				"reset_sessions",
+				"audit_verify",
+			},
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusUnauthorized, map[string]string{
+		"error": "Unauthorized: Invalid administrative token",
 	})
 }

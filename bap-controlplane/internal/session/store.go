@@ -32,6 +32,7 @@ type Session struct {
 	AllowedCount int           `json:"allowed_count"`
 	DeniedCount  int           `json:"denied_count"`
 	CloseReason  string        `json:"close_reason,omitempty"`
+	UserPrompt   string        `json:"user_prompt,omitempty"`
 	Events       []audit.Event `json:"events,omitempty"`
 }
 
@@ -45,6 +46,7 @@ type SessionStartRequest struct {
 	SPIFFEID   string `json:"spiffe_id,omitempty"`
 	ClientPID  int    `json:"client_pid,omitempty"`
 	Hostname   string `json:"hostname,omitempty"`
+	UserPrompt string `json:"user_prompt,omitempty"`
 }
 
 // Store manages sessions in memory with thread safety and optional SQLite durability.

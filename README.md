@@ -814,6 +814,7 @@ python demo_envoy.py        # or demo_envoy_podman.bat / .sh
 
 ## 12. Comprehensive Documentation & Guides
 
+- [REACT_ADMIN_INTEGRATION.md](file:///c:/Users/User/pyprj/bapltd/REACT_ADMIN_INTEGRATION.md): Guide for connecting standalone enterprise React / Web UI dashboards running on separate servers to the BAP Control Plane using CORS, Bearer Token authentication, and prompt analytics.
 - [ENDPOINT_CONFIGURATION.md](file:///c:/Users/User/pyprj/bapltd/ENDPOINT_CONFIGURATION.md): Complete guide for configuring central BAP Control Plane hosts and gateways for developer laptops via `bap-config.json` and `configure_endpoints.bat`.
 - [FEATURES_AND_ARCHITECTURE.md](file:///c:/Users/User/pyprj/bapltd/FEATURES_AND_ARCHITECTURE.md): Master architectural reference, 34-feature matrix, and complete threat defense guide.
 - [CIO_DEMO_GUIDE.md](file:///c:/Users/User/pyprj/bapltd/CIO_DEMO_GUIDE.md): Complete executive walkthrough, interactive demo script, talking points, and FAQ for CIO/CISO presentations.
