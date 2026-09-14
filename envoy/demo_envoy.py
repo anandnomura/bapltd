@@ -20,10 +20,11 @@ import urllib.error
 root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.join(root_dir, "python-agent"))
 
-from bap_sdk import BAPSession, BAPPolicyViolation
+from bap_sdk import BAPSession, BAPPolicyViolation, resolve_endpoints
 
-ENVOY_INGRESS_URL = "http://localhost:10000/api/v1/financial-records"
-CONTROL_PLANE_URL = "http://localhost:8080"
+_ep = resolve_endpoints()
+ENVOY_INGRESS_URL = f"{_ep.get('envoy_url', 'http://localhost:10000')}/api/v1/financial-records"
+CONTROL_PLANE_URL = _ep.get("controlplane_url", "http://localhost:8080")
 
 
 def print_banner(title: str):

@@ -38,9 +38,17 @@ if %errorlevel% equ 0 (
     echo [+] Gateway PEP started successfully!
 )
 
+set "CP_URL=%BAP_SERVER_URL%"
+if "%CP_URL%"=="" (
+    if exist "bap-config.json" (
+        for /f "usebackq delims=" %%U in (`powershell -NoProfile -Command "(Get-Content bap-config.json -Raw | ConvertFrom-Json).controlplane_url"`) do set "CP_URL=%%U"
+    )
+)
+if "%CP_URL%"=="" set CP_URL=http://localhost:8080
+
 :: 3. Launch Activity Inspector in default browser (in live mode)
-echo [*] Opening BAP Activity Inspector & Live Fleet Radar in browser...
-start http://localhost:8080/inspector?mode=live
+echo [*] Opening BAP Activity Inspector and Live Fleet Radar in browser...
+start %CP_URL%/inspector?mode=live
 
 :: 4. Launch Interactive Demonstration Console in a styled side-by-side terminal
 echo [*] Opening Interactive Technical Diligence Presentation Console...
@@ -50,7 +58,7 @@ echo.
 echo ===============================================================================
 echo   SUCCESS! All demo windows are now open:
 echo.
-echo   1. Browser Window:  BAP Activity Inspector & Live Radar (Live Mode)
+echo   1. Browser Window:  BAP Activity Inspector and Live Radar (Live Mode)
 echo   2. Terminal Window: Interactive Step-by-Step Technical Console
 echo.
 echo   Tip for the presentation:

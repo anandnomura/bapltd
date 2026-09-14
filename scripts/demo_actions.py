@@ -10,7 +10,39 @@ import argparse
 import urllib.request
 import urllib.error
 
-SERVER = "http://localhost:8080"
+import os
+import sys
+
+# Resolve central Control Plane URL from bap-config.json, environment, or default fallback
+root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.join(root_dir, "python-agent"))
+
+def resolve_server_url() -> str:
+    # 1. Environment variables override
+    env_cp = os.getenv("BAP_SERVER_URL") or os.getenv("BAP_CONTROL_PLANE_URL") or os.getenv("LTD_SERVER_URL")
+    if env_cp:
+        return env_cp.rstrip("/")
+    # 2. Try bap_sdk resolve_endpoints
+    try:
+        from bap_sdk import resolve_endpoints
+        ep = resolve_endpoints()
+        if ep.get("controlplane_url"):
+            return ep["controlplane_url"].rstrip("/")
+    except Exception:
+        pass
+    # 3. Direct bap-config.json lookup
+    for cand in [os.path.join(root_dir, "bap-config.json"), "bap-config.json"]:
+        if os.path.isfile(cand):
+            try:
+                with open(cand, "r", encoding="utf-8") as f:
+                    cfg = json.load(f)
+                    if cfg.get("controlplane_url"):
+                        return cfg["controlplane_url"].rstrip("/")
+            except Exception:
+                pass
+    return "http://localhost:8080"
+
+SERVER = resolve_server_url()
 
 def get_json(path):
     try:

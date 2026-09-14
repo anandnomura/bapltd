@@ -59,7 +59,21 @@ def main():
         print(f"[FAIL] Missing {interceptor_exe}")
         sys.exit(1)
 
-    cp_url = "http://localhost:8080"
+    # Resolve central Control Plane URL from bap-config.json or environment
+    cp_url = os.getenv("BAP_SERVER_URL") or os.getenv("BAP_CONTROL_PLANE_URL") or ""
+    if not cp_url:
+        for cand in [os.path.join(root, "bap-config.json"), "bap-config.json"]:
+            if os.path.isfile(cand):
+                try:
+                    with open(cand, "r", encoding="utf-8") as f:
+                        cfg = json.load(f)
+                        if cfg.get("controlplane_url"):
+                            cp_url = cfg["controlplane_url"].rstrip("/")
+                            break
+                except Exception:
+                    pass
+    if not cp_url:
+        cp_url = "http://localhost:8080"
     cp_online = False
     try:
         status, data = http_get_json(f"{cp_url}/api/v1/health")

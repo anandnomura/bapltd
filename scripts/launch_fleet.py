@@ -182,9 +182,34 @@ def cleanup_fleet(server_url):
     else:
         print(f"  [-] Note on session reset: {resp}")
 
+def resolve_default_server() -> str:
+    env_cp = os.getenv("BAP_SERVER_URL") or os.getenv("BAP_CONTROL_PLANE_URL") or os.getenv("LTD_SERVER_URL")
+    if env_cp:
+        return env_cp.rstrip("/")
+    root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    sys.path.insert(0, os.path.join(root_dir, "python-agent"))
+    try:
+        from bap_sdk import resolve_endpoints
+        ep = resolve_endpoints()
+        if ep.get("controlplane_url"):
+            return ep["controlplane_url"].rstrip("/")
+    except Exception:
+        pass
+    for cand in [os.path.join(root_dir, "bap-config.json"), "bap-config.json"]:
+        if os.path.isfile(cand):
+            try:
+                with open(cand, "r", encoding="utf-8") as f:
+                    cfg = json.load(f)
+                    if cfg.get("controlplane_url"):
+                        return cfg["controlplane_url"].rstrip("/")
+            except Exception:
+                pass
+    return "http://localhost:8080"
+
 def main():
+    default_server = resolve_default_server()
     parser = argparse.ArgumentParser(description="BAP Enterprise Fleet Workload Simulator")
-    parser.add_argument("--server", default="http://localhost:8080", help="BAP Control Plane URL")
+    parser.add_argument("--server", default=default_server, help=f"BAP Control Plane URL (default: {default_server})")
     parser.add_argument("--count", type=int, default=5, choices=[5, 25], help="Fleet density: 5 or 25 agents")
     parser.add_argument("--once", action="store_true", help="Enroll sessions once and exit")
     parser.add_argument("--cleanup", action="store_true", help="Deregister all agents from control plane and exit")

@@ -15,12 +15,15 @@ import pytest
 root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.join(root_dir, "python-agent"))
 
-from bap_sdk import BAPSession, BAPPolicyViolation, BAPExecResult
+from bap_sdk import BAPSession, BAPPolicyViolation, BAPExecResult, resolve_endpoints
+
+_ep = resolve_endpoints()
+CP_URL = _ep["controlplane_url"]
 
 
 def test_bap_python_sdk_lifecycle():
     app_id = "test-pytest-worker"
-    with BAPSession(app_id=app_id, server_url="http://localhost:8080") as bap:
+    with BAPSession(app_id=app_id, server_url=CP_URL) as bap:
         assert bap.is_active is True
         assert bap.session_id.startswith(f"sess-{app_id}-")
         assert "spiffe://bap.internal/app/" in bap.spiffe_id
@@ -45,7 +48,7 @@ def test_bap_python_sdk_lifecycle():
         # 4. Verify session is marked active on Control Plane while running
         import urllib.request
         import json
-        req_sess = urllib.request.Request(f"http://localhost:8080/api/v1/sessions/{bap.session_id}")
+        req_sess = urllib.request.Request(f"{CP_URL}/api/v1/sessions/{bap.session_id}")
         with urllib.request.urlopen(req_sess, timeout=2) as resp:
             data = json.loads(resp.read().decode())
             assert data.get("status") == "active"
@@ -57,12 +60,12 @@ def test_bap_python_sdk_lifecycle():
     # 5. Verify session is closed and agent is marked deregistered after context exit
     import time
     time.sleep(0.3)
-    req_sess_closed = urllib.request.Request(f"http://localhost:8080/api/v1/sessions/{saved_session_id}")
+    req_sess_closed = urllib.request.Request(f"{CP_URL}/api/v1/sessions/{saved_session_id}")
     with urllib.request.urlopen(req_sess_closed, timeout=2) as resp:
         data = json.loads(resp.read().decode())
         assert data.get("status") == "closed", "Session was not marked closed upon exit"
 
-    req_agents = urllib.request.Request("http://localhost:8080/api/v1/agents")
+    req_agents = urllib.request.Request(f"{CP_URL}/api/v1/agents")
     with urllib.request.urlopen(req_agents, timeout=2) as resp:
         agents = json.loads(resp.read().decode())
         agents_list = agents.get("agents", []) if isinstance(agents, dict) else agents

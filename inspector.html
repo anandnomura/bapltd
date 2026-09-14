@@ -910,6 +910,7 @@ when {
     let everSeenSessionIds = new Set();
     let initialPollComplete = false;
     let livePollInterval = null;
+    let lastHandledDemoActionId = null;
 
     // --- DOM REFERENCES ---
     const btnPlayPause = document.getElementById("btn-play-pause");
@@ -1096,6 +1097,32 @@ when {
               }
             }
           }
+          // Handle real-time demo actions triggered from terminal or browser
+          if (data.last_demo_action && data.last_demo_action.action_id !== lastHandledDemoActionId) {
+            const isFresh = lastHandledDemoActionId !== null;
+            lastHandledDemoActionId = data.last_demo_action.action_id;
+            if (isFresh) {
+              if (data.last_demo_action.type === "safe") {
+                triggerSafeAnimation(data.last_demo_action);
+                showToast("⚡ ZERO-FRICTION PASS (< 1.4ms)", "Complex multi-stage pipeline approved by Cedar without developer delay.", "agent_start");
+                incrementCounter("stat-allowed");
+                incrementCounter("stat-total-events");
+              } else if (data.last_demo_action.type === "attack") {
+                triggerAttackAnimation(data.last_demo_action);
+                showToast("🚨 ROGUE ATTACK BLOCKED BY GATEWAY PEP", "Unauthorized credential exfiltration & egress dropped at perimeter. Target service NEVER reached.", "deny");
+                incrementCounter("stat-denied");
+                incrementCounter("stat-total-events");
+              }
+            } else {
+              // Initial load of latest demo state
+              if (data.last_demo_action.type === "safe") {
+                triggerSafeAnimation(data.last_demo_action);
+              } else if (data.last_demo_action.type === "attack") {
+                triggerAttackAnimation(data.last_demo_action);
+              }
+            }
+          }
+
           // If live data exists and user selected live mode, render live
           if (scenarioSelector.value === "live") {
             loadLiveData(data);
@@ -1436,12 +1463,37 @@ when {
 
     // --- LOAD LIVE DATA FROM SERVER ---
     function loadLiveData(data) {
-      const converted = [];
-      const sourceEvents = (data.edge_events && data.edge_events.length > 0) ? data.edge_events : (data.central_events || []);
-      if (sourceEvents.length > 0) {
-        sourceEvents.forEach((ev, idx) => {
-          converted.push({
-            id: ev.event_id || ("ev-live-" + idx),
+      const allEventsMap = new Map();
+
+      // Ingest central events
+      (data.central_events || []).forEach((ev, idx) => {
+        const id = ev.event_id || `ev-central-${idx}`;
+        allEventsMap.set(id, {
+          id: id,
+          session_id: ev.session_id || "",
+          user_id: ev.user_id || "NA",
+          spiffe_id: ev.spiffe_id || "NA",
+          timestamp: ev.timestamp || new Date().toISOString(),
+          source: ev.source || "bapcontrolplane",
+          category: ev.decision === "deny" ? "PEP_BLOCK" : "CEDAR_DECISION",
+          executable: ev.executable || "sh",
+          arguments: ev.arguments || "",
+          full_command: ev.full_command || ev.executable,
+          decision: ev.decision || "allow",
+          reason: ev.reason || (ev.decision === "allow" ? "Permitted by Cedar policy" : "Denied by security policy"),
+          duration_ms: ev.duration_ms || 1,
+          exit_code: ev.exit_code !== undefined ? ev.exit_code : (ev.decision === "deny" ? 403 : 0),
+          client_pid: ev.client_pid || 0,
+          hash: ev.event_hash || ("central-hash-" + idx)
+        });
+      });
+
+      // Ingest edge events
+      (data.edge_events || []).forEach((ev, idx) => {
+        const id = ev.event_id || `ev-edge-${idx}`;
+        if (!allEventsMap.has(id)) {
+          allEventsMap.set(id, {
+            id: id,
             session_id: ev.session_id || "",
             user_id: ev.user_id || "NA",
             spiffe_id: ev.spiffe_id || "NA",
@@ -1458,15 +1510,23 @@ when {
             client_pid: ev.client_pid || 0,
             hash: ev.event_hash || ("live-hash-" + idx)
           });
-        });
-      }
+        }
+      });
 
-      if (converted.length > 0) {
-        currentEvents = converted;
+      const sourceEvents = Array.from(allEventsMap.values());
+      sourceEvents.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+      if (sourceEvents.length > 0) {
+        currentEvents = sourceEvents;
         currentIndex = currentEvents.length - 1;
+        timelineSlider.max = currentEvents.length - 1;
+        timelineSlider.value = currentIndex;
         renderTimeline();
         renderTopStats();
-        updateFlowVisualizer(currentEvents[currentIndex]);
+        if (!lastHandledDemoActionId) {
+          updateFlowVisualizer(currentEvents[currentIndex]);
+        }
+        highlightActiveEventCard(currentIndex);
       }
     }
 
