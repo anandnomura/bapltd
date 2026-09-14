@@ -1,0 +1,10 @@
+{
+  "$schema": "./bap-config.schema.json",
+  "controlplane_url": "http://localhost:8080",
+  "gateway_url": "http://localhost:9090",
+  "envoy_url": "http://localhost:10000",
+  "trust_domain": "bap.internal",
+  "environment": "development",
+  "notes": "Central endpoint configuration for BAP Edge, Claude Code, Copilot, Python SDK, and Gateway PEP. Change controlplane_url to your corporate server (e.g., https://bap-controlplane.corp.internal:8080) for fleet deployment."
+}
+

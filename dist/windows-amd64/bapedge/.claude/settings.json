@@ -1,0 +1,15 @@
+﻿{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Read|View|Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./cchook/interceptor.exe"
+          }
+        ]
+      }
+    ]
+  }
+}
