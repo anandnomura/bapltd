@@ -40,24 +40,19 @@ if !ERRORLEVEL! equ 0 (
     echo     Proceeding in local-edge mode - Cedar policies still enforced locally.
 )
 
-:: 2. Resolve bapedge binary
+:: 2. Resolve bapedge binary (checks dist role folder first)
 set "BAPEDGE_BIN="
-if exist "%~dp0bapedge.exe" (
+if exist "%~dp0dist\windows-amd64\claude-client\bapedge.exe" (
+    set "BAPEDGE_BIN=%~dp0dist\windows-amd64\claude-client\bapedge.exe"
+) else if exist "%~dp0dist\windows-amd64\bapedge.exe" (
+    set "BAPEDGE_BIN=%~dp0dist\windows-amd64\bapedge.exe"
+) else if exist "%~dp0bapedge.exe" (
     set "BAPEDGE_BIN=%~dp0bapedge.exe"
+) else if exist "%USERPROFILE%\bin\bapedge.exe" (
+    set "BAPEDGE_BIN=%USERPROFILE%\bin\bapedge.exe"
 ) else (
     where bapedge.exe >nul 2>&1
-    if !ERRORLEVEL! equ 0 (
-        set "BAPEDGE_BIN=bapedge.exe"
-    ) else (
-        if exist "%USERPROFILE%\bin\bapedge.exe" (
-            set "BAPEDGE_BIN=%USERPROFILE%\bin\bapedge.exe"
-        ) else (
-            if exist "%~dp0bap-edge\bapedge.exe" (
-                copy /y "%~dp0bap-edge\bapedge.exe" "%~dp0bapedge.exe" >nul
-                set "BAPEDGE_BIN=%~dp0bapedge.exe"
-            )
-        )
-    )
+    if !ERRORLEVEL! equ 0 set "BAPEDGE_BIN=bapedge.exe"
 )
 
 :: Persist to bap-config.json so bapedge and cchook automatically connect
@@ -69,15 +64,15 @@ if not "!BAPEDGE_BIN!"=="" (
 )
 
 :: 3. Verify cchook interceptor binary exists
-if not exist "%~dp0cchook\interceptor.exe" (
-    if exist "%USERPROFILE%\bin\interceptor.exe" (
-        rem Found in user bin
-    ) else (
-        if exist "%~dp0cchook\interceptor.go" (
-            echo [*] Building cchook\interceptor.exe...
-            pushd "%~dp0cchook" && go build -o interceptor.exe interceptor.go && popd
-        )
-    )
+set "INTERCEPTOR_BIN="
+if exist "%~dp0dist\windows-amd64\claude-client\cchook\interceptor.exe" (
+    set "INTERCEPTOR_BIN=%~dp0dist\windows-amd64\claude-client\cchook\interceptor.exe"
+) else if exist "%~dp0dist\windows-amd64\cchook-interceptor.exe" (
+    set "INTERCEPTOR_BIN=%~dp0dist\windows-amd64\cchook-interceptor.exe"
+) else if exist "%USERPROFILE%\bin\interceptor.exe" (
+    set "INTERCEPTOR_BIN=%USERPROFILE%\bin\interceptor.exe"
+) else if exist "%~dp0cchook\interceptor.exe" (
+    set "INTERCEPTOR_BIN=%~dp0cchook\interceptor.exe"
 )
 
 :: 4. Ensure .claude/settings.json hook is configured in workspace

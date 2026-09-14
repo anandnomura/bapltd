@@ -12,6 +12,7 @@ set "LTD_AUDIT_LOG=%ROOT_DIR%ltd-audit.jsonl"
 if exist "%LTD_AUDIT_LOG%" del /f /q "%LTD_AUDIT_LOG%" >nul 2>&1
 set "BAP_TEST_MODE=1"
 set "GOTOOLCHAIN=auto"
+set "PATH=%ROOT_DIR%dist\windows-amd64\claude-client;%ROOT_DIR%dist\windows-amd64\claude-client\cchook;%ROOT_DIR%dist\windows-amd64\controlplane;%ROOT_DIR%dist\windows-amd64\gateway;%ROOT_DIR%dist\windows-amd64;%PATH%"
 
 set "PASS_COUNT=0"
 set "FAIL_COUNT=0"
@@ -69,53 +70,13 @@ echo [*] Configured Endpoints: ControlPlane=!CP_URL! (local=!CP_IS_LOCAL!), Gate
 echo.
 if "!CP_IS_LOCAL!"=="1" taskkill /F /IM bapcontrolplane.exe >nul 2>&1
 if "!GW_IS_LOCAL!"=="1" taskkill /F /IM bapgateway.exe >nul 2>&1
-echo [1/11] Building bapcontrolplane.exe, bapgateway.exe, bapedge.exe (LTD), cchook, and copilot...
-cd /d "%ROOT_DIR%bap-controlplane"
-go build -o bapcontrolplane.exe ./cmd/server
+echo [1/11] Building all platforms into dist/ and generating fresh role packages...
+call "%ROOT_DIR%build_all_platforms.bat"
 if !ERRORLEVEL! neq 0 (
-    echo [FAIL] Failed to build bapcontrolplane.exe
+    echo [FAIL] build_all_platforms.bat failed!
     exit /b 1
 )
-cd /d "%ROOT_DIR%bap-gateway"
-go build -o bapgateway.exe .
-if !ERRORLEVEL! neq 0 (
-    echo [FAIL] Failed to build bapgateway.exe
-    exit /b 1
-)
-copy /y bapgateway.exe "%ROOT_DIR%bapgateway.exe" >nul
-
-cd /d "%ROOT_DIR%bap-edge"
-go build -o bapedge.exe .
-if !ERRORLEVEL! neq 0 (
-    echo [FAIL] Failed to build bapedge.exe
-    exit /b 1
-)
-copy /y bapedge.exe ltd-agent.exe >nul
-copy /y bapedge.exe "%ROOT_DIR%bapmcp.exe" >nul
-
-copy /y bapedge.exe "%ROOT_DIR%cchook\bapedge.exe" >nul
-copy /y bapedge.exe "%ROOT_DIR%cchook\ltd-agent.exe" >nul
-copy /y bapedge.exe "%ROOT_DIR%copilot\bapedge.exe" >nul
-copy /y bapedge.exe "%ROOT_DIR%copilot\ltd-agent.exe" >nul
-copy /y policy.cedar "%ROOT_DIR%copilot\policy.cedar" >nul
-copy /y schema.json "%ROOT_DIR%copilot\schema.json" >nul
-copy /y policy.cedar "%ROOT_DIR%cchook\policy.cedar" >nul
-copy /y schema.json "%ROOT_DIR%cchook\schema.json" >nul
-
-cd /d "%ROOT_DIR%cchook"
-go build -o interceptor.exe interceptor.go
-if !ERRORLEVEL! neq 0 (
-    echo [FAIL] Failed to build cchook/interceptor.exe
-    exit /b 1
-)
-
-cd /d "%ROOT_DIR%copilot"
-go build -o copilot_interceptor.exe copilot_interceptor.go
-if !ERRORLEVEL! neq 0 (
-    echo [FAIL] Failed to build copilot/copilot_interceptor.exe
-    exit /b 1
-)
-echo [PASS] All binaries built successfully.
+echo [PASS] All multi-platform binaries and archives packaged cleanly into dist/.
 set /a PASS_COUNT+=1
 
 :: -----------------------------------------------------------------------------
@@ -387,7 +348,7 @@ if "!CP_IS_LOCAL!"=="0" goto :skip_start_cp
 taskkill /F /IM bapcontrolplane.exe >nul 2>&1
 taskkill /F /IM bapgateway.exe >nul 2>&1
 echo [*] Starting local BAP Control Plane on port !CP_PORT!...
-start "BAP Control Plane" /min "%ROOT_DIR%bap-controlplane\bapcontrolplane.exe" -port !CP_PORT! -ttl 30 -trust-domain bap.internal
+start "BAP Control Plane" /min "%ROOT_DIR%dist\windows-amd64\controlplane\bapcontrolplane.exe" -port !CP_PORT! -ttl 30 -trust-domain bap.internal
 ping -n 3 127.0.0.1 >nul
 goto :after_start_cp
 
@@ -416,7 +377,7 @@ echo [11/12] Testing Gateway Policy Enforcement Point (PEP) [python -m pytest te
 cd /d "%ROOT_DIR%"
 if "!GW_IS_LOCAL!"=="0" goto :skip_start_gw
 echo [*] Starting local BAP Gateway PEP on port !GW_PORT! connected to Control Plane (!CP_URL!)...
-start "BAP Gateway PEP" /min "%ROOT_DIR%bapgateway.exe" -port !GW_PORT! -controlplane !CP_URL!
+start "BAP Gateway PEP" /min "%ROOT_DIR%dist\windows-amd64\gateway\bapgateway.exe" -port !GW_PORT! -controlplane !CP_URL!
 ping -n 2 127.0.0.1 >nul
 goto :after_start_gw
 

@@ -6,7 +6,9 @@
 
 $ErrorActionPreference = "Continue"
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$BapEdge = Join-Path $Root "bapedge.exe"
+$BapEdge = Join-Path $Root "dist\windows-amd64\claude-client\bapedge.exe"
+if (!(Test-Path $BapEdge)) { $BapEdge = Join-Path $Root "dist\windows-amd64\bapedge.exe" }
+if (!(Test-Path $BapEdge)) { $BapEdge = Join-Path $Root "bapedge.exe" }
 
 Write-Host "`n===============================================================================" -ForegroundColor Cyan
 Write-Host "       bapltd: Complex Safe & Malicious Command Authorization Suite           " -ForegroundColor Cyan
