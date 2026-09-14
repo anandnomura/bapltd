@@ -83,6 +83,8 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/v1/inspector/data", s.handleInspectorData)
 	s.mux.HandleFunc("/api/v1/control/kill-switch", s.handleKillSwitch)
 	s.mux.HandleFunc("/api/v1/control/chain/verify", s.handleVerifyChain)
+	s.mux.HandleFunc("/api/v1/control/agent/kill", s.handleTargetedKillAgent)
+	s.mux.HandleFunc("/api/v1/control/agent/revoke", s.handleTargetedKillAgent)
 	s.mux.HandleFunc("/api/v1/demo/exec-safe", s.handleDemoExecSafe)
 	s.mux.HandleFunc("/api/v1/demo/exec-attack", s.handleDemoExecAttack)
 	s.mux.HandleFunc("/api/v1/demo/fleet-scale", s.handleDemoFleetScale)
@@ -970,5 +972,127 @@ func (s *Server) handleDemoFleetScale(w http.ResponseWriter, r *http.Request) {
 		"status":      "ok",
 		"agent_count": enrolled,
 		"scale_mode":  fmt.Sprintf("%d-agent", targetCount),
+	})
+}
+
+func (s *Server) handleTargetedKillAgent(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	var req struct {
+		Target string `json:"target"`
+		Action string `json:"action"` // "revoke", "restore", or toggle
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	target := strings.TrimSpace(req.Target)
+	if target == "" {
+		target = "carol" // default demo hero agent
+	}
+
+	isRestore := strings.EqualFold(req.Action, "restore")
+	if req.Action == "" || req.Action == "toggle" {
+		if s.sessionStore != nil {
+			for _, sess := range s.sessionStore.List(50) {
+				if strings.Contains(strings.ToLower(sess.InstanceID), strings.ToLower(target)) ||
+					strings.Contains(strings.ToLower(sess.UserID), strings.ToLower(target)) ||
+					strings.Contains(strings.ToLower(sess.SessionID), strings.ToLower(target)) {
+					if sess.Status == "revoked" {
+						isRestore = true
+					}
+					break
+				}
+			}
+		}
+	}
+
+	if isRestore {
+		var restoredName string
+		if s.sessionStore != nil {
+			if sess, err := s.sessionStore.RestoreTarget(target); err == nil {
+				restoredName = sess.InstanceID
+			}
+		}
+		if s.registry != nil {
+			_, _ = s.registry.RestoreTarget(target)
+		}
+		if restoredName == "" {
+			restoredName = target
+		}
+
+		now := time.Now().UTC()
+		s.auditStore.Ingest([]audit.Event{
+			{
+				Source:      "bap-controlplane",
+				SessionID:   "admin-ciso-override",
+				Executable:  "bapcontrolplane",
+				FullCommand: fmt.Sprintf("RESTORE_AGENT target=%s", target),
+				Decision:    "allow",
+				Reason:      fmt.Sprintf("Surgical kill-switch lifted: Agent %s authority restored by CISO.", restoredName),
+				DurationMs:  1,
+				Timestamp:   now.Format(time.RFC3339),
+				ExitCode:    0,
+			},
+		})
+
+		writeJSON(w, http.StatusOK, map[string]any{
+			"target":      target,
+			"agent_name":  restoredName,
+			"status":      "active",
+			"action":      "restored",
+			"message":     fmt.Sprintf("Targeted agent %s successfully restored to active status.", restoredName),
+			"kill_status": "RESTORED",
+		})
+		return
+	}
+
+	// Revoke / isolate target
+	var revokedName string
+	var spiffeID string
+	var sessionID string
+	if s.sessionStore != nil {
+		if sess, err := s.sessionStore.RevokeTarget(target, "Targeted isolation via CISO kill-switch"); err == nil {
+			revokedName = sess.InstanceID
+			spiffeID = sess.SPIFFEID
+			sessionID = sess.SessionID
+		}
+	}
+	if s.registry != nil {
+		if a, err := s.registry.RevokeTarget(target); err == nil {
+			if revokedName == "" {
+				revokedName = a.InstanceID
+				spiffeID = a.SPIFFEID
+			}
+		}
+	}
+	if revokedName == "" {
+		revokedName = target
+	}
+
+	now := time.Now().UTC()
+	s.auditStore.Ingest([]audit.Event{
+		{
+			Source:      "bap-controlplane",
+			SessionID:   sessionID,
+			Executable:  "bapcontrolplane",
+			FullCommand: fmt.Sprintf("REVOKE_AGENT target=%s", target),
+			Decision:    "deny",
+			Reason:      fmt.Sprintf("SURGICAL KILL-SWITCH: Agent %s isolated & revoked by CISO. Authority burned.", revokedName),
+			DurationMs:  1,
+			Timestamp:   now.Format(time.RFC3339),
+			ExitCode:    1,
+		},
+	})
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"target":      target,
+		"agent_name":  revokedName,
+		"spiffe_id":   spiffeID,
+		"session_id":  sessionID,
+		"status":      "revoked",
+		"action":      "isolated",
+		"message":     fmt.Sprintf("Targeted agent %s (%s) isolated & revoked. All authority burned.", revokedName, spiffeID),
+		"kill_status": "REVOKED",
 	})
 }

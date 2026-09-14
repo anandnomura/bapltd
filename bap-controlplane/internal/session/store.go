@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -161,6 +162,48 @@ func (s *Store) End(sessionID string, reason string) error {
 	sess.LastActiveAt = now
 	sess.CloseReason = reason
 	return nil
+}
+
+// RevokeTarget finds an active session matching target (by session_id, instance_id, user_id, or user_email) and marks it revoked.
+func (s *Store) RevokeTarget(target string, reason string) (*Session, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	targetLower := strings.ToLower(target)
+	now := time.Now().UTC()
+	for _, sess := range s.sessions {
+		if strings.Contains(strings.ToLower(sess.SessionID), targetLower) ||
+			strings.Contains(strings.ToLower(sess.InstanceID), targetLower) ||
+			strings.Contains(strings.ToLower(sess.UserID), targetLower) ||
+			strings.Contains(strings.ToLower(sess.UserEmail), targetLower) {
+			sess.Status = "revoked"
+			sess.CloseReason = reason
+			sess.LastActiveAt = now
+			return sess, nil
+		}
+	}
+	return nil, fmt.Errorf("no session found matching %q", target)
+}
+
+// RestoreTarget restores a previously revoked session back to active.
+func (s *Store) RestoreTarget(target string) (*Session, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	targetLower := strings.ToLower(target)
+	now := time.Now().UTC()
+	for _, sess := range s.sessions {
+		if strings.Contains(strings.ToLower(sess.SessionID), targetLower) ||
+			strings.Contains(strings.ToLower(sess.InstanceID), targetLower) ||
+			strings.Contains(strings.ToLower(sess.UserID), targetLower) ||
+			strings.Contains(strings.ToLower(sess.UserEmail), targetLower) {
+			sess.Status = "active"
+			sess.CloseReason = ""
+			sess.LastActiveAt = now
+			return sess, nil
+		}
+	}
+	return nil, fmt.Errorf("no session found matching %q", target)
 }
 
 // RecordEvent associates an audit event with a session and updates counts.

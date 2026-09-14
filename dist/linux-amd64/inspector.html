@@ -114,52 +114,65 @@
       </div>
 
       <!-- 1-Click Action Buttons Ribbon -->
-      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-1">
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 pt-1">
         
         <!-- Button 1: Safe Multi-Stage Build (< 2ms) -->
-        <button id="btn-exec-safe" class="group bg-slate-800/90 hover:bg-emerald-950/60 border border-slate-700 hover:border-emerald-500/60 rounded-xl p-3 text-left transition-all shadow-md flex items-start space-x-3 cursor-pointer">
+        <button id="btn-exec-safe" class="group bg-slate-800/90 hover:bg-emerald-950/60 border border-slate-700 hover:border-emerald-500/60 rounded-xl p-3 text-left transition-all shadow-md flex items-start space-x-2.5 cursor-pointer">
           <div class="p-2 bg-emerald-500/10 rounded-lg text-emerald-400 group-hover:bg-emerald-500/20 group-hover:scale-105 transition">
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
           </div>
           <div>
-            <div class="text-xs font-bold text-white group-hover:text-emerald-300 flex items-center space-x-1.5">
-              <span>⚡ 1-Click Safe Pass</span>
-              <span class="text-[10px] text-emerald-400 font-mono bg-emerald-500/10 px-1.5 py-0.2 rounded border border-emerald-500/30">&lt; 2ms</span>
+            <div class="text-xs font-bold text-white group-hover:text-emerald-300 flex items-center space-x-1">
+              <span>⚡ Safe Pass</span>
+              <span class="text-[9px] text-emerald-400 font-mono bg-emerald-500/10 px-1 py-0.2 rounded border border-emerald-500/30">&lt; 2ms</span>
             </div>
-            <p class="text-[11px] text-slate-400 mt-0.5 leading-snug">Complex multi-stage dev pipeline (Zero friction pass)</p>
+            <p class="text-[10px] text-slate-400 mt-0.5 leading-snug">Multi-stage pipeline (Zero friction)</p>
           </div>
         </button>
 
         <!-- Button 2: Malicious Attack PEP Deny -->
-        <button id="btn-exec-attack" class="group bg-slate-800/90 hover:bg-rose-950/60 border border-slate-700 hover:border-rose-500/60 rounded-xl p-3 text-left transition-all shadow-md flex items-start space-x-3 cursor-pointer">
+        <button id="btn-exec-attack" class="group bg-slate-800/90 hover:bg-rose-950/60 border border-slate-700 hover:border-rose-500/60 rounded-xl p-3 text-left transition-all shadow-md flex items-start space-x-2.5 cursor-pointer">
           <div class="p-2 bg-rose-500/10 rounded-lg text-rose-400 group-hover:bg-rose-500/20 group-hover:scale-105 transition">
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
           </div>
           <div>
-            <div class="text-xs font-bold text-white group-hover:text-rose-300 flex items-center space-x-1.5">
-              <span>🛡️ 1-Click Attack Block</span>
-              <span class="text-[10px] text-rose-400 font-mono bg-rose-500/10 px-1.5 py-0.2 rounded border border-rose-500/30">PEP Block</span>
+            <div class="text-xs font-bold text-white group-hover:text-rose-300 flex items-center space-x-1">
+              <span>🛡️ Attack Block</span>
+              <span class="text-[9px] text-rose-400 font-mono bg-rose-500/10 px-1 py-0.2 rounded border border-rose-500/30">PEP Drop</span>
             </div>
-            <p class="text-[11px] text-slate-400 mt-0.5 leading-snug">Simulate rogue exfiltration dropped at perimeter</p>
+            <p class="text-[10px] text-slate-400 mt-0.5 leading-snug">Rogue egress dropped at perimeter</p>
           </div>
         </button>
 
         <!-- Button 3: Fleet Scale Toggle (5 vs 25 Agents) -->
-        <button id="btn-toggle-scale" class="group bg-slate-800/90 hover:bg-cyan-950/60 border border-slate-700 hover:border-cyan-500/60 rounded-xl p-3 text-left transition-all shadow-md flex items-start space-x-3 cursor-pointer">
+        <button id="btn-toggle-scale" class="group bg-slate-800/90 hover:bg-cyan-950/60 border border-slate-700 hover:border-cyan-500/60 rounded-xl p-3 text-left transition-all shadow-md flex items-start space-x-2.5 cursor-pointer">
           <div class="p-2 bg-cyan-500/10 rounded-lg text-cyan-400 group-hover:bg-cyan-500/20 group-hover:scale-105 transition">
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"/></svg>
           </div>
           <div>
             <div class="text-xs font-bold text-white group-hover:text-cyan-300 flex items-center space-x-1">
-              <span id="label-scale-btn">👥 Scale to 25 Agents</span>
+              <span id="label-scale-btn">👥 Scale Fleet</span>
             </div>
-            <p class="text-[11px] text-slate-400 mt-0.5 leading-snug" id="desc-scale-btn">Preview enterprise high-density mesh</p>
+            <p class="text-[10px] text-slate-400 mt-0.5 leading-snug" id="desc-scale-btn">Toggle 5 vs 25 agents</p>
           </div>
         </button>
 
-        <!-- Button 4: Global Kill-Switch & Chain Verification -->
+        <!-- Button 4: Surgical Agent Isolation (Targeted Kill-Switch) -->
+        <button id="btn-isolate-agent" class="group bg-slate-800/90 hover:bg-amber-950/60 border border-slate-700 hover:border-amber-500/60 rounded-xl p-3 text-left transition-all shadow-md flex items-start space-x-2.5 cursor-pointer">
+          <div class="p-2 bg-amber-500/10 rounded-lg text-amber-400 group-hover:bg-amber-500/20 group-hover:scale-105 transition">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"/></svg>
+          </div>
+          <div>
+            <div class="text-xs font-bold text-white group-hover:text-amber-300 flex items-center space-x-1">
+              <span id="label-isolate-btn">🎯 Isolate Agent</span>
+            </div>
+            <p class="text-[10px] text-slate-400 mt-0.5 leading-snug" id="desc-isolate-btn">Surgically revoke Carol</p>
+          </div>
+        </button>
+
+        <!-- Button 5: Global Kill-Switch & Chain Verification -->
         <div class="flex items-center space-x-2">
-          <button id="btn-toggle-killswitch" class="flex-1 group bg-slate-800/90 hover:bg-rose-950/60 border border-slate-700 hover:border-rose-500/60 rounded-xl p-3 text-left transition-all shadow-md flex items-start space-x-2.5 cursor-pointer">
+          <button id="btn-toggle-killswitch" class="flex-1 group bg-slate-800/90 hover:bg-rose-950/60 border border-slate-700 hover:border-rose-500/60 rounded-xl p-3 text-left transition-all shadow-md flex items-start space-x-2 cursor-pointer">
             <div class="p-2 bg-rose-500/10 rounded-lg text-rose-400 group-hover:bg-rose-500/20 group-hover:scale-105 transition">
               <span class="text-base leading-none">🚨</span>
             </div>
@@ -167,7 +180,7 @@
               <div class="text-xs font-bold text-white group-hover:text-rose-300">
                 <span id="label-kill-btn">Kill-Switch</span>
               </div>
-              <p class="text-[10px] text-slate-400 mt-0.5" id="desc-kill-btn">Global freeze</p>
+              <p class="text-[9px] text-slate-400 mt-0.5" id="desc-kill-btn">Global freeze</p>
             </div>
           </button>
 
@@ -1145,7 +1158,7 @@ when {
       const chipsContainer = document.getElementById("radar-clients-chips");
       const nodeAgent = document.getElementById("node-agent");
 
-      const activeSessions = (sessions || []).filter(s => s.status === "active");
+      const activeSessions = (sessions || []).filter(s => s.status === "active" || s.status === "revoked");
       const currentActiveIds = new Set(activeSessions.map(s => s.session_id));
 
       if (initialPollComplete) {
@@ -1174,11 +1187,15 @@ when {
       knownActiveSessionIds = currentActiveIds;
       initialPollComplete = true;
 
-      const totalActive = activeSessions.length;
+      const totalActive = activeSessions.filter(s => s.status === "active").length;
+      const totalRevoked = activeSessions.filter(s => s.status === "revoked").length;
       if (liveCountEl) {
         if (isKillSwitchActive) {
-          liveCountEl.textContent = `${totalActive} AGENTS FROZEN (LOCKED)`;
+          liveCountEl.textContent = `${activeSessions.length} AGENTS FROZEN (LOCKED)`;
           liveCountEl.className = "px-2.5 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/50 text-[10px] font-mono font-bold animate-pulse";
+        } else if (totalRevoked > 0) {
+          liveCountEl.textContent = `${totalActive} ACTIVE | ${totalRevoked} ISOLATED`;
+          liveCountEl.className = "px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/50 text-[10px] font-mono font-bold";
         } else if (totalActive >= 20) {
           liveCountEl.textContent = `${totalActive} ACTIVE AGENTS (ENTERPRISE MESH)`;
           liveCountEl.className = "px-2.5 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/50 text-[10px] font-mono font-bold animate-pulse";
@@ -1192,8 +1209,11 @@ when {
 
       if (summaryTextEl) {
         if (isKillSwitchActive) {
-          summaryTextEl.textContent = `🚨 EMERGENCY FLEET LOCKOUT ACTIVE: All ${totalActive} agent workloads globally frozen by CISO override.`;
+          summaryTextEl.textContent = `🚨 EMERGENCY FLEET LOCKOUT ACTIVE: All agent workloads globally frozen by CISO override.`;
           summaryTextEl.className = "text-[11px] text-rose-400 font-mono mt-0.5 font-bold";
+        } else if (totalRevoked > 0) {
+          summaryTextEl.textContent = `Zero-Trust Isolation Active: ${totalRevoked} agent(s) surgically revoked & burned. Remaining ${totalActive} squad(s) operating uninterrupted.`;
+          summaryTextEl.className = "text-[11px] text-amber-400 font-mono mt-0.5 font-semibold";
         } else if (totalActive >= 20) {
           summaryTextEl.textContent = `Enterprise High-Density Mesh Active: ${totalActive} concurrent autonomous agent workloads governed with zero developer latency.`;
           summaryTextEl.className = "text-[11px] text-cyan-400 font-mono mt-0.5 font-semibold";
@@ -1208,11 +1228,11 @@ when {
 
       // Populate Live Chips
       if (chipsContainer) {
-        if (totalActive === 0) {
+        if (activeSessions.length === 0) {
           chipsContainer.innerHTML = '<span class="text-xs text-slate-500 font-mono italic">No active sessions (All workloads deregistered)</span>';
         } else {
           chipsContainer.innerHTML = "";
-          const isDense = totalActive >= 15;
+          const isDense = activeSessions.length >= 15;
           activeSessions.forEach(s => {
             const isAg = (s.app_id || "").toLowerCase().includes("antigravity") || (s.session_id || "").toLowerCase().includes("antigravity");
             const isClaude = (s.app_id || "").includes("claude");
@@ -1225,24 +1245,53 @@ when {
             const userOrInst = s.user_id || s.instance_id || (s.session_id || "").replace("sess-", "");
             const displayName = userOrInst.includes(".") ? userOrInst.split(".")[0] : userOrInst.replace("laptop-", "").replace("node-", "");
             const capitalizedName = displayName.charAt(0).toUpperCase() + displayName.slice(1);
+            const isTargetRevoked = s.status === "revoked";
 
-            const chip = document.createElement("button");
-            if (isKillSwitchActive) {
-              chip.className = "px-2.5 py-1 rounded-xl bg-rose-950/70 border border-rose-500 text-xs font-mono flex items-center space-x-2 transition shadow-lg shadow-rose-950/50 glow-rose";
+            const chip = document.createElement("div");
+            if (isKillSwitchActive || isTargetRevoked) {
+              chip.className = "px-2.5 py-1 rounded-xl bg-rose-950/70 border border-rose-500 text-xs font-mono flex items-center space-x-2 transition shadow-lg shadow-rose-950/50 glow-rose cursor-pointer";
               chip.innerHTML = `
                 <span class="w-4 h-4 rounded-full bg-rose-600 text-white flex items-center justify-center font-bold text-[9px]">⛔</span>
                 <span class="text-rose-200 font-bold">${escapeHtml(capitalizedName)}</span>
-                <span class="text-rose-400 text-[10px] font-bold">[FROZEN]</span>
+                <span class="text-rose-400 text-[10px] font-bold">${isKillSwitchActive ? '[FROZEN]' : '[REVOKED]'}</span>
+                ${!isKillSwitchActive ? `<button class="btn-restore-agent text-[9px] px-1.5 py-0.5 rounded bg-emerald-800 hover:bg-emerald-600 text-white font-bold transition ml-1 cursor-pointer" title="Restore this agent">RESTORE</button>` : ''}
               `;
+              const restoreBtn = chip.querySelector(".btn-restore-agent");
+              if (restoreBtn) {
+                restoreBtn.addEventListener("click", async (e) => {
+                  e.stopPropagation();
+                  await fetch("/api/v1/control/agent/kill", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ target: s.session_id, action: "restore" })
+                  });
+                  showToast("⚡ AGENT RESTORED", `Agent ${capitalizedName} authority restored by administrator.`, "agent_start");
+                  checkLiveConnection();
+                });
+              }
             } else if (isDense) {
-              chip.className = "px-2 py-1 rounded-lg bg-slate-950/90 border border-slate-700 hover:border-cyan-400 shadow text-[11px] font-mono flex items-center space-x-1.5 transition group";
+              chip.className = "px-2 py-1 rounded-lg bg-slate-950/90 border border-slate-700 hover:border-cyan-400 shadow text-[11px] font-mono flex items-center space-x-1.5 transition group cursor-pointer";
               chip.innerHTML = `
                 <span class="w-3.5 h-3.5 rounded-full ${avatarColor} flex items-center justify-center font-bold text-[8px]">${appLabel[0]}</span>
                 <span class="text-slate-200 font-semibold group-hover:text-cyan-300">${escapeHtml(capitalizedName)}</span>
                 <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                <button class="btn-kill-agent text-[9px] px-1 rounded text-slate-500 hover:text-white hover:bg-rose-600 font-bold ml-1 transition cursor-pointer" title="Surgically isolate/kill this agent">×</button>
               `;
+              const killBtn = chip.querySelector(".btn-kill-agent");
+              if (killBtn) {
+                killBtn.addEventListener("click", async (e) => {
+                  e.stopPropagation();
+                  await fetch("/api/v1/control/agent/kill", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ target: s.session_id, action: "revoke" })
+                  });
+                  showToast("🚨 AGENT ISOLATED", `Agent ${capitalizedName} revoked & isolated by administrator. Remaining agents uninterrupted.`, "deny");
+                  checkLiveConnection();
+                });
+              }
             } else {
-              chip.className = "px-3 py-1.5 rounded-xl bg-slate-950 border border-emerald-500/60 hover:border-emerald-400 shadow-lg shadow-emerald-950/50 text-xs font-mono flex items-center space-x-2 transition group";
+              chip.className = "px-3 py-1.5 rounded-xl bg-slate-950 border border-emerald-500/60 hover:border-emerald-400 shadow-lg shadow-emerald-950/50 text-xs font-mono flex items-center space-x-2 transition group cursor-pointer";
               chip.innerHTML = `
                 <span class="w-5 h-5 rounded-full ${avatarColor} flex items-center justify-center font-bold text-[10px] shadow">${appLabel[0]}</span>
                 <span class="text-white font-bold group-hover:text-emerald-300">${escapeHtml(capitalizedName)} (${escapeHtml(appLabel)})</span>
@@ -1251,7 +1300,21 @@ when {
                   <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                   <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
                 </span>
+                <button class="btn-kill-agent text-[9px] px-1.5 py-0.5 rounded bg-slate-800 hover:bg-rose-600 text-slate-400 hover:text-white transition font-bold border border-slate-700 hover:border-rose-500 ml-1 cursor-pointer" title="Surgically isolate/kill this agent">KILL</button>
               `;
+              const killBtn = chip.querySelector(".btn-kill-agent");
+              if (killBtn) {
+                killBtn.addEventListener("click", async (e) => {
+                  e.stopPropagation();
+                  await fetch("/api/v1/control/agent/kill", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ target: s.session_id, action: "revoke" })
+                  });
+                  showToast("🚨 AGENT ISOLATED", `Agent ${capitalizedName} revoked & isolated by administrator. Remaining agents uninterrupted.`, "deny");
+                  checkLiveConnection();
+                });
+              }
             }
             chip.title = `Workload: ${s.session_id} | User: ${s.user_email || s.user_id || 'N/A'}`;
             chip.addEventListener("click", () => {
@@ -1593,6 +1656,34 @@ when {
               );
               setTimeout(checkLiveConnection, 200);
             }
+          } catch (e) {
+            console.error(e);
+          }
+        });
+      }
+
+      const btnIsolateAgent = document.getElementById("btn-isolate-agent");
+      if (btnIsolateAgent) {
+        btnIsolateAgent.addEventListener("click", async () => {
+          try {
+            const resp = await fetch("/api/v1/control/agent/kill", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ target: "carol", action: "toggle" })
+            });
+            const data = await resp.json();
+            const lbl = document.getElementById("label-isolate-btn");
+            const dsc = document.getElementById("desc-isolate-btn");
+            if (data.kill_status === "REVOKED") {
+              if (lbl) lbl.textContent = "🎯 Restore Carol";
+              if (dsc) dsc.textContent = "Authority burned & isolated";
+              showToast("🚨 SURGICAL KILL-SWITCH ENGAGED", `Carol Zhang (laptop-carol) isolated & revoked by CISO. Remaining 4 squads operating uninterrupted!`, "deny");
+            } else {
+              if (lbl) lbl.textContent = "🎯 Isolate Agent";
+              if (dsc) dsc.textContent = "Surgically revoke Carol";
+              showToast("✅ AGENT RESTORED", `Carol Zhang (laptop-carol) authority restored by administrator.`, "agent_start");
+            }
+            setTimeout(checkLiveConnection, 200);
           } catch (e) {
             console.error(e);
           }
