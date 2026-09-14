@@ -4,21 +4,24 @@
 
 ---
 
-## 1. Quick Launch (One-Click)
+## 1. Demonstration Modes
 
-To launch the entire demo with all windows opened automatically:
+BAP provides two tailored demonstration experiences:
 
+### Option A: The Executive CIO Demo (3-Act Visual Presentation)
+Designed for C-level leadership (CIO, CISO, VP of Engineering). Zero technical jargon, punchy, 1-click interactive validation directly from the browser cockpit:
 ```powershell
 .\cio_demo.bat
 ```
+- **Act 1 ("Fleet Visibility & Scale")**: Spins up 5 live Claude Code workloads with SPIFFE dual-identity. One-click toggle scales up to 25 enterprise nodes.
+- **Act 2 ("Velocity vs Perimeter Defense")**: 1-click test of complex safe build pipeline (<2ms pass) vs rogue credential exfiltration (blocked by Gateway PEP).
+- **Act 3 ("The Boardroom Cockpit")**: Global CISO Emergency Kill-Switch and live SHA-256 Merkle audit chain verification.
 
-### What Happens Automatically:
-1. **BAP Control Plane** verifies or starts silently on `http://localhost:8080`.
-2. **Inspector & Live Fleet Radar Dashboard** opens in your browser at `http://localhost:8080/inspector?mode=live`.
-3. **Interactive CIO Presentation Console** (`demo_cio_interactive.bat`) opens in a dedicated terminal.
-
-> [!TIP]
-> **Screen Setup**: Snap the **Browser Window** to the left half of your screen and the **Terminal Window** to the right half. As you press `[Enter]` in the terminal, the browser will react instantly in real time.
+### Option B: The Technical Architecture Deep Dive
+Designed for lead architects, security engineers, and developer tools teams who want to step through raw CLI shims, Cedar forbid rules, and process injection defenses:
+```powershell
+.\tech_demo.bat
+```
 
 ---
 

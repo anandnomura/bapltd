@@ -175,6 +175,116 @@ bap-edge\bapedge.exe exec "ls -al | grep -i README"
 
 ---
 
+### Running `bapservice` (Control Plane) on Linux
+
+The central control plane binary (`bapcontrolplane`, also aliased as `bapservice` or `ltd-service`) coordinates agent enrollment, OTC attestation, ephemeral OBO JWT token issuance, Cedar policy bundle distribution, and central audit log aggregation with a real-time **Live Workload Radar**.
+
+#### 1. Compile for Linux
+```bash
+cd bap-controlplane
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bapcontrolplane ./cmd/server
+chmod +x bapcontrolplane
+# Create alias if desired
+ln -sf bapcontrolplane bapservice
+cd ..
+```
+
+#### 2. Quick Start / Foreground Execution
+```bash
+./bapcontrolplane -port 8080 -ttl 30 -trust-domain bap.internal
+```
+
+#### 3. Run as a Background Daemon
+```bash
+# Run in background with nohup
+nohup ./bapcontrolplane -port 8080 -ttl 30 -trust-domain bap.internal > bapservice.log 2>&1 &
+
+# Verify the process is listening
+ps aux | grep bapcontrolplane
+ss -tulpn | grep 8080
+```
+
+#### 4. Production Deployment with `systemd`
+For enterprise Linux distributions (Ubuntu, Debian, RHEL, CentOS, Rocky Linux, Amazon Linux):
+
+1. **Install binary to system path**:
+   ```bash
+   sudo cp bap-controlplane/bapcontrolplane /usr/local/bin/bapservice
+   sudo chmod 755 /usr/local/bin/bapservice
+   ```
+
+2. **Create service user & working directories**:
+   ```bash
+   sudo useradd -r -s /bin/false bap
+   sudo mkdir -p /var/lib/bapservice /var/log/bapservice
+   sudo chown -R bap:bap /var/lib/bapservice /var/log/bapservice
+   ```
+
+3. **Create the systemd service file** (`/etc/systemd/system/bapservice.service`):
+   ```ini
+   [Unit]
+   Description=Bounded Authority Plane (BAP) Control Plane Service
+   After=network.target
+   Documentation=https://github.com/bapltd/bapltd
+
+   [Service]
+   Type=simple
+   User=bap
+   Group=bap
+   WorkingDirectory=/var/lib/bapservice
+   ExecStart=/usr/local/bin/bapservice -port 8080 -ttl 30 -trust-domain bap.internal
+   Restart=always
+   RestartSec=5s
+   Environment="BAP_SECRET_KEY=your-production-secret-key-32b!"
+   Environment="BAP_SESSION_TIMEOUT=15m"
+   LimitNOFILE=65535
+
+   # Hardening & Sandboxing
+   ProtectSystem=full
+   ProtectHome=true
+   NoNewPrivileges=true
+
+   [Install]
+   WantedBy=multi-user.target
+   ```
+
+4. **Enable and start the service**:
+   ```bash
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now bapservice
+   sudo systemctl status bapservice
+   ```
+
+5. **Inspect live logs**:
+   ```bash
+   sudo journalctl -u bapservice -f
+   ```
+
+#### 5. Container Deployment (Docker / Podman)
+```bash
+# Run with Docker or Podman
+docker run -d \
+  --name bapservice \
+  --restart unless-stopped \
+  -p 8080:8080 \
+  -e BAP_SECRET_KEY="your-production-secret-key-32b!" \
+  -e BAP_SESSION_TIMEOUT="15m" \
+  bapltd/bapcontrolplane:latest \
+  -port 8080 -trust-domain bap.internal
+```
+
+#### 6. Health & Verification Check
+```bash
+# Verify health endpoint
+curl -s http://localhost:8080/api/v1/health
+# Expected Output: {"service":"ltd-service-control-plane","status":"ok"}
+
+# Open the Live Workload Radar & Inspector UI in your browser:
+# http://<server-ip>:8080/inspector?mode=live
+```
+
+---
+
 ## 3. Test Commands
 
 ### Windows Automated 1-Click Test Suite (41 Checks)

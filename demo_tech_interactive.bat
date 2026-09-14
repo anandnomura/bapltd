@@ -1,12 +1,12 @@
 @echo off
 setlocal EnableDelayedExpansion
 cd /d "%~dp0"
-title BAP Zero-Trust Platform - CIO Executive Demonstration
+title BAP Zero-Trust Platform - Technical Architecture Deep-Dive
 mode con: cols=100 lines=35
 color 0B
 
 echo ====================================================================================================
-echo               BOUNDED AUTHORITY PLANE (BAP) - EXECUTIVE DEMONSTRATION FOR THE CIO
+echo        BOUNDED AUTHORITY PLANE (BAP) - TECHNICAL ARCHITECTURE & SECURITY DEMONSTRATION
 echo                  Zero-Trust Pre-Execution Broker and Observability for AI Coding Agents
 echo ====================================================================================================
 echo.

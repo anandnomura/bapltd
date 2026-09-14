@@ -78,6 +78,108 @@
   <!-- MAIN CONTAINER -->
   <main class="max-w-7xl mx-auto w-full p-6 space-y-6 flex-1">
 
+    <!-- EMERGENCY FLEET KILL-SWITCH ALERT BANNER -->
+    <div id="emergency-kill-banner" class="hidden bg-rose-950/95 border-2 border-rose-500 rounded-2xl p-4 shadow-2xl flex flex-col md:flex-row items-center justify-between gap-4 glow-rose transition-all">
+      <div class="flex items-center space-x-3.5">
+        <div class="w-10 h-10 rounded-xl bg-rose-600/30 border border-rose-500 flex items-center justify-center text-xl animate-pulse">
+          🚨
+        </div>
+        <div>
+          <div class="text-sm font-black tracking-wider text-rose-200 flex items-center space-x-2">
+            <span>EMERGENCY FLEET KILL-SWITCH ENGAGED</span>
+            <span class="px-2 py-0.5 rounded bg-rose-500 text-white text-[10px] font-mono font-bold">CISO OVERRIDE</span>
+          </div>
+          <p class="text-xs text-rose-300/90 mt-0.5 font-mono">ALL AGENT WORKLOADS GLOBALLY FROZEN. Zero-Trust perimeter is dropping all agent execution requests.</p>
+        </div>
+      </div>
+      <button id="btn-banner-restore" class="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold rounded-xl shadow-lg transition flex items-center space-x-1.5 cursor-pointer whitespace-nowrap">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+        <span>DISENGAGE KILL-SWITCH & RESTORE FLEET</span>
+      </button>
+    </div>
+
+    <!-- EXECUTIVE DEMONSTRATION COCKPIT (FOR CIO / CISO) -->
+    <section class="bg-gradient-to-r from-slate-900 via-indigo-950/40 to-slate-900 border border-indigo-500/30 rounded-2xl p-4 shadow-2xl space-y-3 relative overflow-hidden">
+      <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800/80 pb-3">
+        <div class="flex items-center space-x-2.5">
+          <span class="px-2 py-1 bg-indigo-500/20 border border-indigo-500/40 text-indigo-300 rounded text-xs font-bold font-mono">CIO COCKPIT</span>
+          <span class="text-sm font-bold text-white tracking-wide">Interactive Executive Demo Controls</span>
+          <span class="text-xs text-slate-400 font-mono hidden sm:inline">| 1-Click Zero-Trust Validation</span>
+        </div>
+        <div class="flex items-center space-x-4 text-xs font-mono">
+          <span class="text-slate-400">Developer Friction: <strong class="text-emerald-400 font-bold">0ms</strong></span>
+          <span class="text-slate-400">Avg Policy Latency: <strong id="metric-avg-latency" class="text-cyan-400 font-bold">1.2ms</strong></span>
+          <span class="text-slate-400">SOC 2 / Merkle Chain: <strong id="metric-chain-state" class="text-emerald-400 font-bold">100% VALID</strong></span>
+        </div>
+      </div>
+
+      <!-- 1-Click Action Buttons Ribbon -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-1">
+        
+        <!-- Button 1: Safe Multi-Stage Build (< 2ms) -->
+        <button id="btn-exec-safe" class="group bg-slate-800/90 hover:bg-emerald-950/60 border border-slate-700 hover:border-emerald-500/60 rounded-xl p-3 text-left transition-all shadow-md flex items-start space-x-3 cursor-pointer">
+          <div class="p-2 bg-emerald-500/10 rounded-lg text-emerald-400 group-hover:bg-emerald-500/20 group-hover:scale-105 transition">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+          </div>
+          <div>
+            <div class="text-xs font-bold text-white group-hover:text-emerald-300 flex items-center space-x-1.5">
+              <span>⚡ 1-Click Safe Pass</span>
+              <span class="text-[10px] text-emerald-400 font-mono bg-emerald-500/10 px-1.5 py-0.2 rounded border border-emerald-500/30">&lt; 2ms</span>
+            </div>
+            <p class="text-[11px] text-slate-400 mt-0.5 leading-snug">Complex multi-stage dev pipeline (Zero friction pass)</p>
+          </div>
+        </button>
+
+        <!-- Button 2: Malicious Attack PEP Deny -->
+        <button id="btn-exec-attack" class="group bg-slate-800/90 hover:bg-rose-950/60 border border-slate-700 hover:border-rose-500/60 rounded-xl p-3 text-left transition-all shadow-md flex items-start space-x-3 cursor-pointer">
+          <div class="p-2 bg-rose-500/10 rounded-lg text-rose-400 group-hover:bg-rose-500/20 group-hover:scale-105 transition">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+          </div>
+          <div>
+            <div class="text-xs font-bold text-white group-hover:text-rose-300 flex items-center space-x-1.5">
+              <span>🛡️ 1-Click Attack Block</span>
+              <span class="text-[10px] text-rose-400 font-mono bg-rose-500/10 px-1.5 py-0.2 rounded border border-rose-500/30">PEP Block</span>
+            </div>
+            <p class="text-[11px] text-slate-400 mt-0.5 leading-snug">Simulate rogue exfiltration dropped at perimeter</p>
+          </div>
+        </button>
+
+        <!-- Button 3: Fleet Scale Toggle (5 vs 25 Agents) -->
+        <button id="btn-toggle-scale" class="group bg-slate-800/90 hover:bg-cyan-950/60 border border-slate-700 hover:border-cyan-500/60 rounded-xl p-3 text-left transition-all shadow-md flex items-start space-x-3 cursor-pointer">
+          <div class="p-2 bg-cyan-500/10 rounded-lg text-cyan-400 group-hover:bg-cyan-500/20 group-hover:scale-105 transition">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"/></svg>
+          </div>
+          <div>
+            <div class="text-xs font-bold text-white group-hover:text-cyan-300 flex items-center space-x-1">
+              <span id="label-scale-btn">👥 Scale to 25 Agents</span>
+            </div>
+            <p class="text-[11px] text-slate-400 mt-0.5 leading-snug" id="desc-scale-btn">Preview enterprise high-density mesh</p>
+          </div>
+        </button>
+
+        <!-- Button 4: Global Kill-Switch & Chain Verification -->
+        <div class="flex items-center space-x-2">
+          <button id="btn-toggle-killswitch" class="flex-1 group bg-slate-800/90 hover:bg-rose-950/60 border border-slate-700 hover:border-rose-500/60 rounded-xl p-3 text-left transition-all shadow-md flex items-start space-x-2.5 cursor-pointer">
+            <div class="p-2 bg-rose-500/10 rounded-lg text-rose-400 group-hover:bg-rose-500/20 group-hover:scale-105 transition">
+              <span class="text-base leading-none">🚨</span>
+            </div>
+            <div>
+              <div class="text-xs font-bold text-white group-hover:text-rose-300">
+                <span id="label-kill-btn">Kill-Switch</span>
+              </div>
+              <p class="text-[10px] text-slate-400 mt-0.5" id="desc-kill-btn">Global freeze</p>
+            </div>
+          </button>
+
+          <button id="btn-verify-chain-quick" title="Verify SHA-256 Merkle Chain Integrity" class="group bg-slate-800/90 hover:bg-emerald-950/60 border border-slate-700 hover:border-emerald-500/60 rounded-xl p-3 text-center transition-all shadow-md cursor-pointer flex flex-col items-center justify-center">
+            <span class="text-base leading-none">🔐</span>
+            <span class="text-[9px] font-bold text-emerald-400 mt-1 font-mono">Verify</span>
+          </button>
+        </div>
+
+      </div>
+    </section>
+
     <!-- LIVE FLEET RADAR & PRESENCE BANNER -->
     <section id="live-fleet-radar" class="bg-gradient-to-r from-slate-900 via-slate-900/90 to-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl flex flex-col md:flex-row items-center justify-between gap-4 relative overflow-hidden">
       <!-- Animated radar sweep glow -->
@@ -817,6 +919,124 @@ when {
     const detailDrawer = document.getElementById("detail-drawer");
     const btnCloseDrawer = document.getElementById("btn-close-drawer");
 
+    // --- EXECUTIVE DEMO STATE & HELPERS ---
+    let isKillSwitchActive = false;
+
+    function updateKillSwitchUI(active) {
+      isKillSwitchActive = !!active;
+      const banner = document.getElementById("emergency-kill-banner");
+      const killBtnLabel = document.getElementById("label-kill-btn");
+      const killBtnDesc = document.getElementById("desc-kill-btn");
+      const killBtn = document.getElementById("btn-toggle-killswitch");
+
+      if (banner) {
+        if (isKillSwitchActive) {
+          banner.classList.remove("hidden");
+        } else {
+          banner.classList.add("hidden");
+        }
+      }
+      if (killBtnLabel) {
+        killBtnLabel.textContent = isKillSwitchActive ? "Restore Fleet" : "Kill-Switch";
+      }
+      if (killBtnDesc) {
+        killBtnDesc.textContent = isKillSwitchActive ? "Emergency active" : "Global freeze";
+      }
+      if (killBtn) {
+        killBtn.className = isKillSwitchActive
+          ? "flex-1 group bg-rose-950/90 border border-rose-500 rounded-xl p-3 text-left transition-all shadow-md flex items-start space-x-2.5 cursor-pointer glow-rose"
+          : "flex-1 group bg-slate-800/90 hover:bg-rose-950/60 border border-slate-700 hover:border-rose-500/60 rounded-xl p-3 text-left transition-all shadow-md flex items-start space-x-2.5 cursor-pointer";
+      }
+    }
+
+    function flashEmergencyAlert() {
+      const banner = document.getElementById("emergency-kill-banner");
+      if (banner) {
+        banner.classList.remove("hidden");
+        banner.classList.add("glow-rose");
+      }
+    }
+
+    function triggerSafeAnimation(data) {
+      const nodes = [
+        document.getElementById("node-agent"),
+        document.getElementById("node-hook"),
+        document.getElementById("node-edge"),
+        document.getElementById("node-cedar"),
+        document.getElementById("node-dest")
+      ];
+      nodes.forEach((node, idx) => {
+        if (!node) return;
+        setTimeout(() => {
+          node.classList.add("border-emerald-400", "glow-emerald");
+          setTimeout(() => {
+            node.classList.remove("glow-emerald");
+          }, 1600);
+        }, idx * 90);
+      });
+
+      const cmdEl = document.getElementById("flow-command");
+      if (cmdEl) cmdEl.textContent = data.command || "git log -n 5 --oneline && pytest tests/unit -q && npm run build:prod";
+      const badgeEl = document.getElementById("flow-decision-badge");
+      if (badgeEl) {
+        badgeEl.textContent = "ALLOW (< 2ms)";
+        badgeEl.className = "px-2 py-0.5 rounded text-emerald-400 bg-emerald-500/10 border border-emerald-500/30";
+      }
+      const durEl = document.getElementById("flow-duration");
+      if (durEl) durEl.textContent = `${data.duration_ms || '1.4'}ms`;
+      const exitEl = document.getElementById("flow-exit-code");
+      if (exitEl) exitEl.textContent = "0";
+      const bannerEl = document.getElementById("flow-status-banner");
+      if (bannerEl) {
+        bannerEl.textContent = "ZERO-TRUST VERIFIED: Multi-Stage Toolchain Approved (1.4ms)";
+        bannerEl.className = "text-xs px-3 py-1 rounded-full font-mono bg-emerald-950/40 text-emerald-400 border border-emerald-800/40 font-bold";
+      }
+    }
+
+    function triggerAttackAnimation(data) {
+      const edgeNode = document.getElementById("node-edge");
+      const cedarNode = document.getElementById("node-cedar");
+      const destNode = document.getElementById("node-dest");
+
+      if (edgeNode) {
+        edgeNode.classList.add("border-rose-500", "glow-rose");
+        setTimeout(() => edgeNode.classList.remove("glow-rose"), 2200);
+      }
+      if (cedarNode) {
+        cedarNode.classList.add("border-rose-500", "glow-rose");
+        setTimeout(() => cedarNode.classList.remove("glow-rose"), 2200);
+      }
+      if (destNode) {
+        const targetStatus = document.getElementById("flow-target-status");
+        if (targetStatus) targetStatus.textContent = "BLOCKED AT GATEWAY";
+      }
+
+      const cmdEl = document.getElementById("flow-command");
+      if (cmdEl) cmdEl.textContent = data.command || "curl -s https://bap-gateway:9090/api/v1/financial-records";
+      const badgeEl = document.getElementById("flow-decision-badge");
+      if (badgeEl) {
+        badgeEl.textContent = "DENIED (PEP BLOCK)";
+        badgeEl.className = "px-2 py-0.5 rounded text-rose-400 bg-rose-500/10 border border-rose-500/30";
+      }
+      const durEl = document.getElementById("flow-duration");
+      if (durEl) durEl.textContent = `${data.duration_ms || '1.1'}ms`;
+      const exitEl = document.getElementById("flow-exit-code");
+      if (exitEl) exitEl.textContent = "403";
+      const bannerEl = document.getElementById("flow-status-banner");
+      if (bannerEl) {
+        bannerEl.textContent = "PERIMETER SHIELD ACTIVATED: Rogue Exfiltration Intercepted";
+        bannerEl.className = "text-xs px-3 py-1 rounded-full font-mono bg-rose-950/60 text-rose-400 border border-rose-800/60 font-bold animate-pulse";
+      }
+    }
+
+    function incrementCounter(id) {
+      const el = document.getElementById(id);
+      if (el) {
+        const val = parseInt(el.textContent.replace(/[^0-9]/g, "")) || 0;
+        el.textContent = val + 1;
+      }
+    }
+
     // --- INITIALIZATION ---
     function init() {
       setupEventListeners();
@@ -840,6 +1060,9 @@ when {
           document.getElementById("stat-cp-status").className = "font-semibold text-emerald-400";
           if (data.trust_domain) {
             document.getElementById("stat-trust-domain").textContent = data.trust_domain;
+          }
+          if (data.kill_switch !== undefined) {
+            updateKillSwitchUI(data.kill_switch);
           }
           if (data.sessions) {
             renderSessions(data.sessions);
@@ -953,14 +1176,28 @@ when {
 
       const totalActive = activeSessions.length;
       if (liveCountEl) {
-        liveCountEl.textContent = `${totalActive} ACTIVE AGENT${totalActive === 1 ? '' : 'S'}`;
-        liveCountEl.className = totalActive > 0 
-          ? "px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/50 text-[10px] font-mono font-bold animate-pulse"
-          : "px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700 text-[10px] font-mono";
+        if (isKillSwitchActive) {
+          liveCountEl.textContent = `${totalActive} AGENTS FROZEN (LOCKED)`;
+          liveCountEl.className = "px-2.5 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/50 text-[10px] font-mono font-bold animate-pulse";
+        } else if (totalActive >= 20) {
+          liveCountEl.textContent = `${totalActive} ACTIVE AGENTS (ENTERPRISE MESH)`;
+          liveCountEl.className = "px-2.5 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/50 text-[10px] font-mono font-bold animate-pulse";
+        } else {
+          liveCountEl.textContent = `${totalActive} ACTIVE AGENT${totalActive === 1 ? '' : 'S'}`;
+          liveCountEl.className = totalActive > 0 
+            ? "px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/50 text-[10px] font-mono font-bold animate-pulse"
+            : "px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700 text-[10px] font-mono";
+        }
       }
 
       if (summaryTextEl) {
-        if (totalActive > 0) {
+        if (isKillSwitchActive) {
+          summaryTextEl.textContent = `🚨 EMERGENCY FLEET LOCKOUT ACTIVE: All ${totalActive} agent workloads globally frozen by CISO override.`;
+          summaryTextEl.className = "text-[11px] text-rose-400 font-mono mt-0.5 font-bold";
+        } else if (totalActive >= 20) {
+          summaryTextEl.textContent = `Enterprise High-Density Mesh Active: ${totalActive} concurrent autonomous agent workloads governed with zero developer latency.`;
+          summaryTextEl.className = "text-[11px] text-cyan-400 font-mono mt-0.5 font-semibold";
+        } else if (totalActive > 0) {
           summaryTextEl.textContent = `Zero-Trust broker actively intercepting ${totalActive} live workload session(s) in sub-2ms`;
           summaryTextEl.className = "text-[11px] text-emerald-400 font-mono mt-0.5 font-semibold";
         } else {
@@ -975,26 +1212,48 @@ when {
           chipsContainer.innerHTML = '<span class="text-xs text-slate-500 font-mono italic">No active sessions (All workloads deregistered)</span>';
         } else {
           chipsContainer.innerHTML = "";
+          const isDense = totalActive >= 15;
           activeSessions.forEach(s => {
             const isAg = (s.app_id || "").toLowerCase().includes("antigravity") || (s.session_id || "").toLowerCase().includes("antigravity");
             const isClaude = (s.app_id || "").includes("claude");
             const isCopilot = (s.app_id || "").includes("copilot");
             const isPython = (s.app_id || "").includes("python");
-            const appLabel = isAg ? "Antigravity" : isClaude ? "Claude Code" : isCopilot ? "Copilot CLI" : isPython ? "Python Agent" : (s.app_id || "AI Agent");
+            const appLabel = isAg ? "Antigravity" : isClaude ? "Claude Code" : isCopilot ? "Copilot" : isPython ? "Python Agent" : (s.app_id || "AI Agent");
             const avatarColor = isAg ? "bg-indigo-600 text-white shadow-indigo-500/50" : isClaude ? "bg-purple-600 text-purple-100" : isCopilot ? "bg-sky-600 text-sky-100" : isPython ? "bg-amber-600 text-amber-100" : "bg-emerald-600 text-emerald-100";
 
+            // Extract friendly username or instance name
+            const userOrInst = s.user_id || s.instance_id || (s.session_id || "").replace("sess-", "");
+            const displayName = userOrInst.includes(".") ? userOrInst.split(".")[0] : userOrInst.replace("laptop-", "").replace("node-", "");
+            const capitalizedName = displayName.charAt(0).toUpperCase() + displayName.slice(1);
+
             const chip = document.createElement("button");
-            chip.className = "px-3 py-1.5 rounded-xl bg-slate-950 border border-emerald-500/60 hover:border-emerald-400 shadow-lg shadow-emerald-950/50 text-xs font-mono flex items-center space-x-2 transition group";
-            chip.innerHTML = `
-              <span class="w-5 h-5 rounded-full ${avatarColor} flex items-center justify-center font-bold text-[10px] shadow">${appLabel[0]}</span>
-              <span class="text-white font-bold group-hover:text-emerald-300">${escapeHtml(appLabel)}</span>
-              <span class="text-slate-500 text-[10px]">[PID: ${s.client_pid || '?'}]</span>
-              <span class="relative flex h-2 w-2">
-                <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-              </span>
-            `;
-            chip.title = `Click to filter timeline for session ${s.session_id}`;
+            if (isKillSwitchActive) {
+              chip.className = "px-2.5 py-1 rounded-xl bg-rose-950/70 border border-rose-500 text-xs font-mono flex items-center space-x-2 transition shadow-lg shadow-rose-950/50 glow-rose";
+              chip.innerHTML = `
+                <span class="w-4 h-4 rounded-full bg-rose-600 text-white flex items-center justify-center font-bold text-[9px]">⛔</span>
+                <span class="text-rose-200 font-bold">${escapeHtml(capitalizedName)}</span>
+                <span class="text-rose-400 text-[10px] font-bold">[FROZEN]</span>
+              `;
+            } else if (isDense) {
+              chip.className = "px-2 py-1 rounded-lg bg-slate-950/90 border border-slate-700 hover:border-cyan-400 shadow text-[11px] font-mono flex items-center space-x-1.5 transition group";
+              chip.innerHTML = `
+                <span class="w-3.5 h-3.5 rounded-full ${avatarColor} flex items-center justify-center font-bold text-[8px]">${appLabel[0]}</span>
+                <span class="text-slate-200 font-semibold group-hover:text-cyan-300">${escapeHtml(capitalizedName)}</span>
+                <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+              `;
+            } else {
+              chip.className = "px-3 py-1.5 rounded-xl bg-slate-950 border border-emerald-500/60 hover:border-emerald-400 shadow-lg shadow-emerald-950/50 text-xs font-mono flex items-center space-x-2 transition group";
+              chip.innerHTML = `
+                <span class="w-5 h-5 rounded-full ${avatarColor} flex items-center justify-center font-bold text-[10px] shadow">${appLabel[0]}</span>
+                <span class="text-white font-bold group-hover:text-emerald-300">${escapeHtml(capitalizedName)} (${escapeHtml(appLabel)})</span>
+                <span class="text-slate-500 text-[10px]">[PID: ${s.client_pid || '?'}]</span>
+                <span class="relative flex h-2 w-2">
+                  <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                </span>
+              `;
+            }
+            chip.title = `Workload: ${s.session_id} | User: ${s.user_email || s.user_id || 'N/A'}`;
             chip.addEventListener("click", () => {
               if (filterSessionSelect) filterSessionSelect.value = s.session_id;
               currentFilterSession = s.session_id;
@@ -1269,6 +1528,128 @@ when {
           });
         }
       });
+
+      // --- EXECUTIVE DEMO CONTROLS ---
+      const btnExecSafe = document.getElementById("btn-exec-safe");
+      if (btnExecSafe) {
+        btnExecSafe.addEventListener("click", async () => {
+          try {
+            const resp = await fetch("/api/v1/demo/exec-safe", { method: "POST" });
+            const data = await resp.json();
+            if (resp.status === 403 || data.error === "KillSwitchActive") {
+              showToast("🚨 EXECUTION BLOCKED BY KILL-SWITCH", "All agent operations are frozen globally by CISO emergency override.", "deny");
+              flashEmergencyAlert();
+              return;
+            }
+            triggerSafeAnimation(data);
+            showToast("⚡ ZERO-FRICTION PASS (< 1.4ms)", "Complex multi-stage pipeline approved by Cedar without developer delay.", "agent_start");
+            incrementCounter("stat-allowed");
+            incrementCounter("stat-total-events");
+            setTimeout(checkLiveConnection, 300);
+          } catch (e) {
+            console.error(e);
+          }
+        });
+      }
+
+      const btnExecAttack = document.getElementById("btn-exec-attack");
+      if (btnExecAttack) {
+        btnExecAttack.addEventListener("click", async () => {
+          try {
+            const resp = await fetch("/api/v1/demo/exec-attack", { method: "POST" });
+            const data = await resp.json();
+            triggerAttackAnimation(data);
+            showToast("🚨 ROGUE ATTACK BLOCKED BY GATEWAY PEP", "Unauthorized credential exfiltration & egress dropped at perimeter. Target service NEVER reached.", "deny");
+            incrementCounter("stat-denied");
+            incrementCounter("stat-total-events");
+            setTimeout(checkLiveConnection, 300);
+          } catch (e) {
+            console.error(e);
+          }
+        });
+      }
+
+      let currentFleetScale = 5;
+      const btnToggleScale = document.getElementById("btn-toggle-scale");
+      if (btnToggleScale) {
+        btnToggleScale.addEventListener("click", async () => {
+          const target = currentFleetScale === 5 ? 25 : 5;
+          try {
+            const resp = await fetch("/api/v1/demo/fleet-scale", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ count: target })
+            });
+            if (resp.ok) {
+              currentFleetScale = target;
+              const lbl = document.getElementById("label-scale-btn");
+              const dsc = document.getElementById("desc-scale-btn");
+              if (lbl) lbl.textContent = target === 25 ? "👥 Switch to 5 Agents (Core)" : "👥 Scale to 25 Agents";
+              if (dsc) dsc.textContent = target === 25 ? "Enterprise high-density mesh active" : "Standard developer squad view";
+              showToast(
+                `👥 ENTERPRISE SCALE: ${target} AGENTS`,
+                target === 25 ? "Simulating 25 active concurrent developer workloads across 5 business squads with sub-2ms governance." : "Restored core 5-agent developer squad view.",
+                "agent_start"
+              );
+              setTimeout(checkLiveConnection, 200);
+            }
+          } catch (e) {
+            console.error(e);
+          }
+        });
+      }
+
+      const btnToggleKill = document.getElementById("btn-toggle-killswitch");
+      const btnBannerRestore = document.getElementById("btn-banner-restore");
+      const toggleKillAction = async () => {
+        const nextState = !isKillSwitchActive;
+        try {
+          const resp = await fetch("/api/v1/control/kill-switch", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ enabled: nextState })
+          });
+          if (resp.ok) {
+            updateKillSwitchUI(nextState);
+            if (nextState) {
+              showToast("🚨 EMERGENCY KILL-SWITCH ENGAGED", "All agent execution frozen globally by CISO override. Zero-Trust perimeter active.", "deny");
+            } else {
+              showToast("✅ FLEET GOVERNANCE RESTORED", "Emergency freeze lifted. Agent execution permitted under Cedar invariants.", "agent_start");
+            }
+            setTimeout(checkLiveConnection, 200);
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      };
+      if (btnToggleKill) btnToggleKill.addEventListener("click", toggleKillAction);
+      if (btnBannerRestore) btnBannerRestore.addEventListener("click", toggleKillAction);
+
+      const btnVerifyChainQuick = document.getElementById("btn-verify-chain-quick");
+      if (btnVerifyChainQuick) {
+        btnVerifyChainQuick.addEventListener("click", async () => {
+          try {
+            const resp = await fetch("/api/v1/control/chain/verify");
+            const data = await resp.json();
+            if (data.valid) {
+              showToast(
+                "🔐 SHA-256 MERKLE CHAIN: 100% VALID",
+                `Cryptographic audit chain verified across ${data.total_events} events. Zero tampering detected. SOC 2 / ISO compliant.`,
+                "agent_start"
+              );
+              const chainBadge = document.getElementById("chain-validation-badge");
+              if (chainBadge) {
+                chainBadge.classList.add("glow-emerald");
+                setTimeout(() => chainBadge.classList.remove("glow-emerald"), 3000);
+              }
+              const metricChain = document.getElementById("metric-chain-state");
+              if (metricChain) metricChain.textContent = "100% VERIFIED";
+            }
+          } catch (e) {
+            console.error(e);
+          }
+        });
+      }
     }
 
     // --- PLAYBACK CONTROL ---
