@@ -1,7 +1,9 @@
 package main
 
 import (
+	"crypto/rand"
 	"crypto/tls"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"log"
@@ -22,16 +24,42 @@ import (
 func main() {
 	port := flag.Int("port", 8080, "Port for bapcontrolplane HTTP server")
 	secretKey := flag.String("secret", "ltd-service-bounded-authority-secret-key-32b!", "HMAC signing secret for tokens")
+	adminToken := flag.String("admin-token", "", "Administrative secret token for control APIs (default: auto-generated or read from BAP_ADMIN_TOKEN)")
+	allowRemoteAdmin := flag.Bool("allow-remote-admin", false, "Allow remote network callers to invoke admin APIs with valid token (default: false, localhost only)")
 	grantTTL := flag.Int("ttl", 30, "Default grant TTL in minutes")
 	policyPath := flag.String("policy", "", "Path to authoritative Cedar policy file")
 	schemaPath := flag.String("schema", "", "Path to authoritative Cedar schema file")
 	trustDomain := flag.String("trust-domain", "bap.internal", "SPIFFE Trust Domain for agent workload identities")
 	useTLS := flag.Bool("tls", false, "Enable HTTPS/TLS")
+	httpsFlag := flag.Bool("https", false, "Enable HTTPS (auto-generates dev certs if none provided)")
 	autoTLS := flag.Bool("tls-auto", false, "Auto-generate self-signed TLS certificates for development")
 	certPath := flag.String("tls-cert", "", "Path to TLS certificate PEM file")
 	keyPath := flag.String("tls-key", "", "Path to TLS private key PEM file")
 	dbPath := flag.String("db", "", "Path to SQLite database file for state persistence (default: bap-controlplane.db, 'memory' for in-memory)")
 	flag.Parse()
+
+	if *httpsFlag {
+		*useTLS = true
+	}
+	if *useTLS && *certPath == "" && *keyPath == "" {
+		*autoTLS = true
+	}
+
+	if envAdmin := os.Getenv("BAP_ADMIN_TOKEN"); envAdmin != "" && *adminToken == "" {
+		*adminToken = envAdmin
+	}
+	if *adminToken == "" {
+		b := make([]byte, 16)
+		if _, err := rand.Read(b); err == nil {
+			*adminToken = "bap_adm_" + hex.EncodeToString(b)
+		} else {
+			*adminToken = "bap_adm_sec_" + fmt.Sprintf("%d", time.Now().UnixNano())
+		}
+		log.Printf("[bapcontrolplane] Generated dynamic administrative secret token: %s", *adminToken)
+	} else {
+		log.Printf("[bapcontrolplane] Administrative security enabled with configured token")
+	}
+	_ = os.WriteFile(".bap-admin-token", []byte(*adminToken), 0600)
 
 	if envSecret := os.Getenv("BAP_SECRET_KEY"); envSecret != "" {
 		*secretKey = envSecret
@@ -91,6 +119,7 @@ func main() {
 	}
 
 	server := api.NewServer(regStore, otcStore, minter, policyStore, auditStore, sessionStore)
+	server.SetAdminSecurity(*adminToken, *allowRemoteAdmin)
 
 	addr := fmt.Sprintf(":%d", *port)
 	proto := "http"

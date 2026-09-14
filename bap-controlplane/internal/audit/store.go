@@ -23,6 +23,7 @@ type Event struct {
 	FullCommand  string `json:"full_command"`
 	Decision     string `json:"decision"`
 	Reason       string `json:"reason,omitempty"`
+	UserPrompt   string `json:"user_prompt,omitempty"`
 	DurationMs   int64  `json:"duration_ms,omitempty"`
 	ExitCode     int    `json:"exit_code"`
 	PreviousHash string `json:"previous_hash"`

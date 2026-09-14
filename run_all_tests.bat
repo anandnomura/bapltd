@@ -151,7 +151,7 @@ set "TEST_CMD=rm -rf /" & set "TEST_LBL=Destructive command: rm -rf /" & call :r
 echo.
 echo [5/11] Testing Python Sandbox [test_leak.py]...
 cd /d "%ROOT_DIR%"
-"%ROOT_DIR%bap-edge\bapedge.exe" exec --raw "python -m pytest -s tests/test_leak.py"
+bapedge.exe exec --raw "python -m pytest -s tests/test_leak.py"
 if !ERRORLEVEL! neq 0 (
     echo [FAIL] test_leak.py failed unexpectedly!
     set /a FAIL_COUNT+=1

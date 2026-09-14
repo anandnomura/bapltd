@@ -16,12 +16,16 @@
     }
     .glow-emerald { animation: pulse-glow-emerald 2s infinite; }
     .glow-rose { animation: pulse-glow-rose 1.5s infinite; }
+    .scrollbar-thin {
+      scrollbar-width: thin;
+      scrollbar-color: #334155 #0f172a;
+    }
     .scrollbar-thin::-webkit-scrollbar { width: 6px; height: 6px; }
     .scrollbar-thin::-webkit-scrollbar-track { background: #0f172a; }
     .scrollbar-thin::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
   </style>
 </head>
-<body class="bg-slate-950 text-slate-100 min-h-screen font-sans antialiased flex flex-col">
+<body class="bg-slate-950 text-slate-100 min-h-screen font-sans antialiased flex flex-col overflow-x-hidden">
 
   <!-- TOP HEADER -->
   <header class="border-b border-slate-800 bg-slate-900/90 backdrop-blur sticky top-0 z-30 px-6 py-3">
@@ -410,7 +414,7 @@
         </div>
 
         <!-- Event Cards List -->
-        <div id="event-cards-container" class="space-y-2.5">
+        <div id="event-cards-container" class="space-y-2.5 max-h-[580px] overflow-y-auto scrollbar-thin pr-1.5">
           <!-- Populated by JavaScript -->
         </div>
       </div>
@@ -426,9 +430,9 @@
             <span class="px-3 py-1 text-xs font-mono rounded bg-cyan-950 text-cyan-400 border border-cyan-800">Trust Domain: <span class="font-bold">bap.internal</span></span>
           </div>
 
-          <div class="overflow-x-auto">
+          <div class="overflow-x-auto max-h-[550px] overflow-y-auto scrollbar-thin">
             <table class="w-full text-left text-xs text-slate-300">
-              <thead class="bg-slate-950 text-slate-400 font-semibold border-b border-slate-800 uppercase">
+              <thead class="bg-slate-950 text-slate-400 font-semibold border-b border-slate-800 uppercase sticky top-0 z-10">
                 <tr>
                   <th class="px-4 py-3">Agent ID</th>
                   <th class="px-4 py-3">App ID</th>
@@ -461,7 +465,7 @@
             </div>
           </div>
 
-          <div id="hash-chain-visualizer" class="space-y-3 font-mono text-xs overflow-x-auto p-3 bg-slate-950 rounded-xl border border-slate-800">
+          <div id="hash-chain-visualizer" class="space-y-3 font-mono text-xs overflow-x-auto max-h-[550px] overflow-y-auto scrollbar-thin p-3 bg-slate-950 rounded-xl border border-slate-800">
             <!-- Populated by JavaScript -->
           </div>
         </div>
@@ -529,6 +533,9 @@ when {
               </pre>
             </div>
           </div>
+        </div>
+      </div>
+
       <!-- TAB 5: AGENT SESSIONS -->
       <div id="tab-pane-sessions" class="tab-pane hidden space-y-4">
         <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg space-y-4">
@@ -545,7 +552,7 @@ when {
             </div>
           </div>
 
-          <div id="sessions-container" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div id="sessions-container" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 max-h-[550px] overflow-y-auto scrollbar-thin pr-1">
             <!-- Populated by JavaScript -->
           </div>
         </div>
@@ -1060,8 +1067,12 @@ when {
       }
       updateScenario(scenarioSelector.value);
       checkLiveConnection();
-      // Always poll control plane every 1.5s for session and registry updates
-      setInterval(checkLiveConnection, 1500);
+      // Background heartbeat check for sessions/agents when not in active live mode
+      setInterval(() => {
+        if (scenarioSelector.value !== "live") {
+          checkLiveConnection();
+        }
+      }, 3000);
     }
 
     // --- CHECK LIVE CONNECTION ---
@@ -1549,9 +1560,24 @@ when {
       const sourceEvents = Array.from(allEventsMap.values());
       sourceEvents.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 
-      if (sourceEvents.length > 0) {
+      // Only re-render if events changed or initial load
+      let changed = sourceEvents.length !== currentEvents.length;
+      if (!changed && sourceEvents.length > 0) {
+        const lastSrc = sourceEvents[sourceEvents.length - 1];
+        const lastCur = currentEvents[currentEvents.length - 1];
+        if (lastSrc.id !== lastCur.id || lastSrc.hash !== lastCur.hash || lastSrc.decision !== lastCur.decision) {
+          changed = true;
+        }
+      }
+
+      if (changed && sourceEvents.length > 0) {
+        const wasAtLatest = currentIndex === currentEvents.length - 1 || currentEvents.length === 0;
         currentEvents = sourceEvents;
-        currentIndex = currentEvents.length - 1;
+        if (wasAtLatest) {
+          currentIndex = currentEvents.length - 1;
+        } else {
+          currentIndex = Math.min(currentIndex, currentEvents.length - 1);
+        }
         timelineSlider.max = currentEvents.length - 1;
         timelineSlider.value = currentIndex;
         renderTimeline();
@@ -1559,7 +1585,9 @@ when {
         if (!lastHandledDemoActionId) {
           updateFlowVisualizer(currentEvents[currentIndex]);
         }
-        highlightActiveEventCard(currentIndex);
+        highlightActiveEventCard(currentIndex, wasAtLatest);
+      } else if (currentEvents.length === 0 && sourceEvents.length === 0) {
+        renderTopStats();
       }
     }
 
@@ -1628,6 +1656,9 @@ when {
       });
 
       btnCloseDrawer.addEventListener("click", closeDrawer);
+      window.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") closeDrawer();
+      });
 
       // Filter Buttons
       document.querySelectorAll(".filter-src-btn").forEach(btn => {
@@ -2019,7 +2050,7 @@ when {
       });
     }
 
-    function highlightActiveEventCard(idx) {
+    function highlightActiveEventCard(idx, shouldScroll = true) {
       document.querySelectorAll("#event-cards-container > div").forEach(card => {
         card.classList.remove("border-emerald-500/80", "border-rose-500/80", "bg-emerald-950/30", "bg-rose-950/30", "shadow-lg");
         card.classList.add("border-slate-800", "bg-slate-900");
@@ -2034,7 +2065,27 @@ when {
           isDeny ? "bg-rose-950/30" : "bg-emerald-950/30",
           "shadow-lg"
         );
-        activeCard.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        if (shouldScroll) {
+          scrollCardIntoContainerView(activeCard);
+        }
+      }
+    }
+
+    function scrollCardIntoContainerView(activeCard) {
+      const container = document.getElementById("event-cards-container");
+      if (!container || !activeCard) return;
+      const timelinePane = document.getElementById("tab-pane-timeline");
+      if (timelinePane && timelinePane.classList.contains("hidden")) return;
+
+      const cardTop = activeCard.offsetTop - container.offsetTop;
+      const cardBottom = cardTop + activeCard.offsetHeight;
+      const containerScrollTop = container.scrollTop;
+      const containerHeight = container.clientHeight;
+
+      if (cardTop < containerScrollTop) {
+        container.scrollTo({ top: Math.max(0, cardTop - 8), behavior: "smooth" });
+      } else if (cardBottom > containerScrollTop + containerHeight) {
+        container.scrollTo({ top: cardBottom - containerHeight + 8, behavior: "smooth" });
       }
     }
 

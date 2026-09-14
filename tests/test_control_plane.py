@@ -22,11 +22,14 @@ def compute_sha256(filepath):
             h.update(chunk)
     return h.hexdigest()
 
-def http_post_json(url, data):
+def http_post_json(url, data, headers=None):
+    hdrs = {"Content-Type": "application/json"}
+    if headers:
+        hdrs.update(headers)
     req = urllib.request.Request(
         url,
         data=json.dumps(data).encode("utf-8"),
-        headers={"Content-Type": "application/json"}
+        headers=hdrs
     )
     try:
         with urllib.request.urlopen(req) as resp:
@@ -39,9 +42,18 @@ def http_post_json(url, data):
             parsed = {"raw": body}
         return e.code, parsed
 
-def http_get_json(url):
-    with urllib.request.urlopen(url) as resp:
-        return resp.status, json.loads(resp.read().decode("utf-8"))
+def http_get_json(url, headers=None):
+    req = urllib.request.Request(url, headers=headers or {})
+    try:
+        with urllib.request.urlopen(req) as resp:
+            return resp.status, json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8")
+        try:
+            parsed = json.loads(body)
+        except Exception:
+            parsed = {"raw": body}
+        return e.code, parsed
 
 def main():
     root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -89,11 +101,14 @@ def main():
     ]
     schema_file = next((p for p in schema_candidates if os.path.exists(p)), schema_candidates[0])
 
+    admin_token = "test-admin-secret-token-12345"
     server_proc = subprocess.Popen(
         [
             service_exe,
             "-port", str(port),
             "-secret", "integration-test-secret-key-32b!",
+            "-admin-token", admin_token,
+            "-allow-remote-admin",
             "-policy", policy_file,
             "-schema", schema_file
         ],
@@ -297,10 +312,30 @@ def main():
             assert audit_events_resp["count"] >= 2
             print("[PASS] 9. Central audit ingestion and tamper-evident hash-chain verified")
 
-            # 10. Remote Kill-Switch (Revocation)
+            # 10. Remote Kill-Switch & Admin Security Verification
+            # 10a-1. Unauthenticated kill-switch must be rejected (401 Unauthorized)
+            status, unauth_resp = http_post_json(f"{base_url}/api/v1/control/kill-switch", {"enabled": True})
+            assert status == 401, f"Expected 401 Unauthorized for unauthenticated kill-switch, got {status}"
+
+            # 10a-2. Invalid/guessed admin token must be rejected (403 Forbidden)
+            status, bad_token_resp = http_post_json(f"{base_url}/api/v1/control/kill-switch", {"enabled": True}, headers={"Authorization": "Bearer guessed-token"})
+            assert status == 403, f"Expected 403 Forbidden for bad admin token, got {status}"
+
+            # 10a-3. Admin login handshake verification
+            status, login_resp = http_post_json(f"{base_url}/api/v1/auth/admin-login", {"token": admin_token})
+            assert status == 200, f"Expected 200 for valid admin login, got {status}"
+            assert login_resp["role"] == "ciso_admin"
+            assert "kill_switch" in login_resp["permissions"]
+
+            # 10a-4. Authorized kill-switch with valid admin token succeeds
+            status, auth_ks_resp = http_post_json(f"{base_url}/api/v1/control/kill-switch", {"enabled": False}, headers={"X-BAP-Admin-Token": admin_token})
+            assert status == 200, f"Expected 200 for authorized kill-switch, got {status}"
+            print("[PASS] 10a. Admin API security verified: 401 on unauthenticated, 403 on invalid token, 200 with admin token")
+
+            # 10b. Remote Kill-Switch (Revocation)
             status, revoke_resp = http_post_json(f"{base_url}/api/v1/agents/revoke", {
                 "agent_id": legit_agent_id
-            })
+            }, headers={"X-BAP-Admin-Token": admin_token})
             assert status == 200
             assert revoke_resp["status"] == "revoked"
 
@@ -380,7 +415,7 @@ def main():
 
             # Per-instance vs Fleet-level revocation
             # Revoke instance 1 specifically
-            status, _ = http_post_json(f"{base_url}/api/v1/agents/revoke", {"agent_id": creds_fleet1["agent_id"]})
+            status, _ = http_post_json(f"{base_url}/api/v1/agents/revoke", {"agent_id": creds_fleet1["agent_id"]}, headers={"X-BAP-Admin-Token": admin_token})
             assert status == 200
 
             # Instance 1 grant should fail
@@ -393,7 +428,7 @@ def main():
             print("[PASS] 10b-5. Per-instance isolation verified: Revoking instance 1 did not affect instance 2")
 
             # App-level revocation (Fleet kill switch)
-            status, app_rev_resp = http_post_json(f"{base_url}/api/v1/apps/revoke", {"app_id": "fleet-deployer"})
+            status, app_rev_resp = http_post_json(f"{base_url}/api/v1/apps/revoke", {"app_id": "fleet-deployer"}, headers={"X-BAP-Admin-Token": admin_token})
             assert status == 200 and app_rev_resp.get("status") == "revoked"
 
             # Instance 2 grant should now also FAIL!
