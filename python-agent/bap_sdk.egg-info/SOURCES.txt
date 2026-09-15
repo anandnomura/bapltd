@@ -1,9 +1,0 @@
-README.md
-pyproject.toml
-setup.py
-bap_sdk/__init__.py
-bap_sdk/client.py
-bap_sdk.egg-info/PKG-INFO
-bap_sdk.egg-info/SOURCES.txt
-bap_sdk.egg-info/dependency_links.txt
-bap_sdk.egg-info/top_level.txt

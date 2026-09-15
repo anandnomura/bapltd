@@ -4,7 +4,7 @@ import react from '@vitejs/plugin-react';
 export default defineConfig({
   plugins: [react()],
   base: '/dashboard/',
-  build: { outDir: '../bap-controlplane/internal/api/web/dashboard-build', emptyOutDir: true },
+  build: { outDir: '../bap-controlplane/internal/dashboardui/web', emptyOutDir: true },
   server: {
     proxy: {
       '/api': { target: process.env.BAP_DEV_SERVER || 'http://localhost:8080', changeOrigin: false },

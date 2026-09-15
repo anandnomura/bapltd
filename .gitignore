@@ -15,14 +15,40 @@ cert_openssl.cnf
 v3_ext.cnf
 bap-root-ca.*
 controlplane-*
-.bap-admin-token
-.bap-session.json
-.bap-prompt.txt
+.bap*
+*/.bap*
+*.session.json
+*session*.json
+*.prompt.txt
+*prompt*.txt
+ltd-session*
 bap-credentials.json
 credentials.json
 .env
 .env.local
 .env.*.local
+
+# ==============================================================================
+# Accidental Shell Redirection Artifacts & Console Tokens (CMD/PowerShell)
+# ==============================================================================
+\[*\]*
+\[*
+\[ALLOWED\]*
+\[BLOCKED\]*
+\[GATEWAY*
+\[PASS\]*
+\[FAIL\]*
+\[DENY\]*
+[ALLOWED]*
+[BLOCKED]*
+[GATEWAY*
+[PASS]*
+[FAIL]*
+[DENY]*
+Decision
+200
+401
+403
 
 # ==============================================================================
 # Binaries, Packages & Build Outputs
@@ -61,10 +87,12 @@ bap-gateway/bapgateway.exe
 # State Persistence & SQLite Databases
 # ==============================================================================
 *.db
+*.db*
 *.db-shm
 *.db-wal
 *.sqlite
 *.sqlite3
+*.sqlite*
 bap-controlplane.db*
 policy-state.json
 manual-acceptance-results.json
@@ -75,6 +103,7 @@ manual-acceptance-results.json
 *.log
 *.jsonl
 ltd-audit.jsonl
+copilot/ltd-audit.jsonl
 
 # ==============================================================================
 # Python Cache, Wheels & Virtual Environments

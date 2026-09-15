@@ -52,11 +52,15 @@ func TestGrantRequiresProofAndStopsAfterRevocation(t *testing.T) {
 func TestPromptRedactionAcrossReadRoutes(t *testing.T) {
 	s := setupTestServer()
 	s.SetAdminSecurity("test-admin", true)
-	_, err := s.sessionStore.Start(session.SessionStartRequest{SessionID: "prompt-session", AppID: "app", UserPrompt: "private prompt"})
+	_, err := s.sessionStore.Start(session.SessionStartRequest{
+		SessionID: "private-session", AppID: "app", InstanceID: "private-instance",
+		UserID: "private-user", UserEmail: "private@example.test", SPIFFEID: "spiffe://private",
+		Hostname: "private-host", ClientPID: 4242, UserPrompt: "private prompt",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"/api/v1/inspector/data", "/api/v1/sessions", "/api/v1/sessions/prompt-session"} {
+	for _, path := range []string{"/api/v1/inspector/data", "/api/v1/sessions", "/api/v1/sessions/private-session"} {
 		for _, authenticated := range []bool{false, true} {
 			r := httptest.NewRequest("GET", path, nil)
 			r.RemoteAddr = "127.0.0.1:1234"
@@ -68,10 +72,63 @@ func TestPromptRedactionAcrossReadRoutes(t *testing.T) {
 			if w.Code != 200 {
 				t.Fatalf("%s: %d", path, w.Code)
 			}
-			if strings.Contains(w.Body.String(), "private prompt") != authenticated {
-				t.Fatalf("prompt visibility wrong at %s", path)
+			for _, privateValue := range []string{"private prompt", "private-session", "private-instance", "private-user", "private@example.test", "spiffe://private", "private-host", "4242"} {
+				if strings.Contains(w.Body.String(), privateValue) != authenticated {
+					t.Fatalf("telemetry value %q visibility wrong at %s (authenticated=%v): %s", privateValue, path, authenticated, w.Body.String())
+				}
 			}
 		}
+	}
+}
+
+func TestAgentTargetRevokesLinkedSession(t *testing.T) {
+	s := setupTestServer()
+	s.SetAdminSecurity("test-admin", true)
+	sess, err := s.sessionStore.Start(session.SessionStartRequest{SessionID: "sess-linked", AppID: "claude-code"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent := s.registry.EnsureSessionAgent(sess.AppID, sess.SessionID, "", "", "")
+	body := bytes.NewBufferString(`{"target":"` + agent.AgentID + `","action":"revoke"}`)
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/control/agent/kill", body)
+	r.RemoteAddr = "127.0.0.1:1234"
+	r.Header.Set("Authorization", "Bearer test-admin")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("revoke failed: %d %s", w.Code, w.Body.String())
+	}
+	if !s.sessionStore.IsRevoked(sess.SessionID) {
+		t.Fatal("registry agent changed state but linked session authority was not revoked")
+	}
+	if !strings.Contains(w.Body.String(), "workload process was not terminated") {
+		t.Fatalf("response did not explain revoke semantics: %s", w.Body.String())
+	}
+}
+
+func TestPromptTelemetryAcceptsOnlyLifecycleHookProducer(t *testing.T) {
+	s := setupTestServer()
+	_, err := s.sessionStore.Start(session.SessionStartRequest{SessionID: "sess-prompt", AppID: "claude-code"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		body string
+		want int
+	}{
+		{`{"session_id":"sess-prompt","user_prompt":"hello"}`, http.StatusBadRequest},
+		{`{"session_id":"sess-prompt","user_prompt":"hello","producer":"claude-lifecycle-hook"}`, http.StatusOK},
+	} {
+		r := httptest.NewRequest(http.MethodPost, "/api/v1/sessions/prompt", strings.NewReader(tc.body))
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, r)
+		if w.Code != tc.want {
+			t.Fatalf("prompt status = %d, want %d: %s", w.Code, tc.want, w.Body.String())
+		}
+	}
+	events := s.auditStore.List(10)
+	if len(events) != 1 || events[0].UserPrompt != "hello" || events[0].FullCommand != "USER_PROMPT_SUBMITTED" {
+		t.Fatalf("expected exactly one prompt event, got %#v", events)
 	}
 }
 

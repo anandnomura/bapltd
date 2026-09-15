@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 
@@ -88,14 +89,9 @@ func RunWatch(args []string) error {
 }
 
 func runWatchLoop(watchPID int, serverURL, sessionID, appID string) {
-	// 1. Check if user prompt exists
-	var initialPrompt string
-	if promptData, err := os.ReadFile(".bap-prompt.txt"); err == nil {
-		initialPrompt = strings.TrimSpace(string(promptData))
-	}
-	if initialPrompt == "" {
-		initialPrompt = os.Getenv("BAP_USER_PROMPT")
-	}
+	// Prompt telemetry is emitted by the lifecycle hook. The watcher must not
+	// replay workspace prompt files because multiple sessions can share a cwd.
+	initialPrompt := strings.TrimSpace(os.Getenv("BAP_USER_PROMPT"))
 
 	// 2. Persist local workspace marker
 	marker := map[string]any{
@@ -131,8 +127,7 @@ func runWatchLoop(watchPID int, serverURL, sessionID, appID string) {
 	defer ticker.Stop()
 
 	deadCheckCount := 0
-	lastSyncedPrompt := initialPrompt
-
+	revokedCount := 0
 	for range ticker.C {
 		// Only check process termination if a valid target PID was specified
 		if watchPID > 0 {
@@ -146,7 +141,6 @@ func runWatchLoop(watchPID int, serverURL, sessionID, appID string) {
 					}
 					_ = postJSONQuick(serverURL+"/api/v1/sessions/end", endPayload)
 					_ = os.Remove(".bap-session.json")
-					_ = os.Remove(".bap-prompt.txt")
 					return
 				}
 			} else {
@@ -155,27 +149,104 @@ func runWatchLoop(watchPID int, serverURL, sessionID, appID string) {
 		}
 
 		// Keep alive & pulse heartbeat continuously (no matter whether CC is talking or idle)
-		_ = postJSONQuick(serverURL+"/api/v1/sessions/heartbeat", map[string]any{
-			"session_id": sessionID,
-		})
-		_ = postJSONQuick(serverURL+"/api/v1/instances/heartbeat", map[string]any{
-			"agent_id": sessionID,
-		})
-
-		// Check for prompt updates from .bap-prompt.txt
-		if pBytes, err := os.ReadFile(".bap-prompt.txt"); err == nil {
-			currentPrompt := strings.TrimSpace(string(pBytes))
-			if currentPrompt != "" && currentPrompt != lastSyncedPrompt {
-				lastSyncedPrompt = currentPrompt
-				_ = postJSONQuick(serverURL+"/api/v1/sessions/prompt", map[string]any{
-					"session_id":  sessionID,
-					"user_prompt": currentPrompt,
-				})
-			}
-		}
-
+		revokedByHB, reasonHB := pulseHeartbeat(serverURL, sessionID)
 		syncRevocationsFast(serverURL, "policy.cedar")
+		revokedByState := isSessionRevokedInState(sessionID)
+
+		if revokedByHB || revokedByState {
+			reason := reasonHB
+			if reason == "" {
+				reason = "Session authority revoked by administrator (synced policy state)"
+			}
+			fmt.Fprintf(os.Stderr, "[bapedge watch] 🚨 Session %s REVOKED by control plane: %s\n", sessionID, reason)
+			writeLocalRevoked(sessionID, reason)
+			revokedCount++
+
+			// Option 3: Warn on tick 1, hard kill rogue workload process on tick 2
+			if revokedCount >= 2 && watchPID > 0 {
+				fmt.Fprintf(os.Stderr, "[bapedge watch] ⚡ Terminating rogue agent workload (PID: %d)...\n", watchPID)
+				killProcessPID(watchPID)
+				_ = os.Remove(".bap-session.json")
+				return
+			}
+		} else {
+			revokedCount = 0
+		}
 	}
+}
+
+func killProcessPID(pid int) {
+	if pid <= 0 {
+		return
+	}
+	if runtime.GOOS == "windows" {
+		_ = exec.Command("taskkill", "/F", "/T", "/PID", fmt.Sprintf("%d", pid)).Run()
+	} else {
+		if p, err := os.FindProcess(pid); err == nil {
+			_ = p.Kill()
+		}
+	}
+}
+
+func writeLocalRevoked(sessionID, reason string) {
+	marker := map[string]any{
+		"session_id": sessionID,
+		"status":     "revoked",
+		"revoked_at": time.Now().UTC(),
+		"reason":     reason,
+	}
+	if data, err := json.MarshalIndent(marker, "", "  "); err == nil {
+		_ = os.WriteFile(".bap-revoked", data, 0600)
+	}
+}
+
+func isSessionRevokedInState(sessionID string) bool {
+	data, err := os.ReadFile("policy-state.json")
+	if err != nil {
+		return false
+	}
+	var st struct {
+		KillSwitch      bool     `json:"kill_switch"`
+		RevokedSessions []string `json:"revoked_sessions"`
+	}
+	if json.Unmarshal(data, &st) != nil {
+		return false
+	}
+	if st.KillSwitch {
+		return true
+	}
+	sessLower := strings.ToLower(sessionID)
+	for _, rev := range st.RevokedSessions {
+		revLower := strings.ToLower(strings.TrimSpace(rev))
+		if revLower != "" && (strings.Contains(sessLower, revLower) || strings.Contains(revLower, sessLower)) {
+			return true
+		}
+	}
+	return false
+}
+
+func pulseHeartbeat(serverURL, sessionID string) (bool, string) {
+	body, err := json.Marshal(map[string]any{"session_id": sessionID})
+	if err != nil {
+		return false, ""
+	}
+	client := httptransport.New(2 * time.Second)
+	resp, err := client.Post(serverURL+"/api/v1/sessions/heartbeat", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return false, ""
+	}
+	defer resp.Body.Close()
+	var res struct {
+		Status string `json:"status"`
+		Action string `json:"action"`
+		Reason string `json:"reason"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&res); err == nil {
+		if res.Status == "revoked" || res.Action == "terminate" {
+			return true, res.Reason
+		}
+	}
+	return false, ""
 }
 
 func postJSONQuick(url string, payload any) error {

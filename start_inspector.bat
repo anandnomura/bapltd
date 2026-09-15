@@ -39,12 +39,18 @@ if "%IS_LOCAL%"=="1" (
     )
 )
 
-echo [*] Opening Inspector Dashboard in your default browser...
-start %CP_URL%/inspector
+set "TARGET_PATH=/inspector"
+if /i "%1"=="v2" set "TARGET_PATH=/inspector_v2"
+if /i "%1"=="-v2" set "TARGET_PATH=/inspector_v2"
+if /i "%1"=="--v2" set "TARGET_PATH=/inspector_v2"
+
+echo [*] Opening Inspector Dashboard in your default browser (%TARGET_PATH%)...
+start %CP_URL%%TARGET_PATH%
 
 echo.
 echo ===============================================================================
-echo   Inspector is LIVE at: %CP_URL%/inspector
+echo   Inspector is LIVE at: %CP_URL%%TARGET_PATH%
+echo   (Tip: Run 'start_inspector.bat v2' to launch Inspector V2 Executive Cockpit)
 if "%IS_LOCAL%"=="1" (
     echo   To stop local server anytime, run: stop_inspector.bat
 )

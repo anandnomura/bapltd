@@ -5,9 +5,9 @@ remaining production architecture work.
 
 ## Implemented in this change
 
-- React/Vite dashboard at `/dashboard/`, embedded in Go: live registry, 30-second
-  departures, runtime history, stale-state distinction, searchable agents,
-  actual tool actions and protected captured prompts.
+- React/Vite dashboard packaged in the standalone `bapdashboard` binary: persistent
+  agent rows, active/stale/offline presence, searchable history, actual tool
+  actions and protected captured prompts. `bapcontrolplane` is API-only.
 - Admin actions and prompt reveal request a credential each time; no browser
   token persistence, automatic local login or secret-returning handshake.
 - Explicit origin allowlist, cookie-free admin authentication, consistent prompt
@@ -117,10 +117,11 @@ validate input and permissions, and restrict direct control-plane access.
 Native BAP TLS currently provides server authentication; client-certificate
 authentication (mTLS) is not configured by the supplied server flags.
 
-## A lighter inspector
+## Standalone dashboard
 
-Open `/dashboard/` on the running server. The [React implementation](dashboard/README.md)
-replaces the initial layout proposal. The inspector remains a diagnostic fallback.
+Start `bapdashboard` independently and open its `/dashboard/` URL. The
+[React implementation](dashboard/README.md) is no longer served by the control
+plane, and the legacy inspector route has been removed from that service.
 
 - Use a pale gray page, white cards, dark slate text and restrained blue accents.
 - Show endpoint, connection state, last successful refresh and viewing role first.

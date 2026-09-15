@@ -186,7 +186,7 @@ echo   Policy Enforcement   : Local Cedar Broker (^< 1.5ms)
 echo   Live Telemetry       : Streaming to !SERVER_URL!
 echo   Liveness Watcher     : Active (auto-deregisters on exit or window close)
 echo.
-echo   Check your browser dashboard on: !SERVER_URL!/inspector?mode=live
+echo   Dashboard UI       : start bapdashboard separately (default https://localhost:8444/dashboard/)
 echo   You will see your active Claude Code session glowing on the Live Radar!
 echo ===============================================================================
 echo.

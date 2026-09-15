@@ -1448,15 +1448,17 @@ when {
               `;
               const killBtn = chip.querySelector(".btn-kill-agent");
               if (killBtn) {
-                killBtn.addEventListener("click", async (e) => {
+                killBtn.addEventListener("click", (e) => {
                   e.stopPropagation();
-                  await apiFetch("/api/v1/control/agent/kill", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ target: s.session_id, action: "revoke" })
+                  confirmSurgicalRevoke(s.session_id, `${capitalizedName} (PID: ${s.client_pid || '?'})`, async () => {
+                    await apiFetch("/api/v1/control/agent/kill", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ target: s.session_id, action: "revoke" })
+                    });
+                    showToast("🚨 AGENT ISOLATED", `Agent ${capitalizedName} revoked & isolated by administrator. Remaining agents uninterrupted.`, "deny");
+                    checkLiveConnection();
                   });
-                  showToast("🚨 AGENT ISOLATED", `Agent ${capitalizedName} revoked & isolated by administrator. Remaining agents uninterrupted.`, "deny");
-                  checkLiveConnection();
                 });
               }
             } else {
@@ -1473,15 +1475,17 @@ when {
               `;
               const killBtn = chip.querySelector(".btn-kill-agent");
               if (killBtn) {
-                killBtn.addEventListener("click", async (e) => {
+                killBtn.addEventListener("click", (e) => {
                   e.stopPropagation();
-                  await apiFetch("/api/v1/control/agent/kill", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ target: s.session_id, action: "revoke" })
+                  confirmSurgicalRevoke(s.session_id, `${capitalizedName} (PID: ${s.client_pid || '?'})`, async () => {
+                    await apiFetch("/api/v1/control/agent/kill", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ target: s.session_id, action: "revoke" })
+                    });
+                    showToast("🚨 AGENT ISOLATED", `Agent ${capitalizedName} revoked & isolated by administrator. Remaining agents uninterrupted.`, "deny");
+                    checkLiveConnection();
                   });
-                  showToast("🚨 AGENT ISOLATED", `Agent ${capitalizedName} revoked & isolated by administrator. Remaining agents uninterrupted.`, "deny");
-                  checkLiveConnection();
                 });
               }
             }
@@ -1604,15 +1608,17 @@ when {
           </div>
         `;
 
-        card.querySelector(".card-kill-btn")?.addEventListener("click", async (e) => {
+        card.querySelector(".card-kill-btn")?.addEventListener("click", (e) => {
           e.stopPropagation();
-          await apiFetch("/api/v1/control/agent/kill", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ target: s.session_id, action: "revoke" })
+          confirmSurgicalRevoke(s.session_id, `${s.session_id} (${s.app_id || 'claude-code'})`, async () => {
+            await apiFetch("/api/v1/control/agent/kill", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ target: s.session_id, action: "revoke" })
+            });
+            showToast("🚨 SURGICAL KILL ENGAGED", `Session ${s.session_id} revoked by CISO. Authority burned & process terminated.`, "deny");
+            checkLiveConnection();
           });
-          showToast("🚨 SURGICAL KILL ENGAGED", `Session ${s.session_id} revoked by CISO. Authority burned.`, "deny");
-          checkLiveConnection();
         });
 
         card.querySelector(".card-restore-btn")?.addEventListener("click", async (e) => {
@@ -2757,7 +2763,35 @@ when {
 
     function closeDrawer() {
       detailDrawer.classList.add("translate-x-full");
+    // --- SURGICAL REVOKE DOUBLE CONFIRMATION MODAL ---
+    let currentConfirmCallback = null;
+    function confirmSurgicalRevoke(targetId, targetLabel, onConfirmed) {
+      const modal = document.getElementById("revoke-confirm-modal");
+      if (!modal) {
+        if (confirm(`⚠️ EXTREME ACTION: Are you sure you want to revoke and surgically isolate ${targetLabel || targetId}? Authority will be burned, prompts blocked, and the rogue agent process terminated.`)) {
+          onConfirmed();
+        }
+        return;
+      }
+      document.getElementById("modal-target-id").textContent = targetId;
+      document.getElementById("modal-target-name").textContent = targetLabel || targetId;
+      currentConfirmCallback = onConfirmed;
+      modal.classList.remove("hidden");
     }
+
+    document.getElementById("modal-cancel-btn")?.addEventListener("click", () => {
+      document.getElementById("revoke-confirm-modal")?.classList.add("hidden");
+      currentConfirmCallback = null;
+    });
+
+    document.getElementById("modal-confirm-btn")?.addEventListener("click", () => {
+      document.getElementById("revoke-confirm-modal")?.classList.add("hidden");
+      if (typeof currentConfirmCallback === "function") {
+        const cb = currentConfirmCallback;
+        currentConfirmCallback = null;
+        cb();
+      }
+    });
 
     function escapeHtml(str) {
       if (!str) return "";
@@ -2767,6 +2801,38 @@ when {
     // Run on load
     window.addEventListener("DOMContentLoaded", init);
   </script>
+
+  <!-- Surgical Revoke Confirmation Dialog Modal -->
+  <div id="revoke-confirm-modal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 hidden flex items-center justify-center p-4 transition-all">
+    <div class="bg-slate-900 border border-rose-500/50 rounded-2xl max-w-md w-full p-6 shadow-2xl shadow-rose-950/50 text-slate-100 animate-in fade-in zoom-in-95 duration-200">
+      <div class="flex items-center space-x-3 mb-4">
+        <div class="w-10 h-10 rounded-xl bg-rose-500/20 border border-rose-500/40 flex items-center justify-center text-rose-400 text-xl font-bold">
+          ⚠️
+        </div>
+        <div>
+          <h3 class="text-base font-bold text-rose-400">Confirm Surgical Revocation</h3>
+          <p class="text-xs text-slate-400">Extreme Security Action & Process Kill</p>
+        </div>
+      </div>
+      <p class="text-sm text-slate-300 leading-relaxed mb-4">
+        Are you sure you want to revoke and surgically isolate <strong id="modal-target-name" class="text-white font-mono font-bold"></strong>?
+      </p>
+      <div class="bg-slate-950 border border-slate-800 rounded-xl p-3 mb-5 text-xs font-mono text-slate-400 space-y-1.5">
+        <div><span class="text-slate-500">Target ID:</span> <span id="modal-target-id" class="text-amber-300 font-semibold"></span></div>
+        <div><span class="text-slate-500">Authority:</span> <span class="text-rose-400 font-semibold">Permanently Burned</span></div>
+        <div><span class="text-slate-500">Input Gating:</span> <span class="text-rose-400 font-semibold">User Prompts Blocked (Exit Code 2)</span></div>
+        <div><span class="text-slate-500">Workload Action:</span> <span class="text-rose-400 font-semibold">Rogue Process Terminated</span></div>
+      </div>
+      <div class="flex items-center justify-end space-x-3">
+        <button id="modal-cancel-btn" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-semibold transition cursor-pointer">
+          Cancel
+        </button>
+        <button id="modal-confirm-btn" class="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-xs font-bold transition shadow-lg shadow-rose-900/50 cursor-pointer">
+          🚨 Confirm Revoke & Kill
+        </button>
+      </div>
+    </div>
+  </div>
 </body>
 </html>
 

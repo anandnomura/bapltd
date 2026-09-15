@@ -20,7 +20,7 @@ func TestStage1_APIKeyHelper_JWTToken(t *testing.T) {
 	// Create a mock corporate JWT ID token
 	token := createTestJWT(map[string]interface{}{
 		"sub":                "corp-emp-9876",
-		"email":              "alex.corp@nomura.example.com",
+		"email":              "alex.corp@b.example.com",
 		"preferred_username": "alex.corp",
 	})
 
@@ -34,8 +34,8 @@ func TestStage1_APIKeyHelper_JWTToken(t *testing.T) {
 	if userID != "alex.corp" {
 		t.Fatalf("expected userID 'alex.corp', got '%s'", userID)
 	}
-	if userEmail != "alex.corp@nomura.example.com" {
-		t.Fatalf("expected userEmail 'alex.corp@nomura.example.com', got '%s'", userEmail)
+	if userEmail != "alex.corp@b.example.com" {
+		t.Fatalf("expected userEmail 'alex.corp@b.example.com', got '%s'", userEmail)
 	}
 }
 

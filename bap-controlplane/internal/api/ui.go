@@ -1,42 +1,61 @@
 package api
 
 import (
-	"embed"
-	"io/fs"
+	"encoding/json"
 	"net/http"
+	"os"
 )
 
-// Build dashboard/ before compiling Go when frontend sources have changed.
-// Checked-in build output keeps normal Go builds independent of Node.
-//go:embed web/dashboard-build web/admin-client.js
-var dashboardAssets embed.FS
-
-func (s *Server) registerDashboardRoutes() {
+func (s *Server) registerControlPlaneRoutes() {
 	s.mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			http.NotFound(w, r)
 			return
 		}
-		http.Redirect(w, r, "/dashboard/", http.StatusTemporaryRedirect)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"service":      "bapcontrolplane",
+			"status":       "ok",
+			"inspector":    "/inspector",
+			"inspector_v2": "/inspector_v2",
+			"dashboard":    "not hosted by this service; start bapdashboard separately",
+		})
 	})
-	s.mux.HandleFunc("/dashboard", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/dashboard/", http.StatusTemporaryRedirect)
-	})
-	assets, _ := fs.Sub(dashboardAssets, "web/dashboard-build")
-	files := http.StripPrefix("/dashboard/", http.FileServer(http.FS(assets)))
-	s.mux.Handle("/dashboard/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
-		files.ServeHTTP(w, r)
-	}))
-	s.mux.HandleFunc("/assets/admin-client.js", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != "GET" && r.Method != "HEAD" {
-			w.WriteHeader(http.StatusMethodNotAllowed)
+
+	s.mux.HandleFunc("/inspector", s.handleInspectorHTML("inspector.html", "BAP Activity Inspector"))
+	s.mux.HandleFunc("/inspector.html", s.handleInspectorHTML("inspector.html", "BAP Activity Inspector"))
+	s.mux.HandleFunc("/inspector_v2", s.handleInspectorHTML("inspector_v2.html", "BAP Inspector V2 - Executive Cockpit"))
+	s.mux.HandleFunc("/inspector_v2.html", s.handleInspectorHTML("inspector_v2.html", "BAP Inspector V2 - Executive Cockpit"))
+}
+
+func (s *Server) handleInspectorHTML(filename string, title string) http.HandlerFunc {
+	candidates := []string{
+		filename,
+		"../" + filename,
+		"../../" + filename,
+		"bap-controlplane/" + filename,
+		"../bap-controlplane/" + filename,
+	}
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
 			return
 		}
-		data, _ := dashboardAssets.ReadFile("web/admin-client.js")
-		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
-		if r.Method != "HEAD" {
-			_, _ = w.Write(data)
+
+		for _, candidate := range candidates {
+			if data, err := os.ReadFile(candidate); err == nil {
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				w.WriteHeader(http.StatusOK)
+				if r.Method != http.MethodHead {
+					_, _ = w.Write(data)
+				}
+				return
+			}
 		}
-	})
+
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`<!DOCTYPE html><html><head><title>` + title + `</title></head><body style="font-family:sans-serif;background:#0f172a;color:#fff;padding:2rem;"><h2>` + title + `</h2><p>File <code>` + filename + `</code> was not found in working directories.</p></body></html>`))
+	}
 }

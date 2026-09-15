@@ -258,13 +258,15 @@ func (s *Store) TrustDomain() string {
 }
 
 // EnsureSessionAgent guarantees that any active agent session is tracked in the registry.
+// Callers must provide a stable, non-empty instance ID. Session-backed workloads use
+// their session ID when the client has no independently enrolled instance identity.
 func (s *Store) EnsureSessionAgent(appID, instanceID, spiffeID, userEmail, hostname string) *types.RegisteredAgent {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	now := time.Now()
 	if instanceID == "" {
-		instanceID = "default"
+		return nil
 	}
 	agentID := fmt.Sprintf("agent-%s-%s", strings.ToLower(appID), instanceID)
 	for _, enrolled := range s.agents {
@@ -310,6 +312,28 @@ func (s *Store) EnsureSessionAgent(appID, instanceID, spiffeID, userEmail, hostn
 	return agent
 }
 
+// HeartbeatInstance records liveness for the exact app/instance identity linked
+// to a session. Administrative revocation is never cleared by a heartbeat.
+func (s *Store) HeartbeatInstance(appID, instanceID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if appID == "" || instanceID == "" {
+		return fmt.Errorf("app_id and instance_id are required")
+	}
+	now := time.Now()
+	for _, a := range s.agents {
+		if strings.EqualFold(a.AppID, appID) && a.InstanceID == instanceID {
+			if a.Status == types.StatusRevoked {
+				return fmt.Errorf("agent %q is revoked", a.AgentID)
+			}
+			a.LastHeartbeatAt = &now
+			return nil
+		}
+	}
+	return fmt.Errorf("agent instance %q/%q not found", appID, instanceID)
+}
+
 // EndSessionAgent updates the registry status to deregistered when a session closes.
 func (s *Store) EndSessionAgent(appID, instanceID string) {
 	s.mu.Lock()
@@ -317,12 +341,14 @@ func (s *Store) EndSessionAgent(appID, instanceID string) {
 
 	now := time.Now()
 	for _, a := range s.agents {
-		if strings.EqualFold(a.AppID, appID) && (instanceID == "" || a.InstanceID == instanceID || instanceID == "default") {
-			if a.Status == types.StatusRevoked {
-				continue
+		if strings.EqualFold(a.AppID, appID) {
+			if instanceID != "" && a.InstanceID == instanceID {
+				a.Status = "deregistered"
+				a.LastHeartbeatAt = &now
+			} else if instanceID == "" || instanceID == "default" {
+				a.Status = "deregistered"
+				a.LastHeartbeatAt = &now
 			}
-			a.Status = "deregistered"
-			a.LastHeartbeatAt = &now
 		}
 	}
 }
