@@ -9,7 +9,7 @@ echo [*] Note: If Windows displays a Security Warning dialog, click 'Yes' to tru
 echo.
 if not exist "bap-root-ca.crt" (
     echo [*] Generating BAP Root CA first...
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\ensure_certs.ps1" -InstallToStore:$false
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\ensure_certs.ps1" 
 )
 
 certutil.exe -addstore -user Root "%~dp0bap-root-ca.crt"

