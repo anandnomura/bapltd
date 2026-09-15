@@ -17,6 +17,14 @@ Set-Location $rootDir
 Write-Host ">>> Ensuring BAP Root CA and TLS credentials (Domain: $Domain)..." -ForegroundColor Cyan
 & (Join-Path $rootDir "scripts\ensure_certs.ps1") -ForceRegen:$ForceRegenCerts -AdditionalSAN $Domain -InstallToStore:$false
 
+Write-Host ">>> Building standalone dashboard assets..." -ForegroundColor Cyan
+Push-Location (Join-Path $rootDir "dashboard")
+try {
+    npm run build
+    if ($LASTEXITCODE -ne 0) { throw "Dashboard asset build failed" }
+}
+finally { Pop-Location }
+
 $env:CGO_ENABLED = "0"
 $env:GOTOOLCHAIN = "auto"
 
@@ -30,6 +38,7 @@ $platforms = @(
 
 $components = @(
     @{ Dir = "bap-controlplane"; Pkg = "./cmd/server";            Name = "bapcontrolplane" },
+    @{ Dir = "bap-controlplane"; Pkg = "./cmd/dashboard";         Name = "bapdashboard" },
     @{ Dir = "bap-edge";         Pkg = ".";                       Name = "bapedge" },
     @{ Dir = "bap-gateway";      Pkg = ".";                       Name = "bapgateway" },
     @{ Dir = "cchook";           Pkg = "interceptor.go";          Name = "cchook-interceptor" },
@@ -91,8 +100,11 @@ foreach ($p in $platforms) {
     if (Test-Path (Join-Path $rootDir "schema.json")) {
         Copy-Item (Join-Path $rootDir "schema.json") (Join-Path $platformDir "schema.json") -Force
     }
-    if (Test-Path (Join-Path $rootDir "bap-controlplane\inspector.html")) {
-        Copy-Item (Join-Path $rootDir "bap-controlplane\inspector.html") (Join-Path $platformDir "inspector.html") -Force
+    if (Test-Path (Join-Path $rootDir "inspector.html")) {
+        Copy-Item (Join-Path $rootDir "inspector.html") (Join-Path $platformDir "inspector.html") -Force
+    }
+    if (Test-Path (Join-Path $rootDir "inspector_v2.html")) {
+        Copy-Item (Join-Path $rootDir "inspector_v2.html") (Join-Path $platformDir "inspector_v2.html") -Force
     }
 
     # =========================================================================
@@ -101,9 +113,10 @@ foreach ($p in $platforms) {
     $cpDir = Join-Path $platformDir "controlplane"
     if (!(Test-Path $cpDir)) { New-Item -ItemType Directory -Path $cpDir -Force | Out-Null }
     Copy-Item (Join-Path $platformDir "bapcontrolplane$($p.Ext)") (Join-Path $cpDir "bapcontrolplane$($p.Ext)") -Force
-    Copy-Item (Join-Path $rootDir "bap-controlplane\inspector.html") (Join-Path $cpDir "inspector.html") -Force
     if (Test-Path (Join-Path $rootDir "policy.cedar")) { Copy-Item (Join-Path $rootDir "policy.cedar") (Join-Path $cpDir "policy.cedar") -Force }
     if (Test-Path (Join-Path $rootDir "schema.json")) { Copy-Item (Join-Path $rootDir "schema.json") (Join-Path $cpDir "schema.json") -Force }
+    if (Test-Path (Join-Path $rootDir "inspector.html")) { Copy-Item (Join-Path $rootDir "inspector.html") (Join-Path $cpDir "inspector.html") -Force }
+    if (Test-Path (Join-Path $rootDir "inspector_v2.html")) { Copy-Item (Join-Path $rootDir "inspector_v2.html") (Join-Path $cpDir "inspector_v2.html") -Force }
     Copy-Item (Join-Path $rootDir "bap-config.json") (Join-Path $cpDir "bap-config.json") -Force
     if (Test-Path (Join-Path $rootDir "controlplane-cert.pem")) { Copy-Item (Join-Path $rootDir "controlplane-cert.pem") (Join-Path $cpDir "controlplane-cert.pem") -Force }
     if (Test-Path (Join-Path $rootDir "controlplane-key.pem")) { Copy-Item (Join-Path $rootDir "controlplane-key.pem") (Join-Path $cpDir "controlplane-key.pem") -Force }
@@ -117,7 +130,7 @@ echo ===========================================================================
 echo   BAP CONTROL PLANE - CENTRAL SECURITY GOVERNANCE SERVER
 echo ===============================================================================
 echo [*] Starting BAP Control Plane on port 8080...
-echo [*] Open browser dashboard: http://localhost:8080/inspector?mode=live
+echo [*] Dashboard is a separate service. Start bapdashboard from its package.
 echo.
 bapcontrolplane.exe %*
 "@
@@ -132,7 +145,7 @@ echo "==========================================================================
 echo "  BAP CONTROL PLANE - CENTRAL SECURITY GOVERNANCE SERVER"
 echo "==============================================================================="
 echo "[*] Starting BAP Control Plane on port 8080..."
-echo "[*] Open browser dashboard: http://localhost:8080/inspector?mode=live"
+echo "[*] Dashboard is a separate service. Start bapdashboard from its package."
 echo ""
 exec ./bapcontrolplane "`$@"
 "@
@@ -149,8 +162,8 @@ Quick Start:
   Windows: Double-click start_controlplane.bat (or run: bapcontrolplane.exe)
   Linux/Mac: Run ./start_controlplane.sh (or run: ./bapcontrolplane)
 
-Access Live Dashboard:
-  Open your browser to: http://localhost:8080/inspector?mode=live
+Dashboard:
+  The UI is deliberately not hosted here. Start the separate bapdashboard package.
 
 Persistence:
   Session history, active agent states, and audit records are automatically
@@ -160,7 +173,41 @@ Persistence:
     Set-Content -Path (Join-Path $cpDir "README.txt") -Value $cpReadme -Encoding ASCII
 
     # =========================================================================
-    # ROLE PACKAGE 2: claude-client / bapedge (Developer Machine Seat)
+    # ROLE PACKAGE 2: Standalone HTTPS Dashboard
+    # =========================================================================
+    $dashDir = Join-Path $platformDir "dashboard"
+    if (!(Test-Path $dashDir)) { New-Item -ItemType Directory -Path $dashDir -Force | Out-Null }
+    Copy-Item (Join-Path $platformDir "bapdashboard$($p.Ext)") (Join-Path $dashDir "bapdashboard$($p.Ext)") -Force
+    if (Test-Path (Join-Path $rootDir "inspector.html")) { Copy-Item (Join-Path $rootDir "inspector.html") (Join-Path $dashDir "inspector.html") -Force }
+    if (Test-Path (Join-Path $rootDir "inspector_v2.html")) { Copy-Item (Join-Path $rootDir "inspector_v2.html") (Join-Path $dashDir "inspector_v2.html") -Force }
+    if (Test-Path (Join-Path $rootDir "controlplane-cert.pem")) { Copy-Item (Join-Path $rootDir "controlplane-cert.pem") (Join-Path $dashDir "controlplane-cert.pem") -Force }
+    if (Test-Path (Join-Path $rootDir "controlplane-key.pem")) { Copy-Item (Join-Path $rootDir "controlplane-key.pem") (Join-Path $dashDir "controlplane-key.pem") -Force }
+    if (Test-Path (Join-Path $rootDir "bap-root-ca.crt")) { Copy-Item (Join-Path $rootDir "bap-root-ca.crt") (Join-Path $dashDir "bap-root-ca.crt") -Force }
+    if ($p.OS -eq "windows") {
+        Set-Content -Path (Join-Path $dashDir "start_dashboard.bat") -Encoding ASCII -Value '@echo off
+cd /d "%~dp0"
+bapdashboard.exe %*'
+    } else {
+        Set-Content -Path (Join-Path $dashDir "start_dashboard.sh") -Encoding ASCII -Value '#!/usr/bin/env sh
+cd "$(dirname "$0")"
+chmod +x ./bapdashboard
+exec ./bapdashboard "$@"'
+    }
+    Set-Content -Path (Join-Path $dashDir "README.txt") -Encoding ASCII -Value @"
+BAP STANDALONE DASHBOARD
+
+Start this service only when the UI is required. By default it listens at:
+  https://localhost:8444/dashboard/
+
+and verifies the control plane at:
+  https://localhost:8443
+
+Use -control-plane and -ca-cert for another endpoint. For a control plane that
+requires mutual TLS, also supply -client-cert and -client-key.
+"@
+
+    # =========================================================================
+    # ROLE PACKAGE 3: claude-client / bapedge (Developer Machine Seat)
     # =========================================================================
     $clientDir = Join-Path $platformDir "claude-client"
     if (!(Test-Path $clientDir)) { New-Item -ItemType Directory -Path $clientDir -Force | Out-Null }
@@ -281,7 +328,7 @@ Features:
     Set-Content -Path (Join-Path $clientDir "README.txt") -Value $clientReadme -Encoding ASCII
 
     # =========================================================================
-    # ROLE PACKAGE 3: Gateway PEP
+    # ROLE PACKAGE 4: Gateway PEP
     # =========================================================================
     $gwDir = Join-Path $platformDir "gateway"
     if (!(Test-Path $gwDir)) { New-Item -ItemType Directory -Path $gwDir -Force | Out-Null }
@@ -295,17 +342,19 @@ Features:
             Compress-Archive -Path "$platformDir\*" -DestinationPath (Join-Path $distPath "bap-$($p.Name).zip") -Force
             # 2. Standalone role packages
             Compress-Archive -Path "$cpDir\*" -DestinationPath (Join-Path $distPath "bap-controlplane-$($p.Name).zip") -Force
+            Compress-Archive -Path "$dashDir\*" -DestinationPath (Join-Path $distPath "bap-dashboard-$($p.Name).zip") -Force
             Compress-Archive -Path "$clientDir\*" -DestinationPath (Join-Path $distPath "bap-claude-client-$($p.Name).zip") -Force
             Compress-Archive -Path "$gwDir\*" -DestinationPath (Join-Path $distPath "bap-gateway-$($p.Name).zip") -Force
-            Write-Host "  [+] Packaged: bap-$($p.Name).zip, bap-controlplane-$($p.Name).zip, bap-claude-client-$($p.Name).zip, bap-gateway-$($p.Name).zip" -ForegroundColor Cyan
+            Write-Host "  [+] Packaged: bap-$($p.Name).zip, bap-controlplane-$($p.Name).zip, bap-dashboard-$($p.Name).zip, bap-claude-client-$($p.Name).zip, bap-gateway-$($p.Name).zip" -ForegroundColor Cyan
         } else {
             # 1. Complete platform package (all binaries, configs, and tools)
             tar -czf (Join-Path $distPath "bap-$($p.Name).tar.gz") -C $platformDir .
             # 2. Standalone role packages
             tar -czf (Join-Path $distPath "bap-controlplane-$($p.Name).tar.gz") -C $cpDir .
+            tar -czf (Join-Path $distPath "bap-dashboard-$($p.Name).tar.gz") -C $dashDir .
             tar -czf (Join-Path $distPath "bap-claude-client-$($p.Name).tar.gz") -C $clientDir .
             tar -czf (Join-Path $distPath "bap-gateway-$($p.Name).tar.gz") -C $gwDir .
-            Write-Host "  [+] Packaged: bap-$($p.Name).tar.gz, bap-controlplane-$($p.Name).tar.gz, bap-claude-client-$($p.Name).tar.gz, bap-gateway-$($p.Name).tar.gz" -ForegroundColor Cyan
+            Write-Host "  [+] Packaged: bap-$($p.Name).tar.gz, bap-controlplane-$($p.Name).tar.gz, bap-dashboard-$($p.Name).tar.gz, bap-claude-client-$($p.Name).tar.gz, bap-gateway-$($p.Name).tar.gz" -ForegroundColor Cyan
         }
     }
 }

@@ -24,6 +24,12 @@ if (Test-Path "bapcontrolplane.exe") {
     Move-Item -Force "bapcontrolplane.exe" "bapcontrolplane.old" -ErrorAction SilentlyContinue
 }
 Copy-Item -Force "bap-controlplane\bapcontrolplane.exe" "bapcontrolplane.exe"
-Copy-Item -Force "bap-controlplane\inspector.html" "inspector.html"
+if (Test-Path "bapdashboard.old") {
+    Remove-Item -Force "bapdashboard.old" -ErrorAction SilentlyContinue
+}
+if (Test-Path "bapdashboard.exe") {
+    Move-Item -Force "bapdashboard.exe" "bapdashboard.old" -ErrorAction SilentlyContinue
+}
+Copy-Item -Force "bap-controlplane\bapdashboard.exe" "bapdashboard.exe"
 
 Write-Host "Binaries successfully updated."

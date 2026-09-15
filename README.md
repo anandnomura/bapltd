@@ -1,17 +1,19 @@
 # BAP: Bounded Authority Plane for AI Agents
 
-**New here?** [Choose a deployment](DEPLOYMENT_START_HERE.md) ?
-[run end-to-end acceptance](MANUAL_E2E_TESTING.md) ? open **`/dashboard/`**.
-The new [React dashboard](dashboard/README.md) shows live agents, recent
- departures, captured prompts and tool actions, with admin-gated controls.
+**New here?** [Choose a deployment](DEPLOYMENT_START_HERE.md) ·
+[run end-to-end acceptance](MANUAL_E2E_TESTING.md) · start the standalone
+**`bapdashboard`** service when the UI is required.
+The [React dashboard](dashboard/README.md) shows persistent agent presence,
+captured prompts and tool actions, with admin-gated controls.
 See [security changes and remaining architecture work](DEPLOYMENT_REVIEW.md).
 
 
 **BAP** provides cryptographically bounded, zero-trust execution governance for AI agents such as **Google Antigravity**, **Claude Code**, **GitHub Copilot**, **Cursor/Windsurf**, and automated Python SDK workflow workers across Windows, Linux, WSL, and macOS.
 
-The architecture formally converges into two core components:
+The runtime architecture has three independently started components:
 1. **`bapedge`**: The **Local Trusted Daemon (LTD)** process running at the edge (developer laptops, CI/CD runners, and worker hosts). It acts as the local Zero-Trust Execution Broker and Policy Decision/Enforcement Point (PDP/PEP), evaluating Cedar policies, isolating processes, sanitizing outputs, injecting scoped OBO tokens, generating tamper-evident audit logs, and running as a native **Model Context Protocol (MCP)** server (`bapmcp.exe`). *(Legacy alias: `ltd-agent`)*.
 2. **`bapcontrolplane`**: The central server-side control plane managing the Agent Registry, self-service One-Time Code (OTC) registration, binary image attestation, short-lived OBO JWT grants, dynamic Cedar policy distribution, and centralized tamper-evident audit ingestion with a real-time **Live Workload Radar**. *(Legacy alias: `ltd-service`)*.
+3. **`bapdashboard`**: The optional standalone HTTPS UI. It proxies API calls to `bapcontrolplane` using verified TLS and can present a client certificate when the control plane requires mutual TLS. The control plane does not host or automatically start this UI.
 
 > 📖 **Enterprise Integration Guide**: See [**`INTEGRATIONS.md`**](INTEGRATIONS.md) for complete, copy-pasteable setup guides for Google Antigravity, Claude Code, Claude Desktop, VS Code Copilot, Cursor, and Python SDK.
 
@@ -314,8 +316,8 @@ docker run -d \
 curl -s http://localhost:8080/api/v1/health
 # Expected Output: {"service":"ltd-service-control-plane","status":"ok"}
 
-# Open the Live Workload Radar & Inspector UI in your browser:
-# http://<server-ip>:8080/inspector?mode=live
+# Start bapdashboard independently, then open its HTTPS endpoint:
+# https://<dashboard-host>:8444/dashboard/
 ```
 
 ---

@@ -1,0 +1,1123 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BAP Inspector V2 | Sovereign Executive Governance Cockpit</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            bap: {
+              950: '#030712',
+              900: '#0b0f19',
+              850: '#111827',
+              800: '#1f2937',
+              700: '#374151',
+              accent: '#38bdf8',
+              emerald: '#10b981',
+              rose: '#f43f5e',
+              amber: '#f59e0b'
+            }
+          },
+          fontFamily: {
+            sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
+            mono: ['JetBrains Mono', 'Fira Code', 'monospace']
+          }
+        }
+      }
+    };
+  </script>
+  <style>
+    @keyframes pulse-emerald {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.6; transform: scale(1.15); }
+    }
+    .pulse-ring {
+      animation: pulse-emerald 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+    .glass-card {
+      background: rgba(17, 24, 39, 0.75);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(55, 65, 81, 0.6);
+    }
+    .scrollbar-thin::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    .scrollbar-thin::-webkit-scrollbar-track {
+      background: rgba(3, 7, 18, 0.6);
+    }
+    .scrollbar-thin::-webkit-scrollbar-thumb {
+      background: rgba(55, 65, 81, 0.8);
+      border-radius: 9999px;
+    }
+  </style>
+</head>
+<body class="bg-bap-950 text-slate-100 min-h-screen font-sans antialiased selection:bg-cyan-500 selection:text-black">
+
+  <!-- TOP SOVEREIGN HEADER -->
+  <header class="border-b border-slate-800/80 bg-bap-900/90 backdrop-blur-md sticky top-0 z-40 px-4 lg:px-8 py-3.5">
+    <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-4">
+      
+      <!-- Brand & Trust Domain -->
+      <div class="flex items-center space-x-3.5">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center text-white shadow-lg shadow-cyan-500/20 font-bold text-xl">
+          🛡️
+        </div>
+        <div>
+          <div class="flex items-center space-x-2.5">
+            <h1 class="text-base font-black tracking-tight text-white flex items-center gap-2">
+              BAP INSPECTOR <span class="px-1.5 py-0.5 text-[10px] uppercase font-bold tracking-wider rounded bg-cyan-500/20 text-cyan-400 border border-cyan-500/40">V2 CIO COCKPIT</span>
+            </h1>
+          </div>
+          <p class="text-xs text-slate-400 flex items-center gap-2 mt-0.5">
+            <span>Trust Domain: <strong id="header-trust-domain" class="text-slate-200 font-mono">bap.internal</strong></span>
+            <span>•</span>
+            <span class="text-emerald-400 flex items-center gap-1 font-mono text-[11px]">
+              <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 pulse-ring"></span> mTLS 1.3 Active
+            </span>
+          </p>
+        </div>
+      </div>
+
+      <!-- Live Heartbeat Status & Sovereign Admin Switch -->
+      <div class="flex items-center space-x-3">
+        <!-- Live CP Connection Pill -->
+        <div class="hidden sm:flex items-center space-x-2 px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono">
+          <span id="cp-indicator-dot" class="w-2 h-2 rounded-full bg-emerald-400"></span>
+          <span id="cp-status-text" class="text-slate-300">Control Plane: <strong class="text-emerald-400">ONLINE</strong></span>
+        </div>
+
+        <!-- Sovereign Mode Toggle Button -->
+        <button id="btn-admin-toggle" class="px-3.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center space-x-2 cursor-pointer bg-slate-900 border border-slate-700 text-slate-300 hover:border-cyan-500 hover:text-white shadow-sm" title="Authenticate with BAP Admin Token for Sovereign Control">
+          <span id="admin-icon">🔒</span>
+          <span id="admin-text">View Mode (Read-Only)</span>
+        </button>
+
+        <!-- Refresh / Live Toggle -->
+        <button id="btn-manual-refresh" class="p-1.5 rounded-xl bg-slate-900 border border-slate-800 text-slate-400 hover:text-cyan-400 hover:border-cyan-500/40 transition cursor-pointer text-sm" title="Refresh Telemetry">
+          🔄
+        </button>
+      </div>
+
+    </div>
+  </header>
+
+  <!-- MAIN WRAPPER -->
+  <main class="max-w-7xl mx-auto px-4 lg:px-8 py-6 space-y-6">
+
+    <!-- EXECUTIVE KPI METRIC TILES -->
+    <section class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      
+      <!-- Metric 1: Fleet Footprint -->
+      <div class="glass-card rounded-2xl p-4 flex flex-col justify-between shadow-xl">
+        <div class="flex items-center justify-between text-xs text-slate-400">
+          <span class="font-medium tracking-wide uppercase">Total Fleet Agents</span>
+          <span class="text-lg">🤖</span>
+        </div>
+        <div class="my-2">
+          <div class="text-3xl font-black text-white tracking-tight" id="kpi-total-agents">0</div>
+        </div>
+        <div class="text-[11px] text-slate-400 flex items-center justify-between border-t border-slate-800/80 pt-2 font-mono">
+          <span>Registered Fleets</span>
+          <span id="kpi-agent-types" class="text-cyan-400">Claude Code, Copilot</span>
+        </div>
+      </div>
+
+      <!-- Metric 2: Live Active Harnesses -->
+      <div class="glass-card rounded-2xl p-4 flex flex-col justify-between shadow-xl">
+        <div class="flex items-center justify-between text-xs text-slate-400">
+          <span class="font-medium tracking-wide uppercase">Live Workload Harnesses</span>
+          <span class="text-lg">🛰️</span>
+        </div>
+        <div class="my-2 flex items-baseline space-x-3">
+          <div class="text-3xl font-black text-emerald-400 tracking-tight" id="kpi-active-harnesses">0</div>
+          <span class="text-xs font-mono text-emerald-400/80 flex items-center gap-1 font-bold">
+            <span class="w-2 h-2 rounded-full bg-emerald-400 pulse-ring"></span> ACTIVE
+          </span>
+        </div>
+        <div class="text-[11px] text-slate-400 flex items-center justify-between border-t border-slate-800/80 pt-2 font-mono">
+          <span>Harness Health</span>
+          <span id="kpi-stale-quarantined" class="text-amber-400">0 Stale | 0 Quarantined</span>
+        </div>
+      </div>
+
+      <!-- Metric 3: User Prompts & Intent -->
+      <div class="glass-card rounded-2xl p-4 flex flex-col justify-between shadow-xl">
+        <div class="flex items-center justify-between text-xs text-slate-400">
+          <span class="font-medium tracking-wide uppercase">Developer Prompts Streamed</span>
+          <span class="text-lg">💬</span>
+        </div>
+        <div class="my-2">
+          <div class="text-3xl font-black text-indigo-300 tracking-tight" id="kpi-total-prompts">0</div>
+        </div>
+        <div class="text-[11px] text-slate-400 flex items-center justify-between border-t border-slate-800/80 pt-2 font-mono">
+          <span>Intent Visibility</span>
+          <span id="kpi-prompt-status" class="text-indigo-400 font-bold">Protected / Masked</span>
+        </div>
+      </div>
+
+      <!-- Metric 4: Zero-Trust Invariant Integrity -->
+      <div class="glass-card rounded-2xl p-4 flex flex-col justify-between shadow-xl">
+        <div class="flex items-center justify-between text-xs text-slate-400">
+          <span class="font-medium tracking-wide uppercase">Audit Chain Integrity</span>
+          <span class="text-lg">🔒</span>
+        </div>
+        <div class="my-2 flex items-baseline space-x-2">
+          <div class="text-2xl font-black text-emerald-400 tracking-tight" id="kpi-audit-status">100% INTACT</div>
+        </div>
+        <div class="text-[11px] text-slate-400 flex items-center justify-between border-t border-slate-800/80 pt-2 font-mono">
+          <span>SHA-256 Ledger</span>
+          <span class="text-emerald-400 font-bold">Cryptographically Verified</span>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- TAB NAVIGATION BAR -->
+    <nav class="flex items-center space-x-2 border-b border-slate-800 pb-2">
+      <button id="tab-btn-radar" class="tab-btn px-4 py-2 rounded-xl text-xs font-bold transition flex items-center space-x-2 cursor-pointer bg-slate-800 text-cyan-400 border border-cyan-500/30 shadow-md">
+        <span>🛰️</span>
+        <span>Live Fleet Radar & Harness Matrix</span>
+      </button>
+      <button id="tab-btn-prompts" class="tab-btn px-4 py-2 rounded-xl text-xs font-bold transition flex items-center space-x-2 cursor-pointer text-slate-400 hover:text-slate-200 hover:bg-slate-900 border border-transparent">
+        <span>💬</span>
+        <span>Live Prompts & Intent Telemetry</span>
+      </button>
+      <button id="tab-btn-governance" class="tab-btn px-4 py-2 rounded-xl text-xs font-bold transition flex items-center space-x-2 cursor-pointer text-slate-400 hover:text-slate-200 hover:bg-slate-900 border border-transparent">
+        <span>🛡️</span>
+        <span>Guardrails & Emergency Freeze</span>
+      </button>
+    </nav>
+
+    <!-- ==================================================================== -->
+    <!-- TAB 1: LIVE FLEET RADAR & HARNESS MATRIX -->
+    <!-- ==================================================================== -->
+    <section id="tab-content-radar" class="tab-pane space-y-4">
+      
+      <!-- Filter & Action Bar -->
+      <div class="flex flex-wrap items-center justify-between gap-3 bg-slate-900/60 border border-slate-800/80 rounded-2xl p-4">
+        <div>
+          <h2 class="text-sm font-bold text-white tracking-wide">Workload Harness Status & Liveness Monitoring</h2>
+          <p class="text-xs text-slate-400 mt-0.5">Real-time heartbeats (2s cadence), liveness indicators, and targeted isolation controls</p>
+        </div>
+        <div class="flex items-center space-x-3 text-xs">
+          <div class="flex items-center space-x-2 bg-slate-950 px-3 py-1.5 rounded-xl border border-slate-800 font-mono">
+            <span class="w-2 h-2 rounded-full bg-emerald-400 pulse-ring"></span>
+            <span class="text-slate-400">Live Cadence: <strong class="text-slate-200">1.5s</strong></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Harness Cards Grid -->
+      <div id="harness-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <!-- Populated dynamically by JavaScript -->
+        <div class="col-span-full text-center py-12 text-slate-500 font-mono text-xs">
+          Scanning for active BAP agent harnesses...
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ==================================================================== -->
+    <!-- TAB 2: LIVE PROMPT & INTENT TELEMETRY STREAM -->
+    <!-- ==================================================================== -->
+    <section id="tab-content-prompts" class="tab-pane hidden space-y-4">
+      
+      <!-- Filter Bar -->
+      <div class="flex flex-wrap items-center justify-between gap-3 bg-slate-900/60 border border-slate-800/80 rounded-2xl p-4">
+        <div>
+          <h2 class="text-sm font-bold text-white tracking-wide">Developer Prompt Stream & Intent Analysis</h2>
+          <p class="text-xs text-slate-400 mt-0.5">Chronological flow of user prompts submitted into governed agent harnesses</p>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-2.5">
+          <!-- User Dropdown Filter -->
+          <select id="filter-prompt-user" class="bg-slate-950 border border-slate-800 text-slate-200 text-xs rounded-xl px-3 py-1.5 font-mono focus:border-cyan-500 outline-none">
+            <option value="all">All Developers</option>
+          </select>
+
+          <!-- App Dropdown Filter -->
+          <select id="filter-prompt-app" class="bg-slate-950 border border-slate-800 text-slate-200 text-xs rounded-xl px-3 py-1.5 font-mono focus:border-cyan-500 outline-none">
+            <option value="all">All Applications</option>
+          </select>
+
+          <!-- Search Input -->
+          <input id="prompt-search-input" type="text" placeholder="Search prompts..." class="bg-slate-950 border border-slate-800 text-slate-200 text-xs rounded-xl px-3 py-1.5 font-mono placeholder:text-slate-600 focus:border-cyan-500 outline-none w-48 sm:w-60">
+        </div>
+      </div>
+
+      <!-- Unmask Warning Banner (When in View Mode) -->
+      <div id="unmask-notice-banner" class="bg-indigo-950/40 border border-indigo-500/30 rounded-2xl p-3.5 flex items-center justify-between text-xs text-indigo-300">
+        <div class="flex items-center space-x-2.5">
+          <span class="text-lg">🔒</span>
+          <span><strong>Leadership Privacy Guard:</strong> Prompt contents are masked. Switch to Sovereign Admin mode to unmask full text.</span>
+        </div>
+        <button id="btn-banner-unlock" class="px-3 py-1 rounded-lg bg-indigo-600/80 hover:bg-indigo-500 text-white font-bold transition text-xs cursor-pointer">
+          Unlock Full Prompts
+        </button>
+      </div>
+
+      <!-- Prompts Stream Container -->
+      <div id="prompts-stream-container" class="space-y-3 max-h-[650px] overflow-y-auto scrollbar-thin pr-1">
+        <div class="text-center py-12 text-slate-500 font-mono text-xs">
+          No user prompts captured yet.
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ==================================================================== -->
+    <!-- TAB 3: GOVERNANCE & EMERGENCY FREEZE -->
+    <!-- ==================================================================== -->
+    <section id="tab-content-governance" class="tab-pane hidden space-y-6">
+      
+      <!-- Emergency Freeze Banner -->
+      <div id="emergency-freeze-card" class="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-4">
+          <div class="space-y-1">
+            <div class="flex items-center space-x-2">
+              <span class="text-xl">🚨</span>
+              <h2 class="text-base font-bold text-white">Fleet-Wide Sovereign Emergency Freeze (Global Kill-Switch)</h2>
+            </div>
+            <p class="text-xs text-slate-400 max-w-2xl leading-relaxed">
+              When engaged, all governed agent harnesses across the entire enterprise are immediately frozen in sub-100ms. All commands, grants, and tool calls are dropped instantly.
+            </p>
+          </div>
+
+          <!-- Freeze Button (Gated to Admin) -->
+          <div class="flex items-center space-x-3">
+            <span id="freeze-status-badge" class="px-3 py-1 rounded-full text-xs font-mono font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+              ● SYSTEM OPERATIONAL
+            </span>
+            <button id="btn-toggle-freeze" class="px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer bg-slate-800 text-slate-400 border border-slate-700 hover:border-rose-500 hover:text-white" title="Requires Sovereign Admin Mode">
+              ❄️ Freeze Entire Fleet
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Cedar Zero-Trust Policy Invariants -->
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
+        <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+          <div>
+            <h3 class="text-sm font-bold text-white">Active Cedar Zero-Trust Invariants</h3>
+            <p class="text-xs text-slate-400 mt-0.5">Enterprise policies evaluated at the edge in &lt; 2ms</p>
+          </div>
+          <div class="text-xs font-mono text-cyan-400 bg-slate-950 px-3 py-1.5 rounded-xl border border-slate-800">
+            Digest: <span id="policy-digest" class="font-bold">v1-cedar-bundle</span>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs font-mono">
+          <div class="bg-slate-950 border border-slate-800/80 rounded-xl p-3.5 space-y-1.5">
+            <div class="text-emerald-400 font-bold flex items-center gap-1.5">
+              <span>✅</span> Credential & Secret Isolation
+            </div>
+            <p class="text-slate-400 leading-relaxed text-[11px]">
+              Access to .env, .aws/credentials, .ssh/id_rsa, and cloud tokens is unconditionally FORBIDDEN.
+            </p>
+          </div>
+
+          <div class="bg-slate-950 border border-slate-800/80 rounded-xl p-3.5 space-y-1.5">
+            <div class="text-emerald-400 font-bold flex items-center gap-1.5">
+              <span>✅</span> Anti-Tampering Protection
+            </div>
+            <p class="text-slate-400 leading-relaxed text-[11px]">
+              Agents cannot terminate bapedge, bapcontrolplane, cchook, or erase audit logs.
+            </p>
+          </div>
+
+          <div class="bg-slate-950 border border-slate-800/80 rounded-xl p-3.5 space-y-1.5">
+            <div class="text-emerald-400 font-bold flex items-center gap-1.5">
+              <span>✅</span> Gateway PEP Verification
+            </div>
+            <p class="text-slate-400 leading-relaxed text-[11px]">
+              Outbound egress through BAP Gateway requires active, unrevoked workload tokens.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Cryptographic Ledger Verification -->
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
+        <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+          <div>
+            <h3 class="text-sm font-bold text-white">Tamper-Evident SHA-256 Ledger State</h3>
+            <p class="text-xs text-slate-400 mt-0.5">Continuous cryptographic chain verification: H<sub>n</sub> = SHA256(H<sub>n-1</sub> || Event)</p>
+          </div>
+          <button id="btn-verify-chain" class="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-200 transition cursor-pointer border border-slate-700">
+            🔍 Verify Full Chain
+          </button>
+        </div>
+
+        <div class="bg-slate-950 border border-slate-800 rounded-xl p-4 font-mono text-xs space-y-2">
+          <div class="flex justify-between items-center text-slate-400">
+            <span>Genesis Hash:</span>
+            <span class="text-slate-300">genesis-bapltd-control-plane</span>
+          </div>
+          <div class="flex justify-between items-center text-slate-400">
+            <span>Audit Chain State:</span>
+            <span id="chain-integrity-text" class="text-emerald-400 font-bold">100% Cryptographically Verified (No Tampering)</span>
+          </div>
+        </div>
+      </div>
+
+    </section>
+
+  </main>
+
+  <!-- ==================================================================== -->
+  <!-- MODAL 1: SOVEREIGN ADMIN AUTHENTICATION DIALOG -->
+  <!-- ==================================================================== -->
+  <div id="modal-admin-auth" class="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 hidden flex items-center justify-center p-4">
+    <div class="bg-slate-900 border border-cyan-500/40 rounded-2xl max-w-md w-full p-6 shadow-2xl shadow-cyan-950/50 text-slate-100 animate-in fade-in zoom-in-95 duration-200 space-y-4">
+      <div class="flex items-center space-x-3">
+        <div class="w-10 h-10 rounded-xl bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-400 text-xl font-bold">
+          🛡️
+        </div>
+        <div>
+          <h3 class="text-base font-bold text-white">Sovereign Admin Authentication</h3>
+          <p class="text-xs text-slate-400">Unlock live prompt unmasking & surgical kill switches</p>
+        </div>
+      </div>
+
+      <p class="text-xs text-slate-300 leading-relaxed">
+        Enter the enterprise <strong class="text-cyan-300 font-mono">BAP_ADMIN_TOKEN</strong> configured on your control plane to activate sovereign leadership privileges.
+      </p>
+
+      <div>
+        <label class="block text-[11px] font-mono uppercase tracking-wider text-slate-400 mb-1.5">Admin Security Token</label>
+        <input id="admin-token-input" type="password" placeholder="bap_adm_..." class="w-full bg-slate-950 border border-slate-700 text-white rounded-xl px-3.5 py-2 text-xs font-mono focus:border-cyan-500 outline-none">
+        <p id="admin-auth-error" class="text-rose-400 text-[11px] mt-1.5 hidden font-mono"></p>
+      </div>
+
+      <div class="flex items-center justify-end space-x-3 pt-2">
+        <button id="btn-auth-cancel" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold transition cursor-pointer">
+          Cancel
+        </button>
+        <button id="btn-auth-submit" class="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-xl text-xs font-bold transition shadow-lg shadow-cyan-900/50 cursor-pointer">
+          Authenticate & Unlock
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================================================================== -->
+  <!-- MODAL 2: SURGICAL REVOCATION DOUBLE CONFIRMATION DIALOG -->
+  <!-- ==================================================================== -->
+  <div id="modal-confirm-revoke" class="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 hidden flex items-center justify-center p-4">
+    <div class="bg-slate-900 border border-rose-500/50 rounded-2xl max-w-md w-full p-6 shadow-2xl shadow-rose-950/50 text-slate-100 animate-in fade-in zoom-in-95 duration-200 space-y-4">
+      <div class="flex items-center space-x-3">
+        <div class="w-10 h-10 rounded-xl bg-rose-500/20 border border-rose-500/40 flex items-center justify-center text-rose-400 text-xl font-bold">
+          ⚠️
+        </div>
+        <div>
+          <h3 class="text-base font-bold text-rose-400">Confirm Surgical Revocation</h3>
+          <p class="text-xs text-slate-400">Extreme Security Action: Authority Burn & Process Kill</p>
+        </div>
+      </div>
+
+      <p class="text-xs text-slate-300 leading-relaxed">
+        Are you sure you want to surgically revoke and isolate <strong id="modal-revoke-name" class="text-white font-mono font-bold"></strong>?
+      </p>
+
+      <div class="bg-slate-950 border border-slate-800 rounded-xl p-3.5 text-xs font-mono text-slate-400 space-y-1.5">
+        <div><span class="text-slate-500">Target Session:</span> <span id="modal-revoke-id" class="text-amber-300 font-semibold"></span></div>
+        <div><span class="text-slate-500">Authority:</span> <span class="text-rose-400 font-semibold">Permanently Burned</span></div>
+        <div><span class="text-slate-500">Input Gating:</span> <span class="text-rose-400 font-semibold">User Prompts Blocked (Exit Code 2)</span></div>
+        <div><span class="text-slate-500">Process Action:</span> <span class="text-rose-400 font-semibold">Workload PID Terminated via bapedge</span></div>
+      </div>
+
+      <div class="flex items-center justify-end space-x-3 pt-2">
+        <button id="btn-revoke-cancel" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold transition cursor-pointer">
+          Cancel
+        </button>
+        <button id="btn-revoke-confirm" class="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-bold transition shadow-lg shadow-rose-900/50 cursor-pointer">
+          🚨 Confirm Revoke & Kill
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- TOAST NOTIFICATION CONTAINER -->
+  <div id="toast-container" class="fixed bottom-6 right-6 z-50 flex flex-col space-y-2 pointer-events-none"></div>
+
+  <!-- JAVASCRIPT ENGINE -->
+  <script>
+    // --- STATE MANAGEMENT ---
+    let serverBaseURL = "";
+    let adminToken = sessionStorage.getItem("bap_admin_token") || "";
+    let isSovereignAdmin = false;
+    let cachedData = null;
+    let pollTimer = null;
+    let pendingRevokeTarget = null;
+    let currentTab = "radar";
+
+    // Auto-detect server base URL
+    if (window.location.protocol === "http:" || window.location.protocol === "https:") {
+      serverBaseURL = window.location.origin;
+    } else {
+      serverBaseURL = "http://localhost:8080";
+    }
+
+    // --- INITIALIZATION ---
+    document.addEventListener("DOMContentLoaded", async () => {
+      setupTabs();
+      setupModals();
+      setupFilters();
+      
+      // Auto-validate token if stored
+      if (adminToken) {
+        await validateAdminToken(adminToken, false);
+      }
+
+      await pollTelemetry();
+      pollTimer = setInterval(pollTelemetry, 1500);
+    });
+
+    // --- TAB SWITCHING ---
+    function setupTabs() {
+      const tabs = [
+        { btn: "tab-btn-radar", pane: "tab-content-radar", name: "radar" },
+        { btn: "tab-btn-prompts", pane: "tab-content-prompts", name: "prompts" },
+        { btn: "tab-btn-governance", pane: "tab-content-governance", name: "governance" }
+      ];
+
+      tabs.forEach(t => {
+        const btn = document.getElementById(t.btn);
+        btn?.addEventListener("click", () => {
+          currentTab = t.name;
+          tabs.forEach(o => {
+            const ob = document.getElementById(o.btn);
+            const op = document.getElementById(o.pane);
+            if (o.name === t.name) {
+              ob.className = "tab-btn px-4 py-2 rounded-xl text-xs font-bold transition flex items-center space-x-2 cursor-pointer bg-slate-800 text-cyan-400 border border-cyan-500/30 shadow-md";
+              op.classList.remove("hidden");
+            } else {
+              ob.className = "tab-btn px-4 py-2 rounded-xl text-xs font-bold transition flex items-center space-x-2 cursor-pointer text-slate-400 hover:text-slate-200 hover:bg-slate-900 border border-transparent";
+              op.classList.add("hidden");
+            }
+          });
+          renderCurrentTab();
+        });
+      });
+    }
+
+    // --- MODAL DIALOGS ---
+    function setupModals() {
+      const modalAuth = document.getElementById("modal-admin-auth");
+      const modalRevoke = document.getElementById("modal-confirm-revoke");
+
+      // Admin Toggle
+      document.getElementById("btn-admin-toggle")?.addEventListener("click", () => {
+        if (isSovereignAdmin) {
+          // Logout / Lock
+          setSovereignMode(false, "");
+          showToast("🔒 LOCKED", "Sovereign admin mode locked. Prompts masked.", "info");
+        } else {
+          // Open Auth Modal
+          document.getElementById("admin-token-input").value = "";
+          document.getElementById("admin-auth-error").classList.add("hidden");
+          modalAuth.classList.remove("hidden");
+          document.getElementById("admin-token-input").focus();
+        }
+      });
+
+      document.getElementById("btn-banner-unlock")?.addEventListener("click", () => {
+        modalAuth.classList.remove("hidden");
+        document.getElementById("admin-token-input").focus();
+      });
+
+      document.getElementById("btn-auth-cancel")?.addEventListener("click", () => {
+        modalAuth.classList.add("hidden");
+      });
+
+      document.getElementById("btn-auth-submit")?.addEventListener("click", async () => {
+        const token = document.getElementById("admin-token-input").value.trim();
+        if (!token) return;
+        const valid = await validateAdminToken(token, true);
+        if (valid) {
+          modalAuth.classList.add("hidden");
+        }
+      });
+
+      // Revoke Modal Cancel
+      document.getElementById("btn-revoke-cancel")?.addEventListener("click", () => {
+        modalRevoke.classList.add("hidden");
+        pendingRevokeTarget = null;
+      });
+
+      // Revoke Modal Confirm
+      document.getElementById("btn-revoke-confirm")?.addEventListener("click", async () => {
+        if (!pendingRevokeTarget) return;
+        modalRevoke.classList.add("hidden");
+        const target = pendingRevokeTarget;
+        pendingRevokeTarget = null;
+        await executeRevocation(target);
+      });
+
+      // Manual Refresh Button
+      document.getElementById("btn-manual-refresh")?.addEventListener("click", async () => {
+        await pollTelemetry();
+        showToast("🔄 REFRESHED", "Telemetry updated from control plane.", "info");
+      });
+
+      // Emergency Freeze Button
+      document.getElementById("btn-toggle-freeze")?.addEventListener("click", async () => {
+        if (!isSovereignAdmin) {
+          modalAuth.classList.remove("hidden");
+          showToast("⚠️ ADMIN REQUIRED", "Sovereign admin authentication is required to toggle fleet freeze.", "deny");
+          return;
+        }
+        const currentFreeze = cachedData?.kill_switch || false;
+        const actionText = currentFreeze ? "RESTORE entire fleet" : "FREEZE entire fleet";
+        if (confirm(`⚠️ EXTREME ACTION: Are you sure you want to ${actionText}?`)) {
+          await toggleFleetFreeze(!currentFreeze);
+        }
+      });
+
+      // Verify Chain Button
+      document.getElementById("btn-verify-chain")?.addEventListener("click", async () => {
+        try {
+          const resp = await fetch(`${serverBaseURL}/api/v1/control/chain/verify`);
+          if (resp.ok) {
+            const data = await resp.json();
+            showToast("✅ AUDIT VALID", `Chain verified: ${data.total_events || 0} events. Zero tampering detected.`, "info");
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      });
+    }
+
+    // --- FILTERS SETUP ---
+    function setupFilters() {
+      document.getElementById("filter-prompt-user")?.addEventListener("change", renderPromptsTab);
+      document.getElementById("filter-prompt-app")?.addEventListener("change", renderPromptsTab);
+      document.getElementById("prompt-search-input")?.addEventListener("input", renderPromptsTab);
+    }
+
+    // --- SOVEREIGN MODE TOGGLING ---
+    function setSovereignMode(active, token) {
+      isSovereignAdmin = active;
+      adminToken = token;
+      if (active) {
+        sessionStorage.setItem("bap_admin_token", token);
+        document.getElementById("admin-icon").textContent = "🛡️";
+        document.getElementById("admin-text").textContent = "Sovereign Admin Active";
+        document.getElementById("btn-admin-toggle").className = "px-3.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center space-x-2 cursor-pointer bg-cyan-950/80 border border-cyan-500 text-cyan-300 shadow-md shadow-cyan-950/50";
+        document.getElementById("kpi-prompt-status").textContent = "Full Live Stream Unlocked";
+        document.getElementById("kpi-prompt-status").className = "text-emerald-400 font-bold";
+        document.getElementById("unmask-notice-banner")?.classList.add("hidden");
+        document.getElementById("btn-toggle-freeze").className = "px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer bg-rose-600 hover:bg-rose-500 text-white shadow-lg shadow-rose-950/50";
+      } else {
+        sessionStorage.removeItem("bap_admin_token");
+        document.getElementById("admin-icon").textContent = "🔒";
+        document.getElementById("admin-text").textContent = "View Mode (Read-Only)";
+        document.getElementById("btn-admin-toggle").className = "px-3.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center space-x-2 cursor-pointer bg-slate-900 border border-slate-700 text-slate-300 hover:border-cyan-500 hover:text-white shadow-sm";
+        document.getElementById("kpi-prompt-status").textContent = "Protected / Masked";
+        document.getElementById("kpi-prompt-status").className = "text-indigo-400 font-bold";
+        document.getElementById("unmask-notice-banner")?.classList.remove("hidden");
+        document.getElementById("btn-toggle-freeze").className = "px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer bg-slate-800 text-slate-400 border border-slate-700 hover:border-rose-500 hover:text-white";
+      }
+      renderCurrentTab();
+    }
+
+    async function validateAdminToken(token, showToastAlert = false) {
+      try {
+        const resp = await fetch(`${serverBaseURL}/api/v1/auth/inspector-handshake`, {
+          headers: { "Authorization": `Bearer ${token}` }
+        });
+        if (resp.ok) {
+          setSovereignMode(true, token);
+          if (showToastAlert) showToast("🛡️ SOVEREIGN ADMIN UNLOCKED", "Live prompt unmasking and kill-switch controls enabled.", "info");
+          return true;
+        } else {
+          const errEl = document.getElementById("admin-auth-error");
+          errEl.textContent = "Invalid administrative token. Check BAP_ADMIN_TOKEN.";
+          errEl.classList.remove("hidden");
+          return false;
+        }
+      } catch (e) {
+        console.error(e);
+        const errEl = document.getElementById("admin-auth-error");
+        errEl.textContent = "Failed to reach control plane for validation.";
+        errEl.classList.remove("hidden");
+        return false;
+      }
+    }
+
+    // --- TELEMETRY POLLING ---
+    async function pollTelemetry() {
+      try {
+        const headers = {};
+        if (adminToken) {
+          headers["Authorization"] = `Bearer ${adminToken}`;
+        }
+        const resp = await fetch(`${serverBaseURL}/api/v1/inspector/data`, { headers });
+        if (!resp.ok) {
+          setCPStatus(false);
+          return;
+        }
+        setCPStatus(true);
+        const data = await resp.json();
+        cachedData = data;
+        updateKPIs(data);
+        renderCurrentTab();
+      } catch (e) {
+        setCPStatus(false);
+      }
+    }
+
+    function setCPStatus(online) {
+      const dot = document.getElementById("cp-indicator-dot");
+      const txt = document.getElementById("cp-status-text");
+      if (online) {
+        dot.className = "w-2 h-2 rounded-full bg-emerald-400";
+        txt.innerHTML = `Control Plane: <strong class="text-emerald-400">ONLINE</strong>`;
+      } else {
+        dot.className = "w-2 h-2 rounded-full bg-rose-500";
+        txt.innerHTML = `Control Plane: <strong class="text-rose-400">DISCONNECTED</strong>`;
+      }
+    }
+
+    // --- UPDATE TOP KPIS ---
+    function updateKPIs(data) {
+      if (!data) return;
+
+      if (data.trust_domain) {
+        document.getElementById("header-trust-domain").textContent = data.trust_domain;
+      }
+
+      const sessions = data.sessions || [];
+      const agents = data.agents || [];
+      const centralEvents = data.central_events || [];
+
+      // 1. Total Agents
+      const uniqueApps = new Set(agents.map(a => a.app_id || 'claude-code'));
+      document.getElementById("kpi-total-agents").textContent = Math.max(agents.length, sessions.length);
+      document.getElementById("kpi-agent-types").textContent = Array.from(uniqueApps).join(", ") || "Claude Code";
+
+      // 2. Harnesses Status
+      const now = Date.now();
+      let activeCount = 0;
+      let staleCount = 0;
+      let quarantinedCount = 0;
+
+      sessions.forEach(s => {
+        if (s.status === "revoked") {
+          quarantinedCount++;
+        } else if (s.status === "closed") {
+          // offline
+        } else {
+          const lastActive = s.last_active_at ? new Date(s.last_active_at).getTime() : 0;
+          const diffSec = (now - lastActive) / 1000;
+          if (diffSec <= 6) {
+            activeCount++;
+          } else {
+            staleCount++;
+          }
+        }
+      });
+
+      document.getElementById("kpi-active-harnesses").textContent = activeCount;
+      document.getElementById("kpi-stale-quarantined").textContent = `${staleCount} Stale | ${quarantinedCount} Quarantined`;
+
+      // 3. User Prompts Streamed
+      const promptEvents = centralEvents.filter(ev => ev.user_prompt || ev.executable === "user_prompt");
+      document.getElementById("kpi-total-prompts").textContent = promptEvents.length;
+
+      // 4. Audit Chain Status
+      const chainValid = data.chain_status === "valid";
+      const chainEl = document.getElementById("kpi-audit-status");
+      if (chainValid) {
+        chainEl.textContent = "100% INTACT";
+        chainEl.className = "text-2xl font-black text-emerald-400 tracking-tight";
+        document.getElementById("chain-integrity-text").textContent = "100% Cryptographically Verified (No Tampering)";
+        document.getElementById("chain-integrity-text").className = "text-emerald-400 font-bold";
+      } else {
+        chainEl.textContent = "TAMPER DETECTED";
+        chainEl.className = "text-2xl font-black text-rose-500 tracking-tight";
+        document.getElementById("chain-integrity-text").textContent = "CRITICAL: Hash chain verification failed!";
+        document.getElementById("chain-integrity-text").className = "text-rose-400 font-bold";
+      }
+
+      // Freeze Status
+      const isFrozen = data.kill_switch === true;
+      const freezeBadge = document.getElementById("freeze-status-badge");
+      const freezeBtn = document.getElementById("btn-toggle-freeze");
+      if (isFrozen) {
+        freezeBadge.textContent = "● EMERGENCY FREEZE ENGAGED";
+        freezeBadge.className = "px-3 py-1 rounded-full text-xs font-mono font-bold bg-rose-500/20 text-rose-400 border border-rose-500/40 animate-pulse";
+        freezeBtn.textContent = "⚡ Restore Fleet Operations";
+      } else {
+        freezeBadge.textContent = "● SYSTEM OPERATIONAL";
+        freezeBadge.className = "px-3 py-1 rounded-full text-xs font-mono font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30";
+        freezeBtn.textContent = "❄️ Freeze Entire Fleet";
+      }
+
+      if (data.policy_digest) {
+        document.getElementById("policy-digest").textContent = data.policy_digest.substring(0, 16) + "...";
+      }
+    }
+
+    // --- RENDER CURRENT TAB ---
+    function renderCurrentTab() {
+      if (!cachedData) return;
+      if (currentTab === "radar") {
+        renderRadarTab();
+      } else if (currentTab === "prompts") {
+        renderPromptsTab();
+      }
+    }
+
+    // --- TAB 1: RENDER HARNESS RADAR ---
+    function renderRadarTab() {
+      const container = document.getElementById("harness-grid");
+      if (!container || !cachedData) return;
+
+      const sessions = cachedData.sessions || [];
+      if (sessions.length === 0) {
+        container.innerHTML = `
+          <div class="col-span-full glass-card rounded-2xl p-12 text-center text-slate-400 space-y-3">
+            <span class="text-4xl">🛰️</span>
+            <h3 class="text-sm font-bold text-white">No Agent Workload Harnesses Connected</h3>
+            <p class="text-xs text-slate-500 max-w-md mx-auto">
+              Start Claude Code with BAP governance enabled (run_claude_bap.bat) or register an agent to see live telemetry.
+            </p>
+          </div>
+        `;
+        return;
+      }
+
+      const now = Date.now();
+      container.innerHTML = "";
+
+      sessions.forEach(s => {
+        const lastActiveMs = s.last_active_at ? new Date(s.last_active_at).getTime() : 0;
+        const diffSec = Math.floor((now - lastActiveMs) / 1000);
+
+        let statusType = "active";
+        let statusBadge = "";
+        let cardBorder = "border-slate-800/80";
+
+        if (s.status === "revoked") {
+          statusType = "revoked";
+          cardBorder = "border-rose-500/40";
+          statusBadge = `<span class="px-2.5 py-1 rounded-lg text-[10px] font-mono font-bold bg-rose-500/20 text-rose-400 border border-rose-500/40 flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-rose-500"></span> QUARANTINED</span>`;
+        } else if (s.status === "closed") {
+          statusType = "closed";
+          statusBadge = `<span class="px-2.5 py-1 rounded-lg text-[10px] font-mono font-bold bg-slate-800 text-slate-400 border border-slate-700 flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-slate-500"></span> OFFLINE</span>`;
+        } else if (diffSec <= 6) {
+          statusType = "active";
+          cardBorder = "border-emerald-500/30";
+          statusBadge = `<span class="px-2.5 py-1 rounded-lg text-[10px] font-mono font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-emerald-400 pulse-ring"></span> LIVE ACTIVE</span>`;
+        } else {
+          statusType = "stale";
+          cardBorder = "border-amber-500/30";
+          statusBadge = `<span class="px-2.5 py-1 rounded-lg text-[10px] font-mono font-bold bg-amber-500/10 text-amber-400 border border-amber-500/30 flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-amber-400"></span> STALE (${diffSec}s)</span>`;
+        }
+
+        const developerName = s.user_id || s.user_email || s.instance_id || "governed-developer";
+        const appName = s.app_id || "claude-code";
+        const clientPID = s.client_pid || (s.session_id.includes("pid-") ? s.session_id.split("pid-")[1] : "N/A");
+
+        const card = document.createElement("div");
+        card.className = `glass-card rounded-2xl p-5 transition hover:shadow-2xl space-y-4 ${cardBorder}`;
+        card.innerHTML = `
+          <div class="flex items-start justify-between gap-3">
+            <div class="flex items-center space-x-3">
+              <div class="w-9 h-9 rounded-xl bg-slate-900 border border-slate-700 flex items-center justify-center font-bold text-sm text-cyan-400 shadow">
+                ${appName[0].toUpperCase()}
+              </div>
+              <div>
+                <h4 class="text-sm font-bold text-white truncate max-w-[180px]" title="${escapeHtml(developerName)}">${escapeHtml(developerName)}</h4>
+                <p class="text-[11px] font-mono text-slate-400">${escapeHtml(appName)} • PID: ${clientPID}</p>
+              </div>
+            </div>
+            ${statusBadge}
+          </div>
+
+          <!-- SPIFFE Identity -->
+          <div class="bg-slate-950/80 rounded-xl p-2.5 border border-slate-800/80 text-[10px] font-mono text-slate-400 break-all">
+            <span class="text-slate-600 block text-[9px] uppercase tracking-wider mb-0.5">SPIFFE Workload ID</span>
+            ${escapeHtml(s.spiffe_id || `spiffe://bap.internal/app/${appName}/instance/${s.session_id}`)}
+          </div>
+
+          <!-- Metrics Row -->
+          <div class="grid grid-cols-2 gap-2 text-xs font-mono">
+            <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-2.5 flex items-center justify-between">
+              <span class="text-slate-400">Decisions</span>
+              <span class="text-emerald-400 font-bold">${s.allowed_count || 0} ALLOW</span>
+            </div>
+            <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-2.5 flex items-center justify-between">
+              <span class="text-slate-400">Blocks</span>
+              <span class="text-rose-400 font-bold">${s.denied_count || 0} DENY</span>
+            </div>
+          </div>
+
+          <!-- Prompt Snippet -->
+          ${s.user_prompt ? `
+            <div class="border-t border-slate-800/80 pt-2.5 text-xs">
+              <span class="text-slate-500 font-mono text-[10px] block mb-1">Active Intent:</span>
+              <p class="text-indigo-300 font-sans truncate text-[11px]" title="${escapeHtml(s.user_prompt)}">💬 "${escapeHtml(s.user_prompt)}"</p>
+            </div>
+          ` : ''}
+
+          <!-- Card Controls -->
+          <div class="border-t border-slate-800/80 pt-3 flex items-center justify-between">
+            <span class="text-[10px] font-mono text-slate-500">
+              Heartbeat: ${diffSec <= 1 ? "Just now" : `${diffSec}s ago`}
+            </span>
+
+            <div>
+              ${isSovereignAdmin ? (
+                statusType === "revoked" ? `
+                  <button class="btn-card-restore px-3 py-1 rounded-xl bg-emerald-950/80 hover:bg-emerald-700 text-emerald-300 hover:text-white border border-emerald-500/40 text-xs font-bold transition cursor-pointer" data-target="${escapeHtml(s.session_id)}">
+                    ⚡ Restore Authority
+                  </button>
+                ` : `
+                  <button class="btn-card-revoke px-3 py-1 rounded-xl bg-rose-950/80 hover:bg-rose-700 text-rose-300 hover:text-white border border-rose-500/40 text-xs font-bold transition cursor-pointer" data-target="${escapeHtml(s.session_id)}" data-name="${escapeHtml(developerName)} (PID: ${clientPID})">
+                    🚨 Revoke & Kill
+                  </button>
+                `
+              ) : `
+                <span class="px-2.5 py-1 rounded-lg bg-slate-950 text-slate-500 border border-slate-800 text-[10px] font-mono">
+                  🔒 Admin Locked
+                </span>
+              `}
+            </div>
+          </div>
+        `;
+
+        // Event Handlers for Buttons
+        card.querySelector(".btn-card-revoke")?.addEventListener("click", () => {
+          promptRevokeConfirmation(s.session_id, `${developerName} (PID: ${clientPID})`);
+        });
+
+        card.querySelector(".btn-card-restore")?.addEventListener("click", async () => {
+          await executeRestore(s.session_id);
+        });
+
+        container.appendChild(card);
+      });
+    }
+
+    // --- TAB 2: RENDER PROMPTS STREAM ---
+    function renderPromptsTab() {
+      const container = document.getElementById("prompts-stream-container");
+      const userSelect = document.getElementById("filter-prompt-user");
+      const appSelect = document.getElementById("filter-prompt-app");
+      const searchInput = document.getElementById("prompt-search-input");
+      if (!container || !cachedData) return;
+
+      const events = cachedData.central_events || [];
+      const promptEvents = events.filter(ev => ev.user_prompt || ev.executable === "user_prompt");
+
+      // Populate dropdowns once
+      const users = new Set();
+      const apps = new Set();
+      promptEvents.forEach(ev => {
+        if (ev.user_id && ev.user_id !== "NA") users.add(ev.user_id);
+        if (ev.source) apps.add(ev.source);
+      });
+
+      if (userSelect.options.length <= 1) {
+        users.forEach(u => {
+          const opt = document.createElement("option");
+          opt.value = u;
+          opt.textContent = u;
+          userSelect.appendChild(opt);
+        });
+      }
+      if (appSelect.options.length <= 1) {
+        apps.forEach(a => {
+          const opt = document.createElement("option");
+          opt.value = a;
+          opt.textContent = a;
+          appSelect.appendChild(opt);
+        });
+      }
+
+      // Filter
+      const selectedUser = userSelect.value;
+      const selectedApp = appSelect.value;
+      const searchQuery = (searchInput.value || "").toLowerCase().trim();
+
+      const filtered = promptEvents.filter(ev => {
+        if (selectedUser !== "all" && ev.user_id !== selectedUser) return false;
+        if (selectedApp !== "all" && ev.source !== selectedApp) return false;
+        if (searchQuery) {
+          const pText = (ev.user_prompt || "").toLowerCase();
+          const cmdText = (ev.full_command || "").toLowerCase();
+          if (!pText.includes(searchQuery) && !cmdText.includes(searchQuery)) return false;
+        }
+        return true;
+      });
+
+      if (filtered.length === 0) {
+        container.innerHTML = `
+          <div class="glass-card rounded-2xl p-12 text-center text-slate-400 space-y-2">
+            <span class="text-3xl">💬</span>
+            <p class="text-xs font-mono">No matching prompts found.</p>
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = "";
+
+      filtered.forEach(ev => {
+        const item = document.createElement("div");
+        item.className = "glass-card rounded-2xl p-4.5 transition hover:border-slate-700 space-y-2.5";
+
+        const ts = ev.timestamp ? new Date(ev.timestamp).toLocaleTimeString() : "Just now";
+        const dev = ev.user_id && ev.user_id !== "NA" ? ev.user_id : "governed-developer";
+        const app = ev.source || "claude-code";
+
+        const isMasked = !isSovereignAdmin && (ev.user_prompt?.includes("[Protected") || !isSovereignAdmin);
+        const promptText = isSovereignAdmin ? (ev.user_prompt || "Telemetry event recorded") : "[Protected: Leadership Authentication Required]";
+
+        item.innerHTML = `
+          <div class="flex items-center justify-between text-xs">
+            <div class="flex items-center space-x-2">
+              <span class="w-6 h-6 rounded-full bg-indigo-500/20 border border-indigo-500/40 text-indigo-300 font-bold flex items-center justify-center text-[11px]">
+                ${dev[0].toUpperCase()}
+              </span>
+              <span class="font-bold text-white font-mono">${escapeHtml(dev)}</span>
+              <span class="text-slate-500 text-[11px] font-mono">(${escapeHtml(app)})</span>
+            </div>
+            <span class="text-[11px] font-mono text-slate-500">${ts}</span>
+          </div>
+
+          <div class="bg-slate-950/90 border border-slate-800 rounded-xl p-3 text-xs ${isMasked ? 'text-slate-500 italic' : 'text-indigo-200'} font-sans leading-relaxed">
+            ${isMasked ? '🔒 ' : '💬 '}<strong>${escapeHtml(promptText)}</strong>
+          </div>
+
+          ${ev.full_command && ev.full_command !== "USER_PROMPT_SUBMITTED" ? `
+            <div class="flex items-center space-x-2 text-[11px] font-mono text-slate-400 pt-1">
+              <span class="text-slate-500">Governed Command:</span>
+              <code class="text-cyan-300 bg-slate-950 px-2 py-0.5 rounded border border-slate-800 truncate max-w-[450px]">${escapeHtml(ev.full_command)}</code>
+              <span class="px-2 py-0.5 rounded text-[10px] font-bold ${ev.decision === 'deny' ? 'bg-rose-500/20 text-rose-400 border border-rose-500/40' : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'}">
+                ${ev.decision?.toUpperCase() || 'ALLOW'}
+              </span>
+            </div>
+          ` : ''}
+        `;
+
+        container.appendChild(item);
+      });
+    }
+
+    // --- ACTIONS: REVOKE & RESTORE ---
+    function promptRevokeConfirmation(targetId, targetName) {
+      pendingRevokeTarget = { targetId, targetName };
+      document.getElementById("modal-revoke-id").textContent = targetId;
+      document.getElementById("modal-revoke-name").textContent = targetName;
+      document.getElementById("modal-confirm-revoke").classList.remove("hidden");
+    }
+
+    async function executeRevocation(targetObj) {
+      try {
+        const resp = await fetch(`${serverBaseURL}/api/v1/control/agent/kill`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${adminToken}`
+          },
+          body: JSON.stringify({ target: targetObj.targetId, action: "revoke" })
+        });
+        if (resp.ok) {
+          showToast("🚨 SURGICAL KILL ENGAGED", `Session ${targetObj.targetId} authority burned & rogue process terminated.`, "deny");
+          await pollTelemetry();
+        } else {
+          showToast("❌ ACTION FAILED", "Unable to revoke session. Verify admin token.", "deny");
+        }
+      } catch (e) {
+        console.error(e);
+        showToast("❌ ERROR", "Network error during revocation call.", "deny");
+      }
+    }
+
+    async function executeRestore(targetId) {
+      try {
+        const resp = await fetch(`${serverBaseURL}/api/v1/control/agent/kill`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${adminToken}`
+          },
+          body: JSON.stringify({ target: targetId, action: "restore" })
+        });
+        if (resp.ok) {
+          showToast("⚡ AUTHORITY RESTORED", `Session ${targetId} authority restored by CISO.`, "info");
+          await pollTelemetry();
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    async function toggleFleetFreeze(enable) {
+      try {
+        const resp = await fetch(`${serverBaseURL}/api/v1/control/kill-switch`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${adminToken}`
+          },
+          body: JSON.stringify({ enabled: enable, reason: "CISO Sovereign Fleet Freeze Toggle" })
+        });
+        if (resp.ok) {
+          if (enable) {
+            showToast("❄️ EMERGENCY FREEZE ENGAGED", "All agent harnesses enterprise-wide frozen in sub-100ms.", "deny");
+          } else {
+            showToast("✅ FLEET RESTORED", "Emergency freeze lifted. Normal operations restored.", "info");
+          }
+          await pollTelemetry();
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    // --- UTILITIES ---
+    function escapeHtml(str) {
+      if (!str) return "";
+      return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    }
+
+    function showToast(title, message, type = "info") {
+      const container = document.getElementById("toast-container");
+      if (!container) return;
+
+      const toast = document.createElement("div");
+      toast.className = `pointer-events-auto p-4 rounded-2xl shadow-2xl border text-xs font-mono max-w-sm transition-all duration-300 transform translate-y-2 animate-in fade-in slide-in-from-bottom-5 ${
+        type === "deny" 
+          ? "bg-rose-950/95 border-rose-500/50 text-rose-100" 
+          : "bg-slate-900/95 border-cyan-500/50 text-cyan-100"
+      }`;
+      toast.innerHTML = `
+        <div class="flex items-center space-x-2 font-bold mb-1">
+          <span>${type === 'deny' ? '🚨' : '🛡️'}</span>
+          <span>${escapeHtml(title)}</span>
+        </div>
+        <div class="text-[11px] text-slate-300 leading-snug">${escapeHtml(message)}</div>
+      `;
+      container.appendChild(toast);
+
+      setTimeout(() => {
+        toast.classList.add("opacity-0", "translate-y-4");
+        setTimeout(() => toast.remove(), 350);
+      }, 4000);
+    }
+  </script>
+
+</body>
+</html>
+

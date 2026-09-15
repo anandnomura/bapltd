@@ -1,18 +1,29 @@
 # React dashboard and administrative actions
 
-The new React/Vite dashboard is served at **`/dashboard/`**. It is built into
-`bapcontrolplane`; the server does not need Node at runtime. The diagnostic
-inspector remains at `/inspector?mode=live`.
+The React/Vite dashboard is served by the separate **`bapdashboard`** binary at
+`/dashboard/`. It is not embedded in or started by `bapcontrolplane`, and neither
+service needs Node at runtime after the assets are built.
 
 ## Recommended deployment today
 
-Serve the UI and API on one trusted HTTPS origin. Use a supplied certificate:
+Start the HTTPS control plane first:
 
 ```bash
 export BAP_ADMIN_TOKEN='your-private-random-admin-credential'
 export BAP_SECRET_KEY='your-private-random-signing-key'
 ./bapcontrolplane -port 8443 -https -tls-cert server.pem -tls-key server-key.pem -allow-remote-admin
 ```
+
+Then start the dashboard independently. Its browser-facing connection and its
+upstream control-plane connection both use TLS:
+
+```bash
+./bapdashboard -port 8444 -control-plane https://localhost:8443 \
+  -tls-cert dashboard.pem -tls-key dashboard-key.pem -ca-cert bap-root-ca.crt
+```
+
+If the control plane is configured to require mutual TLS, add
+`-client-cert dashboard-client.pem -client-key dashboard-client-key.pem`.
 
 On Windows PowerShell, set variables with `$env:BAP_ADMIN_TOKEN = '...'` and
 `$env:BAP_SECRET_KEY = '...'`, then run `.\bapcontrolplane.exe` with the same flags.
@@ -49,10 +60,10 @@ A person who possesses the secret can call the API directly. A frontend dialog
 cannot prove to the server that a password was freshly typed. Implement the
 backend model below for that stronger guarantee.
 
-## Separate React server
+## Dashboard proxy and development server
 
-The UI uses relative `/api/v1/...` requests. Host the Vite build at `/dashboard/`
-and proxy those API paths to BAP, or develop with `npm run dev` in `dashboard/`.
+The UI uses relative `/api/v1/...` requests. `bapdashboard` hosts the Vite build
+and proxies those API paths to BAP, or develop with `npm run dev` in `dashboard/`.
 The development proxy's default upstream is `http://localhost:8080`; override
 with `BAP_DEV_SERVER`.
 

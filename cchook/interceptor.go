@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	_ "embed"
@@ -16,6 +17,21 @@ import (
 	"strings"
 	"time"
 )
+
+func promptPathForSession(sessionID string) string {
+	sum := sha256.Sum256([]byte(sessionID))
+	return filepath.Join(".bap", "prompts", fmt.Sprintf("%x.txt", sum[:]))
+}
+
+func writeSessionPrompt(sessionID, prompt string) {
+	if sessionID == "" || prompt == "" {
+		return
+	}
+	path := promptPathForSession(sessionID)
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err == nil {
+		_ = os.WriteFile(path, []byte(prompt), 0600)
+	}
+}
 
 //go:embed embedded_ca.crt
 var embeddedCACert []byte
@@ -123,29 +139,130 @@ func resolveServerURL() string {
 	return "http://localhost:8080"
 }
 
+func resolveSessionID(payload HookPayload) string {
+	if sessionID := os.Getenv("BAP_SESSION_ID"); sessionID != "" {
+		return sessionID
+	}
+	if sessionID := os.Getenv("LTD_SESSION_ID"); sessionID != "" {
+		return sessionID
+	}
+	if payload.SessionID != "" {
+		return payload.SessionID
+	}
+	for _, loc := range []string{".bap-session.json", "../.bap-session.json", "cchook/.bap-session.json"} {
+		if data, err := os.ReadFile(loc); err == nil {
+			var info struct {
+				SessionID string `json:"session_id"`
+			}
+			if json.Unmarshal(data, &info) == nil && info.SessionID != "" {
+				return info.SessionID
+			}
+		}
+	}
+	return ""
+}
+
+func remotelyRevoked(serverURL, sessionID string) (bool, string) {
+	if serverURL == "" || sessionID == "" {
+		return false, ""
+	}
+	resp, err := getHTTPClient().Get(strings.TrimRight(serverURL, "/") + "/api/v1/control/revocations")
+	if err != nil || resp == nil {
+		return false, ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return false, ""
+	}
+	var state struct {
+		KillSwitch      bool     `json:"kill_switch"`
+		RevokedSessions []string `json:"revoked_sessions"`
+	}
+	if json.NewDecoder(resp.Body).Decode(&state) != nil {
+		return false, ""
+	}
+	if state.KillSwitch {
+		return true, "fleet authority is frozen by an administrator"
+	}
+	for _, revoked := range state.RevokedSessions {
+		if strings.EqualFold(strings.TrimSpace(revoked), sessionID) {
+			return true, fmt.Sprintf("session %q authority has been revoked by an administrator", sessionID)
+		}
+	}
+	return false, ""
+}
+
+func killProcessPID(pid int) {
+	if pid <= 0 {
+		return
+	}
+	if runtime.GOOS == "windows" {
+		_ = exec.Command("taskkill", "/F", "/T", "/PID", fmt.Sprintf("%d", pid)).Run()
+	} else {
+		if p, err := os.FindProcess(pid); err == nil {
+			_ = p.Kill()
+		}
+	}
+}
+
+func isStartupBlocked() (bool, string) {
+	// Check .bap-revoked
+	for _, cand := range []string{".bap-revoked", "../.bap-revoked"} {
+		if data, err := os.ReadFile(cand); err == nil {
+			var info struct {
+				KillSwitch bool   `json:"kill_switch"`
+				AppID      string `json:"app_id"`
+				Reason     string `json:"reason"`
+			}
+			if json.Unmarshal(data, &info) == nil {
+				if info.KillSwitch || info.AppID == "claude-code" || info.AppID == "*" {
+					reason := info.Reason
+					if reason == "" {
+						reason = "Enterprise emergency kill-switch is active"
+					}
+					return true, reason
+				}
+			}
+		}
+	}
+	// Check policy-state.json
+	for _, cand := range []string{"policy-state.json", "../policy-state.json"} {
+		if data, err := os.ReadFile(cand); err == nil {
+			var st struct {
+				KillSwitch bool `json:"kill_switch"`
+			}
+			if json.Unmarshal(data, &st) == nil && st.KillSwitch {
+				return true, "Emergency kill-switch is active across the fleet"
+			}
+		}
+	}
+	return false, ""
+}
+
 func handleSessionStartHook(payload HookPayload) {
 	ppid := os.Getppid()
-	sessionID := payload.SessionID
+
+	// 1. Check if local kill-switch or freeze blocks startup
+	if blocked, reason := isStartupBlocked(); blocked {
+		fmt.Fprintf(os.Stderr, "[BAP ZERO-TRUST] 🚨 New Claude Code session BLOCKED: %s\n", reason)
+		os.Exit(2)
+	}
+
+	// A governed launcher owns the session ID and watcher lifecycle. Claude also
+	// supplies its own hook session ID; preferring that value created a second
+	// session and a second watcher for the same process.
+	sessionID := os.Getenv("BAP_SESSION_ID")
+	launcherOwnsWatcher := sessionID != ""
 	if sessionID == "" {
-		sessionID = os.Getenv("BAP_SESSION_ID")
+		sessionID = payload.SessionID
 	}
 	if sessionID == "" {
 		sessionID = fmt.Sprintf("sess-claude-pid-%d", ppid)
 	}
 
 	serverURL := resolveServerURL()
-	marker := map[string]any{
-		"session_id": sessionID,
-		"server_url": serverURL,
-		"pid":        ppid,
-		"app_id":     "claude-code",
-		"started_at": time.Now().UTC(),
-	}
-	if data, err := json.MarshalIndent(marker, "", "  "); err == nil {
-		_ = os.WriteFile(".bap-session.json", data, 0600)
-	}
 
-	// Notify control plane of session start
+	// 2. Notify control plane of session start
 	hostname, _ := os.Hostname()
 	username := os.Getenv("USERNAME")
 	if username == "" {
@@ -160,10 +277,26 @@ func handleSessionStartHook(payload HookPayload) {
 	}
 	if body, err := json.Marshal(startPayload); err == nil {
 		client := getHTTPClient()
-		resp, _ := client.Post(serverURL+"/api/v1/sessions/start", "application/json", bytes.NewReader(body))
-		if resp != nil {
-			_ = resp.Body.Close()
+		resp, err := client.Post(serverURL+"/api/v1/sessions/start", "application/json", bytes.NewReader(body))
+		if err == nil && resp != nil {
+			defer resp.Body.Close()
+			if resp.StatusCode == http.StatusForbidden {
+				_ = os.Remove(".bap-session.json")
+				fmt.Fprintln(os.Stderr, "[BAP ZERO-TRUST] 🚨 New Claude Code session BLOCKED by enterprise security policy (kill-switch or app revocation active).")
+				os.Exit(2)
+			}
 		}
+	}
+
+	marker := map[string]any{
+		"session_id": sessionID,
+		"server_url": serverURL,
+		"pid":        ppid,
+		"app_id":     "claude-code",
+		"started_at": time.Now().UTC(),
+	}
+	if data, err := json.MarshalIndent(marker, "", "  "); err == nil {
+		_ = os.WriteFile(".bap-session.json", data, 0600)
 	}
 
 	// Launch detached bapedge watch thread
@@ -171,7 +304,7 @@ func handleSessionStartHook(payload HookPayload) {
 	if ltdBin == "" {
 		ltdBin = findBinary("bapedge")
 	}
-	if ltdBin != "" {
+	if ltdBin != "" && !launcherOwnsWatcher {
 		wCmd := exec.Command(ltdBin, "watch", fmt.Sprintf("--pid=%d", ppid), fmt.Sprintf("--server=%s", serverURL), fmt.Sprintf("--session-id=%s", sessionID), "--detach")
 		_ = wCmd.Start()
 	}
@@ -180,46 +313,125 @@ func handleSessionStartHook(payload HookPayload) {
 	os.Exit(0)
 }
 
+func isSessionRevoked(serverURL, sessionID string) (bool, string) {
+	// 1. Check local .bap-revoked marker file (0ms)
+	for _, cand := range []string{".bap-revoked", "../.bap-revoked", "cchook/.bap-revoked"} {
+		if data, err := os.ReadFile(cand); err == nil {
+			var info struct {
+				SessionID string `json:"session_id"`
+				Reason    string `json:"reason"`
+			}
+			if json.Unmarshal(data, &info) == nil {
+				if info.SessionID == "" || sessionID == "" || strings.EqualFold(info.SessionID, sessionID) || strings.Contains(strings.ToLower(sessionID), strings.ToLower(info.SessionID)) {
+					reason := info.Reason
+					if reason == "" {
+						reason = "Session authority revoked by security administrator (local tombstone marker active)"
+					}
+					return true, reason
+				}
+			} else {
+				return true, "Session authority revoked by security administrator"
+			}
+		}
+	}
+
+	// 2. Check local policy-state.json (0ms)
+	for _, cand := range []string{"policy-state.json", "../policy-state.json", "bap-edge/policy-state.json"} {
+		if data, err := os.ReadFile(cand); err == nil {
+			var st struct {
+				KillSwitch      bool     `json:"kill_switch"`
+				RevokedSessions []string `json:"revoked_sessions"`
+			}
+			if json.Unmarshal(data, &st) == nil {
+				if st.KillSwitch {
+					return true, "Emergency kill-switch is active across the fleet"
+				}
+				if sessionID != "" {
+					sessLower := strings.ToLower(sessionID)
+					for _, rev := range st.RevokedSessions {
+						revLower := strings.ToLower(strings.TrimSpace(rev))
+						if revLower != "" && (strings.Contains(sessLower, revLower) || strings.Contains(revLower, sessLower)) {
+							return true, fmt.Sprintf("Session %q authority revoked by administrator", sessionID)
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// 3. Fast remote query to control plane
+	return remotelyRevoked(serverURL, sessionID)
+}
+
+func outputPromptBlocked(sessionID, reason string) {
+	if reason == "" {
+		reason = "Session authority has been revoked by enterprise security administrator."
+	}
+	alertMsg := fmt.Sprintf("[BAP ZERO-TRUST] Session %s is REVOKED. Authority burned: no further user prompts will be accepted.", sessionID)
+	fmt.Fprintln(os.Stderr, alertMsg)
+	fmt.Fprintf(os.Stderr, "[SECURITY ALERT] Reason: %s\n", reason)
+
+	resp := map[string]any{
+		"continue":      false,
+		"stopReason":    fmt.Sprintf("[BAP REVOKED] %s", reason),
+		"systemMessage": alertMsg,
+		"decision":      "block",
+		"reason":        reason,
+	}
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	_ = enc.Encode(resp)
+
+	// Option 3 Rogue Process Termination: If local tombstone was already active or persistent rogue attempts occur, terminate parent process
+	for _, cand := range []string{".bap-revoked", "../.bap-revoked"} {
+		if _, err := os.Stat(cand); err == nil {
+			ppid := os.Getppid()
+			if ppid > 0 {
+				fmt.Fprintf(os.Stderr, "[BAP ZERO-TRUST] ⚡ Terminating rogue agent process (PID: %d)...\n", ppid)
+				killProcessPID(ppid)
+			}
+			break
+		}
+	}
+
+	os.Exit(2)
+}
+
 func handleUserPromptHook(payload HookPayload) {
 	prompt := strings.TrimSpace(payload.UserPrompt)
 	if prompt == "" {
 		prompt = strings.TrimSpace(payload.Prompt)
 	}
+
+	serverURL := resolveServerURL()
+	sessionID := resolveSessionID(payload)
+
+	// Zero-Trust Revocation Check: STOP taking user inputs if revoked
+	if revoked, reason := isSessionRevoked(serverURL, sessionID); revoked {
+		outputPromptBlocked(sessionID, reason)
+		return
+	}
+
 	if prompt != "" {
-		_ = os.WriteFile(".bap-prompt.txt", []byte(prompt), 0600)
+		writeSessionPrompt(sessionID, prompt)
 
-		// Update .bap-session.json
-		if sessData, err := os.ReadFile(".bap-session.json"); err == nil {
-			var sess map[string]any
-			if json.Unmarshal(sessData, &sess) == nil {
-				sess["user_prompt"] = prompt
-				if updated, err := json.MarshalIndent(sess, "", "  "); err == nil {
-					_ = os.WriteFile(".bap-session.json", updated, 0600)
-				}
-			}
-		}
-
-		// Notify control plane of user prompt
-		serverURL := resolveServerURL()
-		sessionID := os.Getenv("BAP_SESSION_ID")
-		if sessionID == "" {
-			if sessData, err := os.ReadFile(".bap-session.json"); err == nil {
-				var sInfo struct {
-					SessionID string `json:"session_id"`
-				}
-				_ = json.Unmarshal(sessData, &sInfo)
-				sessionID = sInfo.SessionID
-			}
-		}
+		// The hook is the sole prompt telemetry producer. Watchers only maintain
+		// liveness and revocation state, so one submission creates one event.
 		if sessionID != "" && serverURL != "" {
 			reqBody, _ := json.Marshal(map[string]any{
 				"session_id":  sessionID,
 				"user_prompt": prompt,
+				"producer":    "claude-lifecycle-hook",
 			})
 			client := getHTTPClient()
-			resp, _ := client.Post(serverURL+"/api/v1/sessions/prompt", "application/json", bytes.NewReader(reqBody))
-			if resp != nil {
-				_ = resp.Body.Close()
+			resp, err := client.Post(serverURL+"/api/v1/sessions/prompt", "application/json", bytes.NewReader(reqBody))
+			if err == nil && resp != nil {
+				defer resp.Body.Close()
+				if resp.StatusCode == http.StatusForbidden {
+					// Control plane rejected prompt due to revocation
+					outputPromptBlocked(sessionID, "Session authority revoked by administrator on control plane")
+					return
+				}
 			}
 		}
 	}
@@ -258,6 +470,12 @@ func main() {
 		return
 	}
 
+	sessionID := resolveSessionID(payload)
+	if revoked, reason := isSessionRevoked(resolveServerURL(), sessionID); revoked {
+		outputDecision("deny", reason, "This session cannot perform further governed tool actions.")
+		return
+	}
+
 	// 4. Intercept direct file inspection tools (Read, View, Edit, Write)
 	targetFile := payload.ToolInput.FilePath
 	if targetFile == "" {
@@ -288,10 +506,8 @@ func main() {
 	}
 
 	// 4. Resolve session identifier
-	sessionID := os.Getenv("BAP_SESSION_ID")
-	if sessionID == "" {
-		sessionID = os.Getenv("LTD_SESSION_ID")
-	}
+	// Lifecycle hook IDs take precedence over workspace marker files so
+	// concurrent Claude sessions do not inherit each other's authority.
 	if sessionID == "" {
 		sessCandidates := []string{".bap-session.json", "../.bap-session.json", "cchook/.bap-session.json"}
 		if exePath, err := os.Executable(); err == nil {
@@ -365,10 +581,14 @@ func main() {
 	cmd.Env = os.Environ()
 	cmd.Env = append(cmd.Env, "BAP_SESSION_ID="+sessionID)
 
-	// Inject active user prompt if captured
+	// Inject only this session's active prompt. A workspace-global prompt file
+	// leaks prompts across concurrent Claude sessions.
 	var activePrompt string
-	if pBytes, err := os.ReadFile(".bap-prompt.txt"); err == nil {
-		activePrompt = strings.TrimSpace(string(pBytes))
+	if sessionID != "" {
+		pBytes, err := os.ReadFile(promptPathForSession(sessionID))
+		if err == nil {
+			activePrompt = strings.TrimSpace(string(pBytes))
+		}
 	}
 	if activePrompt == "" {
 		activePrompt = os.Getenv("BAP_USER_PROMPT")

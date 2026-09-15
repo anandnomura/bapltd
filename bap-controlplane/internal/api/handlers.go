@@ -130,7 +130,7 @@ func (s *Server) Handler() http.Handler {
 }
 
 func (s *Server) registerRoutes() {
-	s.registerDashboardRoutes()
+	s.registerControlPlaneRoutes()
 	s.mux.HandleFunc("/api/v1/admin/inspector/data", s.requireAdminAuth(s.handleInspectorData))
 	// Public and Agent Endpoints
 	s.mux.HandleFunc("/api/v1/health", s.handleHealth)
@@ -152,7 +152,6 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/v1/sessions/", s.handleGetSession)
 	s.mux.HandleFunc("/api/v1/auth/envoy", s.handleEnvoyExtAuthz)
 	s.mux.HandleFunc("/api/v1/financial-records", s.handleFinancialRecords)
-	s.mux.HandleFunc("/inspector", s.handleInspectorUI)
 	s.mux.HandleFunc("/api/v1/inspector/data", s.handleInspectorData)
 	s.mux.HandleFunc("/api/v1/control/revocations", s.handleGetRevocations)
 	s.mux.HandleFunc("/api/v1/control/chain/verify", s.handleVerifyChain)
@@ -393,7 +392,7 @@ func (s *Server) handleListAgents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	agents := s.registry.List()
-	writeJSON(w, http.StatusOK, map[string]any{
+	s.writeTelemetry(w, r, map[string]any{
 		"count":  len(agents),
 		"agents": agents,
 	})
@@ -633,12 +632,58 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	var sessionFound, agentFound bool
 
 	if s.sessionStore != nil {
-		if _, err := s.sessionStore.Heartbeat(id); err == nil {
+		if s.sessionStore.IsRevoked(id) {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"id":         id,
+				"session_id": id,
+				"status":     "revoked",
+				"action":     "terminate",
+				"reason":     "Session authority revoked by administrator",
+				"time":       time.Now().UTC(),
+			})
+			return
+		}
+		if sess, err := s.sessionStore.Heartbeat(id); err == nil {
 			sessionFound = true
+			if sess.Status == "revoked" {
+				writeJSON(w, http.StatusOK, map[string]any{
+					"id":         id,
+					"session_id": id,
+					"status":     "revoked",
+					"action":     "terminate",
+					"reason":     "Session authority revoked by administrator",
+					"time":       time.Now().UTC(),
+				})
+				return
+			}
+			if s.registry != nil {
+				instanceID := sess.InstanceID
+				if instanceID == "" {
+					instanceID = sess.SessionID
+				}
+				if err := s.registry.HeartbeatInstance(sess.AppID, instanceID); err == nil {
+					agentFound = true
+				} else if agent := s.registry.EnsureSessionAgent(sess.AppID, instanceID, sess.SPIFFEID, sess.UserEmail, sess.Hostname); agent != nil && agent.Status != types.StatusRevoked {
+					// The session store is durable while the registry is in-memory.
+					// Recreate presence after a control-plane restart on the first heartbeat.
+					agentFound = true
+				}
+			}
 		}
 	}
 
 	if s.registry != nil {
+		if agent, err := s.registry.Get(id); err == nil && agent.Status == types.StatusRevoked {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"id":       id,
+				"agent_id": id,
+				"status":   "revoked",
+				"action":   "terminate",
+				"reason":   "Agent authority revoked by administrator",
+				"time":     time.Now().UTC(),
+			})
+			return
+		}
 		if err := s.registry.Heartbeat(id); err == nil {
 			agentFound = true
 		}
@@ -663,19 +708,6 @@ func (s *Server) handleInspectorData(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
 		return
-	}
-
-	idleTimeout := 10 * time.Minute
-	if envTimeout := os.Getenv("BAP_SESSION_TIMEOUT"); envTimeout != "" {
-		if d, err := time.ParseDuration(envTimeout); err == nil {
-			idleTimeout = d
-		}
-	}
-	if s.sessionStore != nil {
-		s.sessionStore.PurgeStale(idleTimeout)
-	}
-	if s.registry != nil {
-		s.registry.PurgeStale(idleTimeout)
 	}
 
 	agents := s.registry.List()
@@ -796,13 +828,36 @@ func (s *Server) handleSessionStart(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "Invalid request payload: "+err.Error())
 		return
 	}
+
+	bundle := s.policyStore.GetBundle()
+	if bundle.KillSwitch {
+		writeError(w, http.StatusForbidden, "New agent sessions are forbidden: CISO emergency kill-switch is active across the fleet")
+		return
+	}
+	if s.sessionStore != nil && s.sessionStore.IsRevoked(req.SessionID) {
+		writeError(w, http.StatusForbidden, "Session authority for "+req.SessionID+" is revoked")
+		return
+	}
+	if s.registry != nil {
+		for _, a := range s.registry.List() {
+			if a.InstanceID == req.SessionID && a.Status == types.StatusRevoked {
+				writeError(w, http.StatusForbidden, "Agent instance is revoked by CISO administrator")
+				return
+			}
+		}
+	}
+
 	sess, err := s.sessionStore.Start(req)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Failed to start session: "+err.Error())
 		return
 	}
 	if s.registry != nil {
-		s.registry.EnsureSessionAgent(sess.AppID, sess.InstanceID, sess.SPIFFEID, sess.UserEmail, sess.Hostname)
+		instanceID := sess.InstanceID
+		if instanceID == "" {
+			instanceID = sess.SessionID
+		}
+		s.registry.EnsureSessionAgent(sess.AppID, instanceID, sess.SPIFFEID, sess.UserEmail, sess.Hostname)
 	}
 	s.writeTelemetry(w, r, sess)
 }
@@ -824,13 +879,9 @@ func (s *Server) handleSessionEnd(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "session_id is required")
 		return
 	}
-	sess, getErr := s.sessionStore.Get(req.SessionID)
 	if err := s.sessionStore.End(req.SessionID, req.Reason); err != nil {
 		writeError(w, http.StatusNotFound, "Failed to end session: "+err.Error())
 		return
-	}
-	if getErr == nil && sess != nil && s.registry != nil {
-		s.registry.EndSessionAgent(sess.AppID, sess.InstanceID)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"session_id": req.SessionID,
@@ -848,6 +899,7 @@ func (s *Server) handleSessionPrompt(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		SessionID  string `json:"session_id"`
 		UserPrompt string `json:"user_prompt"`
+		Producer   string `json:"producer"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "Invalid request payload: "+err.Error())
@@ -857,13 +909,25 @@ func (s *Server) handleSessionPrompt(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "session_id is required")
 		return
 	}
+	if req.Producer != "claude-lifecycle-hook" {
+		writeError(w, http.StatusBadRequest, "prompt telemetry must come from the lifecycle hook")
+		return
+	}
 	if s.sessionStore == nil {
 		writeError(w, http.StatusServiceUnavailable, "Session store unavailable")
+		return
+	}
+	if s.sessionStore.IsRevoked(req.SessionID) {
+		writeError(w, http.StatusForbidden, "Session authority has been revoked by administrator. Prompts are blocked.")
 		return
 	}
 	sess, err := s.sessionStore.SetPrompt(req.SessionID, req.UserPrompt)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "Failed to update prompt: "+err.Error())
+		return
+	}
+	if sess.Status == "revoked" {
+		writeError(w, http.StatusForbidden, "Session authority has been revoked by administrator. Prompts are blocked.")
 		return
 	}
 	// Also log a telemetry event for prompt observability
@@ -873,7 +937,7 @@ func (s *Server) handleSessionPrompt(w http.ResponseWriter, r *http.Request) {
 			SessionID:   req.SessionID,
 			Source:      sess.AppID,
 			Executable:  "user_prompt",
-			FullCommand: req.UserPrompt,
+			FullCommand: "USER_PROMPT_SUBMITTED",
 			Decision:    "intent",
 			Reason:      "User prompt captured for intent observability",
 			Timestamp:   time.Now().UTC().Format(time.RFC3339),
@@ -883,10 +947,8 @@ func (s *Server) handleSessionPrompt(w http.ResponseWriter, r *http.Request) {
 		}})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"session_id":  sess.SessionID,
-		"user_prompt": sess.UserPrompt,
-		"status":      "updated",
-		"time":        time.Now().UTC(),
+		"status": "updated",
+		"time":   time.Now().UTC(),
 	})
 }
 
@@ -899,14 +961,10 @@ func (s *Server) handleResetSessions(w http.ResponseWriter, r *http.Request) {
 	if s.sessionStore != nil {
 		closedSess = s.sessionStore.Reset()
 	}
-	closedAgents := 0
-	if s.registry != nil {
-		closedAgents = s.registry.Reset()
-	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"message":         "All sessions and agents reset cleanly",
+		"message":         "All sessions reset cleanly; enrolled agent identities were preserved",
 		"closed_sessions": closedSess,
-		"closed_agents":   closedAgents,
+		"closed_agents":   0,
 	})
 }
 
@@ -939,27 +997,6 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.writeTelemetry(w, r, sess)
-}
-
-func (s *Server) handleInspectorUI(w http.ResponseWriter, r *http.Request) {
-	candidates := []string{
-		"inspector.html",
-		"../inspector.html",
-		"../../inspector.html",
-		"bap-controlplane/inspector.html",
-	}
-	for _, c := range candidates {
-		if data, err := os.ReadFile(c); err == nil {
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write(data)
-			return
-		}
-	}
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(`<!DOCTYPE html><html><head><title>BAP Inspector</title></head><body style="font-family:sans-serif;background:#0f172a;color:#fff;padding:2rem;"><h2>BAP Inspector</h2><p>Please ensure <code>inspector.html</code> is present in the workspace root.</p></body></html>`))
 }
 
 func (s *Server) handleKillSwitch(w http.ResponseWriter, r *http.Request) {
@@ -1300,13 +1337,29 @@ func (s *Server) handleTargetedKillAgent(w http.ResponseWriter, r *http.Request)
 	if sess, err := s.sessionStore.Get(target); err == nil {
 		sessionTarget = sess.SessionID
 		for _, agent := range s.registry.List() {
-			if agent.InstanceID == sess.InstanceID && agent.AppID == sess.AppID {
+			linkedInstance := sess.InstanceID
+			if linkedInstance == "" {
+				linkedInstance = sess.SessionID
+			}
+			if agent.InstanceID == linkedInstance && agent.AppID == sess.AppID {
 				agentTarget = agent.AgentID
 				break
 			}
 		}
 	} else if agent, err := s.registry.Get(target); err == nil {
 		agentTarget = agent.AgentID
+		if s.sessionStore != nil {
+			for _, sess := range s.sessionStore.List(0) {
+				linkedInstance := sess.InstanceID
+				if linkedInstance == "" {
+					linkedInstance = sess.SessionID
+				}
+				if sess.AppID == agent.AppID && linkedInstance == agent.InstanceID && sess.Status != "closed" {
+					sessionTarget = sess.SessionID
+					break
+				}
+			}
+		}
 	}
 	if sessionTarget == "" && agentTarget == "" {
 		writeError(w, http.StatusNotFound, "No exact session or agent ID found")
@@ -1385,7 +1438,7 @@ func (s *Server) handleTargetedKillAgent(w http.ResponseWriter, r *http.Request)
 			Executable:  "bapcontrolplane",
 			FullCommand: fmt.Sprintf("REVOKE_AGENT target=%s", target),
 			Decision:    "deny",
-			Reason:      fmt.Sprintf("SURGICAL KILL-SWITCH: Agent %s isolated & revoked by CISO. Authority burned.", revokedName),
+			Reason:      fmt.Sprintf("Session authority revoked by administrator for %s. Future governed tool actions are blocked.", revokedName),
 			DurationMs:  1,
 			Timestamp:   now.Format(time.RFC3339),
 			ExitCode:    1,
@@ -1399,7 +1452,7 @@ func (s *Server) handleTargetedKillAgent(w http.ResponseWriter, r *http.Request)
 		"session_id":  sessionID,
 		"status":      "revoked",
 		"action":      "isolated",
-		"message":     fmt.Sprintf("Targeted agent %s (%s) isolated & revoked. All authority burned.", revokedName, spiffeID),
+		"message":     fmt.Sprintf("Authority revoked for %s (%s). Future governed tool actions are blocked; the workload process was not terminated.", revokedName, spiffeID),
 		"kill_status": "REVOKED",
 	})
 }
@@ -1519,7 +1572,7 @@ func (s *Server) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 	})(w, r)
 }
 
-func redactedPrompts(value any) any {
+func redactedTelemetry(value any) any {
 	data, _ := json.Marshal(value)
 	var copy any
 	_ = json.Unmarshal(data, &copy)
@@ -1528,9 +1581,18 @@ func redactedPrompts(value any) any {
 		switch v := node.(type) {
 		case map[string]any:
 			for key, item := range v {
-				if key == "user_prompt" && item != "" && item != nil {
-					v[key] = "[Protected: Leadership Authentication Required]"
-				} else {
+				switch key {
+				case "user_prompt", "user_id", "user_email", "owner_email", "session_id", "instance_id", "spiffe_id", "hostname":
+					if item != "" && item != nil {
+						v[key] = "[Protected: Admin Authentication Required]"
+					}
+				case "client_pid":
+					if item != nil {
+						v[key] = 0
+					}
+				case "revoked_sessions":
+					v[key] = []any{}
+				default:
 					redact(item)
 				}
 			}
@@ -1545,7 +1607,7 @@ func redactedPrompts(value any) any {
 }
 func (s *Server) writeTelemetry(w http.ResponseWriter, r *http.Request, value any) {
 	if !s.isAdminCaller(r) && (s.adminToken != "" || !isLoopbackAddress(r.RemoteAddr)) {
-		value = redactedPrompts(value)
+		value = redactedTelemetry(value)
 	}
 	writeJSON(w, http.StatusOK, value)
 }

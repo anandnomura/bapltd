@@ -78,9 +78,9 @@ of the selected deployment.
 
 ## 3. Test the React dashboard in the browser
 
-Open the exact `/dashboard/` URL printed by the script. For a normal deployment,
-open `https://your-server/dashboard/`. `/inspector?mode=live` remains the
-diagnostic fallback; it has the same admin checks.
+Start `bapdashboard` separately and open its `/dashboard/` URL. For the default
+local ports, open `https://localhost:8444/dashboard/`. The control-plane port is
+API-only and does not serve a dashboard or diagnostic fallback.
 
 For local generated HTTPS certificates, first establish trust in the browser's
 trust store. The certificate is in the temporary directory printed by the run.
@@ -102,9 +102,9 @@ test certificate if your browser will not trust the generated leaf certificate.
 | B10 | Enter correct credential and confirm Revoke | Server confirms; row becomes revoked; next client command is blocked |
 | B11 | Click Restore | Requests the credential again; successful restore permits client execution |
 | B12 | Double-click Confirm during a slow request | One mutation; button disabled until response; a timeout is not displayed as success |
-| B13 | End a client normally | Deregistered row shows a countdown and drops out of Live view after about 30 seconds |
-| B14 | Switch to All agents & history | Deregistered entry still available; search finds it |
-| B15 | Interrupt a client's reporting without sending session-end | Shows stale after 30 seconds; does not claim confirmed deregistration |
+| B13 | End a client normally | Session closes; its durable agent identity remains visible and eventually shows offline |
+| B14 | Switch to All agents & history | Agent and session history remain available; search finds them |
+| B15 | Interrupt a client's reporting without sending session-end | Shows stale after 15 seconds and offline after 60 seconds without removing the row |
 | B16 | Stop/disconnect the control plane | Connection changes to stale; last known data remains identifiable; action buttons disabled |
 | B17 | Inspect Application storage and cookies | No admin token in localStorage/sessionStorage/cookies; no token in URLs |
 | B18 | Keyboard-only navigation, 200% zoom, narrow screen | Dialog focus, Escape/cancel, labels and scrollable tables remain usable |
