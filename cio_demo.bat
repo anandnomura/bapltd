@@ -17,77 +17,108 @@ echo.
 echo  [*] Initializing pristine demonstration environment...
 echo.
 
+:: Parse CLI arguments (-local, --local, or explicit host)
+set "FORCE_LOCAL=0"
+if /i "%~1"=="-local" set "FORCE_LOCAL=1"
+if /i "%~1"=="--local" set "FORCE_LOCAL=1"
+if /i "%~1"=="local" set "FORCE_LOCAL=1"
+
 :: Resolve Central Control Plane and Gateway URLs from environment or bap-config.json
 set "CP_URL=%BAP_SERVER_URL%"
 set "GW_URL=%BAP_GATEWAY_URL%"
-if "%CP_URL%"=="" (
-    if exist "bap-config.json" (
-        for /f "usebackq delims=" %%U in (`powershell -NoProfile -Command "(Get-Content bap-config.json -Raw | ConvertFrom-Json).controlplane_url"`) do set "CP_URL=%%U"
+
+if "!FORCE_LOCAL!"=="1" (
+    echo  [*] Forced LOCAL demonstration mode requested via CLI flag.
+    set "CP_URL=http://localhost:8080"
+    set "GW_URL=http://localhost:9090"
+) else (
+    if "!CP_URL!"=="" (
+        if exist "bap-config.json" (
+            for /f "usebackq delims=" %%U in (`powershell -NoProfile -Command "(Get-Content bap-config.json -Raw | ConvertFrom-Json).controlplane_url"`) do set "CP_URL=%%U"
+        )
+    )
+    if "!GW_URL!"=="" (
+        if exist "bap-config.json" (
+            for /f "usebackq delims=" %%U in (`powershell -NoProfile -Command "(Get-Content bap-config.json -Raw | ConvertFrom-Json).gateway_url"`) do set "GW_URL=%%U"
+        )
     )
 )
-if "%GW_URL%"=="" (
-    if exist "bap-config.json" (
-        for /f "usebackq delims=" %%U in (`powershell -NoProfile -Command "(Get-Content bap-config.json -Raw | ConvertFrom-Json).gateway_url"`) do set "GW_URL=%%U"
-    )
-)
-if "%CP_URL%"=="" set CP_URL=http://localhost:8080
-if "%GW_URL%"=="" set GW_URL=http://localhost:9090
+
+if "!CP_URL!"=="" set "CP_URL=http://localhost:8080"
+if "!GW_URL!"=="" set "GW_URL=http://localhost:9090"
 
 set "CP_IS_LOCAL=0"
-echo %CP_URL% | findstr /i "localhost 127.0.0.1 ::1" >nul 2>&1
-if %errorlevel% equ 0 set "CP_IS_LOCAL=1"
+echo !CP_URL! | findstr /i "localhost 127.0.0.1 ::1" >nul 2>&1
+if !errorlevel! equ 0 set "CP_IS_LOCAL=1"
 
 set "GW_IS_LOCAL=0"
-echo %GW_URL% | findstr /i "localhost 127.0.0.1 ::1" >nul 2>&1
-if %errorlevel% equ 0 set "GW_IS_LOCAL=1"
+echo !GW_URL! | findstr /i "localhost 127.0.0.1 ::1" >nul 2>&1
+if !errorlevel! equ 0 set "GW_IS_LOCAL=1"
 
-echo  [*] Target Control Plane : %CP_URL%
-echo  [*] Target Gateway PEP   : %GW_URL%
+:: If configured for remote but remote is unreachable from current network, auto-fallback to local
+if "!CP_IS_LOCAL!"=="0" (
+    echo  [*] Checking remote Control Plane at !CP_URL!...
+    curl.exe -s --max-time 2 --connect-timeout 2 -X GET "!CP_URL!/api/v1/health" >nul 2>&1
+    if !errorlevel! neq 0 (
+        echo  [-] Remote Control Plane at !CP_URL! is unreachable from current network.
+        echo  [*] Auto-fallback: Switching to local demonstration daemons (localhost:8080, localhost:9090)...
+        set "CP_URL=http://localhost:8080"
+        set "GW_URL=http://localhost:9090"
+        set "CP_IS_LOCAL=1"
+        set "GW_IS_LOCAL=1"
+    ) else (
+        echo  [+] Connected to remote Control Plane at !CP_URL!
+    )
+)
+
+echo  [*] Target Control Plane : !CP_URL! (local=!CP_IS_LOCAL!)
+echo  [*] Target Gateway PEP   : !GW_URL! (local=!GW_IS_LOCAL!)
 echo.
 
+:: Resolve binary paths from dist or root
+set "CP_BIN=%~dp0dist\windows-amd64\controlplane\bapcontrolplane.exe"
+if not exist "!CP_BIN!" set "CP_BIN=%~dp0dist\windows-amd64\bapcontrolplane.exe"
+if not exist "!CP_BIN!" set "CP_BIN=%~dp0bapcontrolplane.exe"
+
+set "GW_BIN=%~dp0dist\windows-amd64\gateway\bapgateway.exe"
+if not exist "!GW_BIN!" set "GW_BIN=%~dp0dist\windows-amd64\bapgateway.exe"
+if not exist "!GW_BIN!" set "GW_BIN=%~dp0bapgateway.exe"
+
 :: 0. Reset previous sessions and clear local audit log
-if "%CP_IS_LOCAL%"=="1" type nul > "%~dp0ltd-audit.jsonl"
-curl.exe -s --max-time 2 --connect-timeout 2 -X POST "%CP_URL%/api/v1/sessions/reset" >nul 2>&1
+if "!CP_IS_LOCAL!"=="1" type nul > "%~dp0ltd-audit.jsonl"
+curl.exe -s --max-time 2 --connect-timeout 2 -X POST "!CP_URL!/api/v1/sessions/reset" >nul 2>&1
 
 :: 1. Ensure Control Plane is available
-if "%CP_IS_LOCAL%"=="1" (
+if "!CP_IS_LOCAL!"=="1" (
     powershell -NoProfile -Command "if (Get-NetTCPConnection -LocalPort 8080 -State Listen -ErrorAction SilentlyContinue) { exit 0 } else { exit 1 }"
     if !errorlevel! equ 0 (
-        echo  [+] Local BAP Control Plane active on %CP_URL%
+        echo  [+] Local BAP Control Plane active on !CP_URL!
     ) else (
         echo  [*] Starting BAP Control Plane daemon on port 8080...
-        start "BAP Control Plane (8080)" /min "%~dp0bapcontrolplane.exe" -port 8080 -ttl 30 -trust-domain bap.internal
+        start "BAP Control Plane (8080)" /min "!CP_BIN!" -port 8080 -ttl 30 -trust-domain bap.internal
         ping -n 3 127.0.0.1 >nul
         echo  [+] Control Plane started successfully.
-    )
-) else (
-    echo  [*] Checking remote Control Plane at %CP_URL%...
-    curl.exe -s --max-time 3 --connect-timeout 2 -X GET "%CP_URL%/api/v1/health" >nul 2>&1
-    if !errorlevel! equ 0 (
-        echo  [+] Connected to remote Control Plane at %CP_URL%
-    ) else (
-        echo  [!] Warning: Could not reach remote Control Plane at %CP_URL%.
     )
 )
 
 :: 2. Ensure Gateway is available
-if "%GW_IS_LOCAL%"=="1" (
+if "!GW_IS_LOCAL!"=="1" (
     powershell -NoProfile -Command "if (Get-NetTCPConnection -LocalPort 9090 -State Listen -ErrorAction SilentlyContinue) { exit 0 } else { exit 1 }"
     if !errorlevel! equ 0 (
-        echo  [+] Local BAP Gateway PEP active on %GW_URL%
+        echo  [+] Local BAP Gateway PEP active on !GW_URL!
     ) else (
         echo  [*] Starting BAP Gateway PEP daemon on port 9090...
-        start "BAP Gateway PEP (9090)" /min "%~dp0bapgateway.exe" -port 9090 -controlplane %CP_URL%
+        start "BAP Gateway PEP (9090)" /min "!GW_BIN!" -port 9090 -controlplane !CP_URL!
         ping -n 2 127.0.0.1 >nul
         echo  [+] Gateway PEP started successfully.
     )
 ) else (
-    echo  [*] Checking remote Gateway PEP at %GW_URL%...
-    curl.exe -s --max-time 3 --connect-timeout 2 -X GET "%GW_URL%/health" >nul 2>&1
+    echo  [*] Checking remote Gateway PEP at !GW_URL!...
+    curl.exe -s --max-time 3 --connect-timeout 2 -X GET "!GW_URL!/health" >nul 2>&1
     if !errorlevel! equ 0 (
-        echo  [+] Connected to remote Gateway PEP at %GW_URL%
+        echo  [+] Connected to remote Gateway PEP at !GW_URL!
     ) else (
-        echo  [!] Warning: Could not reach remote Gateway PEP at %GW_URL%.
+        echo  [!] Warning: Could not reach remote Gateway PEP at !GW_URL!.
     )
 )
 

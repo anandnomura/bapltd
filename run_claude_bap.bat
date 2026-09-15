@@ -101,6 +101,26 @@ if not exist ".claude\settings.json" (
     (
         echo {
         echo   "hooks": {
+        echo     "SessionStart": [
+        echo       {
+        echo         "hooks": [
+        echo           {
+        echo             "type": "command",
+        echo             "command": "!SAFE_HOOK_CMD!"
+        echo           }
+        echo         ]
+        echo       }
+        echo     ],
+        echo     "UserPromptSubmit": [
+        echo       {
+        echo         "hooks": [
+        echo           {
+        echo             "type": "command",
+        echo             "command": "!SAFE_HOOK_CMD!"
+        echo           }
+        echo         ]
+        echo       }
+        echo     ],
         echo     "PreToolUse": [
         echo       {
         echo         "matcher": "Bash|Read|View|Edit|Write",
@@ -115,7 +135,7 @@ if not exist ".claude\settings.json" (
         echo   }
         echo }
     ) > ".claude\settings.json"
-    echo [+] Configured Claude Code PreToolUse hook in .claude\settings.json
+    echo [+] Configured Claude Code SessionStart, UserPromptSubmit, and PreToolUse hooks in .claude\settings.json
 )
 
 :: 5. Generate unique BAP Session ID
@@ -136,8 +156,15 @@ set "BAP_SERVER_URL=!SERVER_URL!"
     echo }
 ) > ".bap-session.json"
 
-:: 6. Notify Linux Control Plane of Workload Enrollment (Live Radar)
-curl.exe -s --max-time 2 --connect-timeout 2 -X POST "!SERVER_URL!/api/v1/sessions/start" ^
+:: 6. Notify Control Plane of Workload Enrollment (Live Radar)
+set "CURL_CA_ARG="
+if exist "controlplane-cert.pem" (
+    set "CURL_CA_ARG=--cacert controlplane-cert.pem"
+    set "BAP_CA_CERT=%~dp0controlplane-cert.pem"
+) else (
+    set "CURL_CA_ARG=-k"
+)
+curl.exe -s !CURL_CA_ARG! --max-time 2 --connect-timeout 2 -X POST "!SERVER_URL!/api/v1/sessions/start" ^
     -H "Content-Type: application/json" ^
     -d "{\"session_id\":\"!BAP_SESSION_ID!\",\"app_id\":\"claude-code\",\"user_id\":\"%USERNAME%\",\"hostname\":\"%COMPUTERNAME%\",\"client_pid\":0}" >nul 2>&1
 

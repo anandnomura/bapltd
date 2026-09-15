@@ -4,12 +4,18 @@
 
 param(
     [string]$DistDir = "dist",
-    [switch]$Archive = $true
+    [switch]$Archive = $true,
+    [switch]$ForceRegenCerts = $false,
+    [string]$Domain = "amn010731.nomura.com"
 )
 
 $ErrorActionPreference = "Stop"
 $rootDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $rootDir
+
+# Ensure BAP Root CA & TLS Certificates are provisioned and synchronized into client embed paths
+Write-Host ">>> Ensuring BAP Root CA and TLS credentials (Domain: $Domain)..." -ForegroundColor Cyan
+& (Join-Path $rootDir "scripts\ensure_certs.ps1") -ForceRegen:$ForceRegenCerts -AdditionalSAN $Domain -InstallToStore:$false
 
 $env:CGO_ENABLED = "0"
 $env:GOTOOLCHAIN = "auto"
@@ -37,23 +43,23 @@ Write-Host "====================================================================
 
 $distPath = Join-Path $rootDir $DistDir
 if (!(Test-Path $distPath)) {
-    New-Item -ItemType Directory -Path $distPath | Out-Null
+    New-Item -ItemType Directory -Path $distPath -Force | Out-Null
 }
 
 # Purge any stale tar.gz or zip files so only freshly built ones exist
 if ($Archive) {
     Get-ChildItem -Path $distPath -Filter "*.tar.gz" -File -ErrorAction SilentlyContinue | Remove-Item -Force
     Get-ChildItem -Path $distPath -Filter "*.zip" -File -ErrorAction SilentlyContinue | Remove-Item -Force
+    Get-ChildItem -Path $distPath -Include "*.db","*.log" -Recurse -File -ErrorAction SilentlyContinue | Remove-Item -Force
 }
 
 $startTime = Get-Date
 
 foreach ($p in $platforms) {
     $platformDir = Join-Path $distPath $p.Name
-    if (Test-Path $platformDir) {
-        Remove-Item -Path $platformDir -Recurse -Force -ErrorAction SilentlyContinue
+    if (!(Test-Path $platformDir)) {
+        New-Item -ItemType Directory -Path $platformDir -Force | Out-Null
     }
-    New-Item -ItemType Directory -Path $platformDir | Out-Null
 
     Write-Host "`n>>> Compiling for $($p.Name) (OS: $($p.OS), ARCH: $($p.Arch))..." -ForegroundColor Yellow
     $env:GOOS = $p.OS
@@ -93,12 +99,15 @@ foreach ($p in $platforms) {
     # ROLE PACKAGE 1: Control Plane (Central Server)
     # =========================================================================
     $cpDir = Join-Path $platformDir "controlplane"
-    if (!(Test-Path $cpDir)) { New-Item -ItemType Directory -Path $cpDir | Out-Null }
+    if (!(Test-Path $cpDir)) { New-Item -ItemType Directory -Path $cpDir -Force | Out-Null }
     Copy-Item (Join-Path $platformDir "bapcontrolplane$($p.Ext)") (Join-Path $cpDir "bapcontrolplane$($p.Ext)") -Force
     Copy-Item (Join-Path $rootDir "bap-controlplane\inspector.html") (Join-Path $cpDir "inspector.html") -Force
     if (Test-Path (Join-Path $rootDir "policy.cedar")) { Copy-Item (Join-Path $rootDir "policy.cedar") (Join-Path $cpDir "policy.cedar") -Force }
     if (Test-Path (Join-Path $rootDir "schema.json")) { Copy-Item (Join-Path $rootDir "schema.json") (Join-Path $cpDir "schema.json") -Force }
     Copy-Item (Join-Path $rootDir "bap-config.json") (Join-Path $cpDir "bap-config.json") -Force
+    if (Test-Path (Join-Path $rootDir "controlplane-cert.pem")) { Copy-Item (Join-Path $rootDir "controlplane-cert.pem") (Join-Path $cpDir "controlplane-cert.pem") -Force }
+    if (Test-Path (Join-Path $rootDir "controlplane-key.pem")) { Copy-Item (Join-Path $rootDir "controlplane-key.pem") (Join-Path $cpDir "controlplane-key.pem") -Force }
+    if (Test-Path (Join-Path $rootDir "bap-root-ca.crt")) { Copy-Item (Join-Path $rootDir "bap-root-ca.crt") (Join-Path $cpDir "bap-root-ca.crt") -Force }
 
     if ($p.OS -eq "windows") {
         $cpBat = @"
@@ -154,7 +163,7 @@ Persistence:
     # ROLE PACKAGE 2: claude-client / bapedge (Developer Machine Seat)
     # =========================================================================
     $clientDir = Join-Path $platformDir "claude-client"
-    if (!(Test-Path $clientDir)) { New-Item -ItemType Directory -Path $clientDir | Out-Null }
+    if (!(Test-Path $clientDir)) { New-Item -ItemType Directory -Path $clientDir -Force | Out-Null }
     Copy-Item (Join-Path $platformDir "bapedge$($p.Ext)") (Join-Path $clientDir "bapedge$($p.Ext)") -Force
     if (Test-Path (Join-Path $rootDir "policy.cedar")) { Copy-Item (Join-Path $rootDir "policy.cedar") (Join-Path $clientDir "policy.cedar") -Force }
     if (Test-Path (Join-Path $rootDir "schema.json")) { Copy-Item (Join-Path $rootDir "schema.json") (Join-Path $clientDir "schema.json") -Force }
@@ -162,16 +171,36 @@ Persistence:
 
     # cchook subfolder
     $ccHookDir = Join-Path $clientDir "cchook"
-    if (!(Test-Path $ccHookDir)) { New-Item -ItemType Directory -Path $ccHookDir | Out-Null }
+    if (!(Test-Path $ccHookDir)) { New-Item -ItemType Directory -Path $ccHookDir -Force | Out-Null }
     Copy-Item (Join-Path $platformDir "cchook-interceptor$($p.Ext)") (Join-Path $ccHookDir "interceptor$($p.Ext)") -Force
 
     # .claude hook settings
     $claudeSettingsDir = Join-Path $clientDir ".claude"
-    if (!(Test-Path $claudeSettingsDir)) { New-Item -ItemType Directory -Path $claudeSettingsDir | Out-Null }
+    if (!(Test-Path $claudeSettingsDir)) { New-Item -ItemType Directory -Path $claudeSettingsDir -Force | Out-Null }
     $hookCmd = if ($p.OS -eq "windows") { "interceptor.exe" } else { "interceptor" }
     $claudeSettings = @"
 {
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$hookCmd"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$hookCmd"
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "Bash|Read|View|Edit|Write",
@@ -255,7 +284,7 @@ Features:
     # ROLE PACKAGE 3: Gateway PEP
     # =========================================================================
     $gwDir = Join-Path $platformDir "gateway"
-    if (!(Test-Path $gwDir)) { New-Item -ItemType Directory -Path $gwDir | Out-Null }
+    if (!(Test-Path $gwDir)) { New-Item -ItemType Directory -Path $gwDir -Force | Out-Null }
     Copy-Item (Join-Path $platformDir "bapgateway$($p.Ext)") (Join-Path $gwDir "bapgateway$($p.Ext)") -Force
     Copy-Item (Join-Path $rootDir "bap-config.json") (Join-Path $gwDir "bap-config.json") -Force
 

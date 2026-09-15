@@ -26,25 +26,101 @@ if "%BAP_SERVER_URL%"=="" (
 )
 if "%BAP_SERVER_URL%"=="" set BAP_SERVER_URL=http://localhost:8080
 
-:: 4. Verify cchook interceptor exists
+:: 4. Resolve and build cchook interceptor
 if not exist "cchook\interceptor.exe" (
     echo [*] Building cchook\interceptor.exe...
     cd cchook && go build -o interceptor.exe interceptor.go && cd ..
 )
 
-:: 5. Notify BAP Control Plane of Session Start (fail-securely ignored if offline)
-curl.exe -s -X POST "%BAP_SERVER_URL%/api/v1/sessions/start" ^
+:: Ensure .claude/settings.json hooks are configured
+if not exist ".claude" mkdir .claude
+(
+    echo {
+    echo   "hooks": {
+    echo     "SessionStart": [
+    echo       {
+    echo         "hooks": [
+    echo           {
+    echo             "type": "command",
+    echo             "command": "./cchook/interceptor.exe"
+    echo           }
+    echo         ]
+    echo       }
+    echo     ],
+    echo     "UserPromptSubmit": [
+    echo       {
+    echo         "hooks": [
+    echo           {
+    echo             "type": "command",
+    echo             "command": "./cchook/interceptor.exe"
+    echo           }
+    echo         ]
+    echo       }
+    echo     ],
+    echo     "PreToolUse": [
+    echo       {
+    echo         "matcher": "Bash|Read|View|Edit|Write",
+    echo         "hooks": [
+    echo           {
+    echo             "type": "command",
+    echo             "command": "./cchook/interceptor.exe"
+    echo           }
+    echo         ]
+    echo       }
+    echo     ]
+    echo   }
+    echo }
+) > ".claude\settings.json"
+
+:: Capture prompt if passed on command line
+if not "%~1"=="" (
+    set "BAP_USER_PROMPT=%~1"
+    echo %~1> ".bap-prompt.txt"
+)
+
+:: 5. Write workspace session marker
+(
+    echo {
+    echo   "session_id": "%BAP_SESSION_ID%",
+    echo   "server_url": "%BAP_SERVER_URL%",
+    echo   "user": "%USERNAME%",
+    echo   "hostname": "%COMPUTERNAME%",
+    echo   "user_prompt": "%BAP_USER_PROMPT%"
+    echo }
+) > ".bap-session.json"
+
+:: Resolve bapedge binary for continuous background heartbeat watcher
+set "BAPEDGE_BIN="
+if exist "dist\windows-amd64\claude-client\bapedge.exe" (
+    set "BAPEDGE_BIN=dist\windows-amd64\claude-client\bapedge.exe"
+) else if exist "dist\windows-amd64\bapedge.exe" (
+    set "BAPEDGE_BIN=dist\windows-amd64\bapedge.exe"
+) else if exist "bapedge.exe" (
+    set "BAPEDGE_BIN=bapedge.exe"
+) else (
+    where bapedge.exe >nul 2>&1
+    if !ERRORLEVEL! equ 0 set "BAPEDGE_BIN=bapedge.exe"
+)
+
+:: Start continuous background heartbeat watcher thread
+if not "!BAPEDGE_BIN!"=="" (
+    !BAPEDGE_BIN! watch --server "%BAP_SERVER_URL%" --session-id "%BAP_SESSION_ID%" --detach >nul 2>&1
+)
+
+:: 6. Notify BAP Control Plane of Session Start (fail-securely ignored if offline)
+curl.exe -s --max-time 2 --connect-timeout 2 -X POST "%BAP_SERVER_URL%/api/v1/sessions/start" ^
     -H "Content-Type: application/json" ^
-    -d "{\"session_id\":\"%BAP_SESSION_ID%\",\"app_id\":\"claude-code\",\"user_id\":\"%USERNAME%\",\"hostname\":\"%COMPUTERNAME%\"}" >nul 2>&1
+    -d "{\"session_id\":\"%BAP_SESSION_ID%\",\"app_id\":\"claude-code\",\"user_id\":\"%USERNAME%\",\"hostname\":\"%COMPUTERNAME%\",\"user_prompt\":\"%BAP_USER_PROMPT%\"}" >nul 2>&1
 
 echo [*] Ollama Endpoint: %ANTHROPIC_BASE_URL%
 echo [*] Model:           %OLLAMA_MODEL%
 echo [*] Session ID:      %BAP_SESSION_ID%
 echo [*] PreToolUse Hook: cchook\interceptor.exe (Zero-Trust bapedge broker)
+echo [*] Liveness Watcher: Active (heartbeats pulsing, no idle timeout)
 echo [*] Telemetry:       Streaming to %BAP_SERVER_URL% ^& ltd-audit.jsonl
 echo ===============================================================================
 
-:: 6. Auto-detect Claude executable (claude-code.cmd in corporate env, claude on personal laptop)
+:: 7. Auto-detect Claude executable (claude-code.cmd in corporate env, claude on personal laptop)
 set CLAUDE_BIN=
 where claude-code.cmd >nul 2>&1
 if %ERRORLEVEL% equ 0 (
@@ -79,10 +155,13 @@ if "%~1"=="" (
     call %CLAUDE_BIN% --dangerously-skip-permissions --model %OLLAMA_MODEL% -p %1 <nul
 )
 
-:: 7. Notify BAP Control Plane of Session End (with strict 2s timeout so it never hangs)
+:: 8. Notify BAP Control Plane of Session End (with strict 2s timeout so it never hangs)
 curl.exe -s --max-time 2 --connect-timeout 2 -X POST "%BAP_SERVER_URL%/api/v1/sessions/end" ^
     -H "Content-Type: application/json" ^
     -d "{\"session_id\":\"%BAP_SESSION_ID%\",\"reason\":\"session exited\"}" >nul 2>&1
+
+if exist ".bap-session.json" del /f /q ".bap-session.json" >nul 2>&1
+if exist ".bap-prompt.txt" del /f /q ".bap-prompt.txt" >nul 2>&1
 
 echo.
 echo [*] Claude Code session %BAP_SESSION_ID% completed gracefully.

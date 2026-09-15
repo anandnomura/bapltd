@@ -5,6 +5,7 @@ via BAP Edge (PEP broker) and BAP Control Plane.
 """
 
 import json
+import ssl
 import os
 import shutil
 import subprocess
@@ -13,6 +14,33 @@ import time
 import urllib.request
 import urllib.error
 from typing import Optional, Dict, Any, List
+
+
+def _urlopen(request, **kwargs):
+    ca = os.getenv("BAP_CA_CERT")
+    if not ca:
+        for cand in ["bap-root-ca.crt", "../bap-root-ca.crt", "../../bap-root-ca.crt", "controlplane-cert.pem", "../controlplane-cert.pem", "../../controlplane-cert.pem"]:
+            if os.path.exists(cand):
+                ca = cand
+                break
+    ctx = None
+    if ca:
+        try:
+            ctx = ssl.create_default_context(cafile=ca)
+        except Exception:
+            ctx = None
+
+    url = getattr(request, "full_url", str(request))
+    if "localhost" in url or "127.0.0.1" in url or "::1" in url:
+        if ctx is None:
+            ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+
+    if ctx is not None and "context" not in kwargs:
+        kwargs["context"] = ctx
+
+    return urllib.request.urlopen(request, **kwargs)
 
 
 class BAPPolicyViolation(Exception):
@@ -127,9 +155,11 @@ class BAPSession:
         user_email: Optional[str] = None,
         instance_id: Optional[str] = None,
         bapedge_path: Optional[str] = None,
+        user_prompt: Optional[str] = None,
     ):
         ep = resolve_endpoints()
         self.app_id = app_id
+        self.user_prompt = user_prompt if user_prompt is not None else os.getenv("BAP_USER_PROMPT", "")
         self.server_url = (server_url or ep["controlplane_url"]).rstrip("/")
         self.gateway_url = (gateway_url or ep["gateway_url"]).rstrip("/")
         self.envoy_url = ep["envoy_url"].rstrip("/")
@@ -166,6 +196,7 @@ class BAPSession:
         self.is_active = True
         payload = {
             "session_id": self.session_id,
+            "user_prompt": self.user_prompt,
             "app_id": self.app_id,
             "instance_id": self.instance_id,
             "user_id": self.user_id,
@@ -188,7 +219,7 @@ class BAPSession:
                 data=json.dumps(payload).encode("utf-8"),
                 headers={"Content-Type": "application/json"}
             )
-            with urllib.request.urlopen(req, timeout=1) as resp:
+            with _urlopen(req, timeout=1) as resp:
                 if resp.status in (200, 201):
                     self.server_registered = True
         except Exception:
@@ -212,7 +243,7 @@ class BAPSession:
                 data=json.dumps(payload).encode("utf-8"),
                 headers={"Content-Type": "application/json"}
             )
-            with urllib.request.urlopen(req, timeout=2) as resp:
+            with _urlopen(req, timeout=2) as resp:
                 pass
         except Exception:
             pass
@@ -224,20 +255,24 @@ class BAPSession:
         Acquires an ephemeral BAP authority grant (JWT-SVID) from the BAP Control Plane.
         Required when calling protected enterprise API Gateways (Envoy, Kong, bap-gateway).
         """
-        agent_id = f"agent-{self.app_id.lower()}-{self.instance_id}"
-        payload = {
-            "agent_id": agent_id,
-            "binary_hash": "tofu-session-hash",
-            "scopes": scopes or ["api:read", "zero-trust"]
-        }
+        credentials_path = os.getenv("BAP_CREDENTIALS", os.path.expanduser("~/.ltd/credentials.json"))
+        try:
+            with open(credentials_path, encoding="utf-8") as handle:
+                credentials = json.load(handle)
+            if credentials.get("server_url", "").rstrip("/") != self.server_url:
+                raise ValueError("Enrollment belongs to a different control plane")
+            token = credentials["session_token"]
+            payload = {"agent_id": credentials["agent_id"], "binary_hash": credentials["binary_hash"], "scopes": scopes or ["api:read"]}
+        except (OSError, ValueError, KeyError) as error:
+            raise BAPPolicyViolation("acquire_grant", f"Enroll with bapedge register first; set BAP_CREDENTIALS to that credentials file: {error}") from error
         url = f"{self.server_url}/api/v1/grants/acquire"
         try:
             req = urllib.request.Request(
                 url,
                 data=json.dumps(payload).encode("utf-8"),
-                headers={"Content-Type": "application/json"}
+                headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"}
             )
-            with urllib.request.urlopen(req, timeout=3) as resp:
+            with _urlopen(req, timeout=3) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 return data.get("token", "")
         except Exception as e:
@@ -257,6 +292,7 @@ class BAPSession:
         # Build invocation environment matching BAP 5-stage identity
         env = os.environ.copy()
         env["BAP_SESSION_ID"] = self.session_id
+        env["BAP_USER_PROMPT"] = self.user_prompt
         env["BAP_USER_ID"] = self.user_id
         env["BAP_USER_EMAIL"] = self.user_email
         env["BAP_WORKLOAD_ID"] = self.app_id

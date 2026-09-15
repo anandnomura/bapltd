@@ -1,24 +1,109 @@
-# Binaries & Backups
+# ==============================================================================
+# BAP Security: Sensitive Credentials, Certificates, Keys & Tokens
+# NEVER commit private keys, certificates, or tokens to public repositories!
+# ==============================================================================
+*.pem
+*.key
+*.crt
+*.csr
+*.srl
+*.pfx
+*.p12
+*.cnf
+*.conf
+cert_openssl.cnf
+v3_ext.cnf
+bap-root-ca.*
+controlplane-*
+.bap-admin-token
+.bap-session.json
+.bap-prompt.txt
+bap-credentials.json
+credentials.json
+.env
+.env.local
+.env.*.local
+
+# ==============================================================================
+# Binaries, Packages & Build Outputs
+# ==============================================================================
+dist/
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.tar.gz
+*.zip
 *.old
 *.tmp
 *.bak
-bapcontrolplane.old
-bapedge.old
-bapmcp.old
 build_manifest.json
+bapcontrolplane.exe
+bapedge.exe
+bapgateway.exe
+bapmcp.exe
+ltd-agent.exe
+cchook/bapedge.exe
+cchook/interceptor.exe
+cchook/ltd-agent.exe
+copilot/bapedge.exe
+copilot/copilot_interceptor.exe
+copilot/ltd-agent.exe
+bap-controlplane/bapcontrolplane.exe
+bap-controlplane/server.exe
+bap-edge/bapedge.exe
+bap-edge/bap-edge.exe
+bap-gateway/bapgateway.exe
 
-# Python cache & virtualenvs
+# ==============================================================================
+# State Persistence & SQLite Databases
+# ==============================================================================
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+bap-controlplane.db*
+policy-state.json
+manual-acceptance-results.json
+
+# ==============================================================================
+# Audit Logs & Runtime Telemetry
+# ==============================================================================
+*.log
+*.jsonl
+ltd-audit.jsonl
+
+# ==============================================================================
+# Python Cache, Wheels & Virtual Environments
+# ==============================================================================
 __pycache__/
 *.py[cod]
 *$py.class
 .pytest_cache/
 venv/
 .venv/
+python-agent/dist/
+python-agent/build/
+python-agent/*.egg-info/
 
-# Environment files
-.env.local
-.env.*.local
+# ==============================================================================
+# Dashboard Dependencies & Test Reports
+# ==============================================================================
+dashboard/node_modules/
+dashboard/test-results/
+dashboard/playwright-report/
 
-# Logs
-*.log
-
+# ==============================================================================
+# IDE & Operating System Files
+# ==============================================================================
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini

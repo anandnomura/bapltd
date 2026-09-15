@@ -1,8 +1,15 @@
 # BAP Comprehensive Testing & Verification Guide
+
+> Start with the maintained [manual end-to-end acceptance guide](MANUAL_E2E_TESTING.md)
+> and `python scripts/manual_acceptance.py --local --https --hold`.
+> Counts and timings below are historical examples, not current deployment
+> coverage guarantees. The legacy Windows runner rebuilds packages and can
+> terminate named processes; use the isolated acceptance runner for new checks.
+
 ## `bapedge` (LTD) & `bapcontrolplane`
 
 This guide provides end-to-end instructions for testing all components of the **Bounded Authority Plane (BAP)**, including:
-1. Automated Test Suite (48/48 passing tests, 0 failures).
+1. Automated suites (verify current results for your configuration).
 2. Live `bapcontrolplane` UP Testing (OTC Pre-registration, Binary Hash Attestation, Ephemeral Grants, Central Audit Chain).
 3. Live `bapcontrolplane` DOWN Resilience Testing (Offline Edge Continuity, 0ms latency, Fail-Secure Invariants).
 4. Persistent Kill-Switch Testing across network partitions.

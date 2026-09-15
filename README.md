@@ -1,5 +1,12 @@
 # BAP: Bounded Authority Plane for AI Agents
 
+**New here?** [Choose a deployment](DEPLOYMENT_START_HERE.md) ?
+[run end-to-end acceptance](MANUAL_E2E_TESTING.md) ? open **`/dashboard/`**.
+The new [React dashboard](dashboard/README.md) shows live agents, recent
+ departures, captured prompts and tool actions, with admin-gated controls.
+See [security changes and remaining architecture work](DEPLOYMENT_REVIEW.md).
+
+
 **BAP** provides cryptographically bounded, zero-trust execution governance for AI agents such as **Google Antigravity**, **Claude Code**, **GitHub Copilot**, **Cursor/Windsurf**, and automated Python SDK workflow workers across Windows, Linux, WSL, and macOS.
 
 The architecture formally converges into two core components:
@@ -577,7 +584,7 @@ Pre-configured in `.vscode/settings.json` to route terminal command executions t
   copilot\copilot-wrap.bat "git status"
   copilot\copilot-wrap.bat "cat .env"
   ```
-*(For complete live test scripts, evasion tests, and log verification, see [TESTING_GUIDE.md](file:///c:/Users/User/pyprj/bapltd/TESTING_GUIDE.md)).*
+*(For complete live test scripts, evasion tests, and log verification, see [TESTING_GUIDE.md](TESTING_GUIDE.md)).*
 
 ---
 
@@ -808,19 +815,19 @@ python demo_envoy.py        # or demo_envoy_podman.bat / .sh
 # 3. Stop Envoy container
 ./stop_envoy_podman.sh      # or stop_envoy_podman.bat
 ```
-*(For complete details, see [envoy/ENVOY_PODMAN_GUIDE.md](file:///c:/Users/User/pyprj/bapltd/envoy/ENVOY_PODMAN_GUIDE.md)).*
+*(For complete details, see [envoy/ENVOY_PODMAN_GUIDE.md](envoy/ENVOY_PODMAN_GUIDE.md)).*
 
 ---
 
 ## 12. Comprehensive Documentation & Guides
 
-- [REACT_ADMIN_INTEGRATION.md](file:///c:/Users/User/pyprj/bapltd/REACT_ADMIN_INTEGRATION.md): Guide for connecting standalone enterprise React / Web UI dashboards running on separate servers to the BAP Control Plane using CORS, Bearer Token authentication, and prompt analytics.
-- [ENDPOINT_CONFIGURATION.md](file:///c:/Users/User/pyprj/bapltd/ENDPOINT_CONFIGURATION.md): Complete guide for configuring central BAP Control Plane hosts and gateways for developer laptops via `bap-config.json` and `configure_endpoints.bat`.
-- [FEATURES_AND_ARCHITECTURE.md](file:///c:/Users/User/pyprj/bapltd/FEATURES_AND_ARCHITECTURE.md): Master architectural reference, 34-feature matrix, and complete threat defense guide.
-- [CIO_DEMO_GUIDE.md](file:///c:/Users/User/pyprj/bapltd/CIO_DEMO_GUIDE.md): Complete executive walkthrough, interactive demo script, talking points, and FAQ for CIO/CISO presentations.
-- [envoy/ENVOY_PODMAN_GUIDE.md](file:///c:/Users/User/pyprj/bapltd/envoy/ENVOY_PODMAN_GUIDE.md): Guide for Option 1: Envoy Proxy on Podman/Docker, container commands, and troubleshooting.
-- [python-agent/README.md](file:///c:/Users/User/pyprj/bapltd/python-agent/README.md): Developer guide for `bap-sdk`, LangChain/CrewAI integrations, and Nexus distribution.
-- [API_GUIDE.md](file:///c:/Users/User/pyprj/bapltd/API_GUIDE.md): Complete REST API specification and CLI reference for all control plane endpoints and edge commands.
-- [TESTING_GUIDE.md](file:///c:/Users/User/pyprj/bapltd/TESTING_GUIDE.md): Step-by-step testing guide for automated and manual verification across offline resilience, kill-switch, and multi-agent workflows.
+- [REACT_ADMIN_INTEGRATION.md](REACT_ADMIN_INTEGRATION.md): Guide for connecting standalone enterprise React / Web UI dashboards running on separate servers to the BAP Control Plane using CORS, Bearer Token authentication, and prompt analytics.
+- [ENDPOINT_CONFIGURATION.md](ENDPOINT_CONFIGURATION.md): Complete guide for configuring central BAP Control Plane hosts and gateways for developer laptops via `bap-config.json` and `configure_endpoints.bat`.
+- [FEATURES_AND_ARCHITECTURE.md](FEATURES_AND_ARCHITECTURE.md): Master architectural reference, 34-feature matrix, and complete threat defense guide.
+- [CIO_DEMO_GUIDE.md](CIO_DEMO_GUIDE.md): Complete executive walkthrough, interactive demo script, talking points, and FAQ for CIO/CISO presentations.
+- [envoy/ENVOY_PODMAN_GUIDE.md](envoy/ENVOY_PODMAN_GUIDE.md): Guide for Option 1: Envoy Proxy on Podman/Docker, container commands, and troubleshooting.
+- [python-agent/README.md](python-agent/README.md): Developer guide for `bap-sdk`, LangChain/CrewAI integrations, and Nexus distribution.
+- [API_GUIDE.md](API_GUIDE.md): Complete REST API specification and CLI reference for all control plane endpoints and edge commands.
+- [TESTING_GUIDE.md](TESTING_GUIDE.md): Step-by-step testing guide for automated and manual verification across offline resilience, kill-switch, and multi-agent workflows.
 
 

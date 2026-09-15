@@ -55,8 +55,11 @@ Every BAP component (`bapedge`, `cchook`, `bap-sdk`, `bapgateway`, demo scripts)
 :: Interactive mode (prompts for corporate URL):
 configure_endpoints.bat
 
-:: Direct command line:
+:: Direct command line (corporate endpoints):
 configure_endpoints.bat https://bap-controlplane.corp.internal:8080 https://bap-gateway.corp.internal:9090
+
+:: Reset to local standalone / offline demo mode:
+configure_endpoints.bat http://localhost:8080 http://localhost:9090
 ```
 
 #### PowerShell:

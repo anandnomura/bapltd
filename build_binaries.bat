@@ -3,11 +3,15 @@ setlocal EnableDelayedExpansion
 
 set "ROOT_DIR=%~dp0"
 cd /d "%ROOT_DIR%"
-set "GOTOOLCHAIN=local"
+set "GOTOOLCHAIN=auto"
 
 if "%1"=="--all" goto :build_all
 if "%1"=="-all" goto :build_all
-if "%1"=="all" goto :build_all
+echo [0/5] Ensuring BAP Root CA and TLS credentials...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT_DIR%scripts\ensure_certs.ps1"
+if %ERRORLEVEL% neq 0 (
+    echo [WARNING] ensure_certs.ps1 failed, continuing build...
+)
 
 echo [1/5] Building bap-controlplane...
 cd /d "%ROOT_DIR%bap-controlplane"

@@ -1,6 +1,7 @@
 package audit
 
 import (
+	"bap-edge/internal/httptransport"
 	"bytes"
 	"crypto/rand"
 	"encoding/hex"
@@ -12,9 +13,7 @@ import (
 	"time"
 )
 
-var httpClient = &http.Client{
-	Timeout: 300 * time.Millisecond,
-}
+var httpClient = httptransport.New(300 * time.Millisecond)
 
 // HandshakeAck models the cryptographic acknowledgement returned by bapcontrolplane.
 type HandshakeAck struct {
@@ -71,6 +70,7 @@ func Transmit(entry AuditEntry, serverURL string, logPath string) (bool, string,
 			"spiffe_id":     entry.SPIFFEID,
 			"timestamp":     entry.Timestamp.UTC().Format(time.RFC3339),
 			"source":        entry.Source,
+			"user_prompt":   entry.UserPrompt,
 			"client_pid":    entry.ClientPID,
 			"executable":    entry.Executable,
 			"arguments":     entry.Arguments,
