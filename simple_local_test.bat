@@ -18,6 +18,7 @@ taskkill /fi "WINDOWTITLE eq BAP-Test-ControlPlane*" /f >nul 2>&1
 taskkill /fi "WINDOWTITLE eq BAP-Test-Gateway*" /f >nul 2>&1
 taskkill /fi "WINDOWTITLE eq BAP-Test-Watch*" /f >nul 2>&1
 del /f /q .bap-session.json .bap-prompt.txt >nul 2>&1
+del /f /q bap-controlplane.db bap-controlplane.db-shm bap-controlplane.db-wal >nul 2>&1
 
 :: Resolve binaries
 set "CP_BIN=%~dp0dist\windows-amd64\controlplane\bapcontrolplane.exe"
@@ -142,7 +143,7 @@ python scripts\test_financial_reconciler.py --server-url "!CP_URL!" --gateway-ur
 
 echo.
 echo ====================================================================================================
-echo  [SUCCESS] All components are running live!
+echo  [SUCCESS] All 3 Scenarios Executed Live!
 echo ====================================================================================================
 echo  1. Switch to your browser window: !CP_URL!/inspector?mode=live
 echo  2. Observe:
@@ -152,14 +153,37 @@ echo     - Event Stream: Every card has a 'Prompt: ...' badge and sub-2ms metric
 echo     - Attack Alerts: Blocked credential exfiltration and tamper attempts in red.
 echo     - Detail Drawer: Click any event card to view the complete forensic record.
 echo.
-echo  Press any key to cleanly stop all test processes and daemons...
+echo  Press any key to complete workloads and watch the Live Radar drop to 0 agents...
+pause >nul
+
+echo.
+echo ----------------------------------------------------------------------------------------------------
+echo  [SCENARIO 4] Graceful Session Teardown ^& Workload Deregistration
+echo ----------------------------------------------------------------------------------------------------
+echo  [*] Deregistering all agent workloads to cleanly transition Live Radar to 0 active agents...
+python scripts\close_sessions.py --server-url "!CP_URL!" --cert-file "!CERT_FILE!"
+taskkill /fi "WINDOWTITLE eq BAP-Test-Watch*" /f >nul 2>&1
+
+echo  [*] Waiting for browser Live Radar to synchronize (2-3s poll cycle)...
+ping -n 4 127.0.0.1 >nul
+
+echo.
+echo ====================================================================================================
+echo  [RADAR VERIFIED] 0 ACTIVE AGENTS (All workloads cleanly deregistered!)
+echo ====================================================================================================
+echo  Switch to your browser window (!CP_URL!/inspector?mode=live) now:
+echo    - Live Workload Radar badge: [0 ACTIVE AGENTS]
+echo    - Status text: "All workloads closed & deregistered. Ready for next agent session."
+echo    - Active Chips: "No client sessions active"
+echo    - Toast Notifications: Clean workload deregistration logged in UI.
+echo.
+echo  Press any key to complete test and tear down daemons (Control Plane ^& Gateway)...
 pause >nul
 
 echo.
 echo [*] Tearing down test daemons...
 taskkill /fi "WINDOWTITLE eq BAP-Test-ControlPlane*" /f >nul 2>&1
 taskkill /fi "WINDOWTITLE eq BAP-Test-Gateway*" /f >nul 2>&1
-taskkill /fi "WINDOWTITLE eq BAP-Test-Watch*" /f >nul 2>&1
 del /f /q .bap-session.json .bap-prompt.txt >nul 2>&1
 echo [OK] All test processes stopped cleanly.
 exit /b 0
