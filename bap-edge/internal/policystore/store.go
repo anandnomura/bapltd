@@ -1,6 +1,7 @@
 package policystore
 
 import (
+	"bap-edge/internal/httptransport"
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
@@ -163,7 +164,7 @@ func (s *Store) SyncWithServer(serverURL, agentID string, timeout time.Duration)
 		timeout = 2 * time.Second
 	}
 
-	client := &http.Client{Timeout: timeout}
+	client := httptransport.New(timeout)
 	state, _ := s.LoadState()
 
 	reqPayload := map[string]any{

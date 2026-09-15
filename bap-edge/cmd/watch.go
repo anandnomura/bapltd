@@ -1,11 +1,11 @@
 package cmd
 
 import (
+	"bap-edge/internal/httptransport"
 	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
-	"net/http"
 	"os"
 	"os/exec"
 	"strings"
@@ -88,61 +88,93 @@ func RunWatch(args []string) error {
 }
 
 func runWatchLoop(watchPID int, serverURL, sessionID, appID string) {
-	// 1. Persist local workspace marker
+	// 1. Check if user prompt exists
+	var initialPrompt string
+	if promptData, err := os.ReadFile(".bap-prompt.txt"); err == nil {
+		initialPrompt = strings.TrimSpace(string(promptData))
+	}
+	if initialPrompt == "" {
+		initialPrompt = os.Getenv("BAP_USER_PROMPT")
+	}
+
+	// 2. Persist local workspace marker
 	marker := map[string]any{
-		"session_id": sessionID,
-		"server_url": serverURL,
-		"pid":        watchPID,
-		"app_id":     appID,
-		"started_at": time.Now().UTC(),
+		"session_id":  sessionID,
+		"server_url":  serverURL,
+		"pid":         watchPID,
+		"app_id":      appID,
+		"user_prompt": initialPrompt,
+		"started_at":  time.Now().UTC(),
 	}
 	if data, err := json.MarshalIndent(marker, "", "  "); err == nil {
 		_ = os.WriteFile(".bap-session.json", data, 0600)
 	}
 
-	// 2. Enroll session into central control plane
+	// 3. Enroll session into central control plane
 	hostname, _ := os.Hostname()
 	username := os.Getenv("USERNAME")
 	if username == "" {
 		username = os.Getenv("USER")
 	}
 	startPayload := map[string]any{
-		"session_id": sessionID,
-		"app_id":     appID,
-		"user_id":    username,
-		"hostname":   hostname,
-		"client_pid": watchPID,
+		"session_id":  sessionID,
+		"app_id":      appID,
+		"user_id":     username,
+		"hostname":    hostname,
+		"client_pid":  watchPID,
+		"user_prompt": initialPrompt,
 	}
 	_ = postJSONQuick(serverURL+"/api/v1/sessions/start", startPayload)
 
-	// 3. Monitor process liveness
+	// 4. Continuous Heartbeat and Liveness Monitor
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
-	heartbeatCount := 0
+	deadCheckCount := 0
+	lastSyncedPrompt := initialPrompt
+
 	for range ticker.C {
-		if !isProcessAlive(watchPID) {
-			// Workload terminated (exit, Ctrl+C, or window close)
-			endPayload := map[string]any{
-				"session_id": sessionID,
-				"reason":     "Workload process exited cleanly",
+		// Only check process termination if a valid target PID was specified
+		if watchPID > 0 {
+			if !isProcessAlive(watchPID) {
+				deadCheckCount++
+				if deadCheckCount >= 3 {
+					// Workload confirmed terminated (exit, Ctrl+C, or window close)
+					endPayload := map[string]any{
+						"session_id": sessionID,
+						"reason":     "Workload process exited cleanly",
+					}
+					_ = postJSONQuick(serverURL+"/api/v1/sessions/end", endPayload)
+					_ = os.Remove(".bap-session.json")
+					_ = os.Remove(".bap-prompt.txt")
+					return
+				}
+			} else {
+				deadCheckCount = 0
 			}
-			_ = postJSONQuick(serverURL+"/api/v1/sessions/end", endPayload)
-			_ = os.Remove(".bap-session.json")
-			return
 		}
 
-		// Keep alive & sync state periodically
-		heartbeatCount++
-		if heartbeatCount%2 == 0 { // every ~4 seconds
-			_ = postJSONQuick(serverURL+"/api/v1/sessions/heartbeat", map[string]any{
-				"session_id": sessionID,
-			})
-			_ = postJSONQuick(serverURL+"/api/v1/instances/heartbeat", map[string]any{
-				"agent_id": sessionID,
-			})
-			syncRevocationsFast(serverURL, "policy.cedar")
+		// Keep alive & pulse heartbeat continuously (no matter whether CC is talking or idle)
+		_ = postJSONQuick(serverURL+"/api/v1/sessions/heartbeat", map[string]any{
+			"session_id": sessionID,
+		})
+		_ = postJSONQuick(serverURL+"/api/v1/instances/heartbeat", map[string]any{
+			"agent_id": sessionID,
+		})
+
+		// Check for prompt updates from .bap-prompt.txt
+		if pBytes, err := os.ReadFile(".bap-prompt.txt"); err == nil {
+			currentPrompt := strings.TrimSpace(string(pBytes))
+			if currentPrompt != "" && currentPrompt != lastSyncedPrompt {
+				lastSyncedPrompt = currentPrompt
+				_ = postJSONQuick(serverURL+"/api/v1/sessions/prompt", map[string]any{
+					"session_id":  sessionID,
+					"user_prompt": currentPrompt,
+				})
+			}
 		}
+
+		syncRevocationsFast(serverURL, "policy.cedar")
 	}
 }
 
@@ -151,9 +183,10 @@ func postJSONQuick(url string, payload any) error {
 	if err != nil {
 		return err
 	}
-	client := &http.Client{Timeout: 2 * time.Second}
+	client := httptransport.New(2 * time.Second)
 	resp, err := client.Post(url, "application/json", bytes.NewReader(body))
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "[bapedge watch] Error posting to %s: %v\n", url, err)
 		return err
 	}
 	_ = resp.Body.Close()

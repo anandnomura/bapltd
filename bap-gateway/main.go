@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bap-gateway/internal/httptransport"
 	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -52,13 +53,14 @@ func main() {
 	defaultCP, defaultPort := resolveConfig()
 	port := flag.Int("port", defaultPort, "Port for BAP Gateway PEP HTTP server")
 	cpURL := flag.String("controlplane", defaultCP, "BAP Control Plane base URL")
-	defaultSecret := "ltd-service-bounded-authority-secret-key-32b!"
+	defaultSecret := ""
 	if envSec := os.Getenv("BAP_SECRET_KEY"); envSec != "" {
 		defaultSecret = envSec
 	}
 	secret := flag.String("secret", defaultSecret, "HMAC secret key for offline JWT verification")
 	consume := flag.Bool("consume", true, "Atomically consume single-use grants via control plane")
 	flag.Parse()
+ if !*consume && (*secret == "" || *secret == "ltd-service-bounded-authority-secret-key-32b!") { log.Fatal("Offline verification requires an explicitly configured private signing secret") }
 
 	cfg := GatewayConfig{
 		Port:         *port,
@@ -204,7 +206,7 @@ func emitGatewayAudit(cfg GatewayConfig, sessionID, agentID, appID, path, method
 		// 1. Post to Control Plane
 		if cfg.ControlPlane != "" {
 			data, _ := json.Marshal(ev)
-			client := &http.Client{Timeout: 2 * time.Second}
+			client := httptransport.New(2 * time.Second)
 			_, _ = client.Post(cfg.ControlPlane+"/api/v1/audit/ingest", "application/json", bytes.NewReader(data))
 		}
 
@@ -230,7 +232,7 @@ func validateGrant(cfg GatewayConfig, token, resource string) (bool, *TokenClaim
 		body, _ := json.Marshal(payload)
 		url := fmt.Sprintf("%s/api/v1/grants/consume", cfg.ControlPlane)
 
-		client := &http.Client{Timeout: 2 * time.Second}
+		client := httptransport.New(2 * time.Second)
 		resp, err := client.Post(url, "application/json", bytes.NewBuffer(body))
 		if err == nil {
 			defer resp.Body.Close()
@@ -251,6 +253,7 @@ func validateGrant(cfg GatewayConfig, token, resource string) (bool, *TokenClaim
 				return false, nil, fmt.Errorf("control plane rejected grant (HTTP %d): %s", resp.StatusCode, string(respBody))
 			}
 		}
+ return false, nil, fmt.Errorf("central grant consumption unavailable or returned an invalid response; access denied")
 	}
 
 	// Mode B: Local Cryptographic Fallback (Decentralized HMAC verification)
@@ -278,7 +281,7 @@ func validateGrant(cfg GatewayConfig, token, resource string) (bool, *TokenClaim
 		return false, nil, fmt.Errorf("failed to parse claims JSON")
 	}
 
-	if time.Now().Unix() > claims.Exp {
+	if time.Now().Unix() >= claims.Exp {
 		return false, nil, fmt.Errorf("BAP grant expired at %s", time.Unix(claims.Exp, 0).Format(time.RFC3339))
 	}
 

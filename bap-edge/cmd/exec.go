@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bap-edge/internal/httptransport"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -42,6 +43,7 @@ func (ec *execContext) exit(resp types.ExecResponse, code int) {
 	uID, uEmail, spiffeID := resolveLocalIdentity()
 	entry := audit.AuditEntry{
 		SessionID:   ec.sessionID,
+		UserPrompt:  os.Getenv("BAP_USER_PROMPT"),
 		UserID:      uID,
 		UserEmail:   uEmail,
 		SPIFFEID:    spiffeID,
@@ -312,7 +314,7 @@ func syncRevocationsFast(serverURL, policyPath string) {
 	if serverURL == "" || os.Getenv("BAP_OFFLINE") == "1" || os.Getenv("BAP_TEST_MODE") == "1" {
 		return
 	}
-	client := &http.Client{Timeout: 200 * time.Millisecond}
+	client := httptransport.New(200 * time.Millisecond)
 	resp, err := client.Get(serverURL + "/api/v1/control/revocations")
 	if err != nil || resp.StatusCode != http.StatusOK {
 		return

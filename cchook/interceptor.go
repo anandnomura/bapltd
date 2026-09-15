@@ -2,15 +2,58 @@ package main
 
 import (
 	"bytes"
+	"crypto/tls"
+	"crypto/x509"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 )
+
+//go:embed embedded_ca.crt
+var embeddedCACert []byte
+
+func getHTTPClient() *http.Client {
+	roots, err := x509.SystemCertPool()
+	if err != nil || roots == nil {
+		roots = x509.NewCertPool()
+	}
+	if len(embeddedCACert) > 0 {
+		roots.AppendCertsFromPEM(embeddedCACert)
+	}
+	path := os.Getenv("BAP_CA_CERT")
+	if path == "" {
+		for _, cand := range []string{"bap-root-ca.crt", "controlplane-cert.pem", "../bap-root-ca.crt", "../controlplane-cert.pem", "../../controlplane-cert.pem"} {
+			if _, err := os.Stat(cand); err == nil {
+				path = cand
+				break
+			}
+		}
+	}
+	if path != "" {
+		if pem, err := os.ReadFile(path); err == nil {
+			roots.AppendCertsFromPEM(pem)
+		}
+	}
+
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{
+			RootCAs:    roots,
+			MinVersion: tls.VersionTLS12,
+		},
+	}
+	return &http.Client{
+		Timeout:   2 * time.Second,
+		Transport: tr,
+	}
+}
 
 // ToolInput represents the input object from Claude Code.
 // Supports both command-execution (Bash) and direct file tools (Read, View, Edit, Write).
@@ -20,11 +63,14 @@ type ToolInput struct {
 	Path     string `json:"path,omitempty"`
 }
 
-// HookPayload represents the Claude Code PreToolUse event payload.
+// HookPayload represents the Claude Code lifecycle event payload (SessionStart, UserPromptSubmit, PreToolUse).
 type HookPayload struct {
 	HookEventName string    `json:"hook_event_name"`
-	ToolName      string    `json:"tool_name"`
-	ToolInput     ToolInput `json:"tool_input"`
+	ToolName      string    `json:"tool_name,omitempty"`
+	ToolInput     ToolInput `json:"tool_input,omitempty"`
+	UserPrompt    string    `json:"user_prompt,omitempty"`
+	Prompt        string    `json:"prompt,omitempty"`
+	SessionID     string    `json:"session_id,omitempty"`
 }
 
 // HookSpecificOutput represents the PreToolUse decision schema.
@@ -53,6 +99,135 @@ type ExecResponse struct {
 	Suggestion string `json:"suggestion,omitempty"`
 }
 
+func resolveServerURL() string {
+	if s := os.Getenv("BAP_SERVER_URL"); s != "" {
+		return strings.TrimRight(s, "/")
+	}
+	cfgCandidates := []string{"bap-config.json", "../bap-config.json"}
+	if exePath, err := os.Executable(); err == nil {
+		cfgCandidates = append(cfgCandidates, filepath.Join(filepath.Dir(exePath), "bap-config.json"))
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		cfgCandidates = append(cfgCandidates, filepath.Join(home, ".bap", "bap-config.json"))
+	}
+	for _, cfgPath := range cfgCandidates {
+		if cfgData, err := os.ReadFile(cfgPath); err == nil {
+			var cfg struct {
+				ControlPlaneURL string `json:"controlplane_url"`
+			}
+			if json.Unmarshal(cfgData, &cfg) == nil && cfg.ControlPlaneURL != "" {
+				return strings.TrimRight(cfg.ControlPlaneURL, "/")
+			}
+		}
+	}
+	return "http://localhost:8080"
+}
+
+func handleSessionStartHook(payload HookPayload) {
+	ppid := os.Getppid()
+	sessionID := payload.SessionID
+	if sessionID == "" {
+		sessionID = os.Getenv("BAP_SESSION_ID")
+	}
+	if sessionID == "" {
+		sessionID = fmt.Sprintf("sess-claude-pid-%d", ppid)
+	}
+
+	serverURL := resolveServerURL()
+	marker := map[string]any{
+		"session_id": sessionID,
+		"server_url": serverURL,
+		"pid":        ppid,
+		"app_id":     "claude-code",
+		"started_at": time.Now().UTC(),
+	}
+	if data, err := json.MarshalIndent(marker, "", "  "); err == nil {
+		_ = os.WriteFile(".bap-session.json", data, 0600)
+	}
+
+	// Notify control plane of session start
+	hostname, _ := os.Hostname()
+	username := os.Getenv("USERNAME")
+	if username == "" {
+		username = os.Getenv("USER")
+	}
+	startPayload := map[string]any{
+		"session_id": sessionID,
+		"app_id":     "claude-code",
+		"user_id":    username,
+		"hostname":   hostname,
+		"client_pid": ppid,
+	}
+	if body, err := json.Marshal(startPayload); err == nil {
+		client := getHTTPClient()
+		resp, _ := client.Post(serverURL+"/api/v1/sessions/start", "application/json", bytes.NewReader(body))
+		if resp != nil {
+			_ = resp.Body.Close()
+		}
+	}
+
+	// Launch detached bapedge watch thread
+	ltdBin := findBinary("bapedge.exe")
+	if ltdBin == "" {
+		ltdBin = findBinary("bapedge")
+	}
+	if ltdBin != "" {
+		wCmd := exec.Command(ltdBin, "watch", fmt.Sprintf("--pid=%d", ppid), fmt.Sprintf("--server=%s", serverURL), fmt.Sprintf("--session-id=%s", sessionID), "--detach")
+		_ = wCmd.Start()
+	}
+
+	os.Stdout.WriteString("{\"status\":\"ok\"}\n")
+	os.Exit(0)
+}
+
+func handleUserPromptHook(payload HookPayload) {
+	prompt := strings.TrimSpace(payload.UserPrompt)
+	if prompt == "" {
+		prompt = strings.TrimSpace(payload.Prompt)
+	}
+	if prompt != "" {
+		_ = os.WriteFile(".bap-prompt.txt", []byte(prompt), 0600)
+
+		// Update .bap-session.json
+		if sessData, err := os.ReadFile(".bap-session.json"); err == nil {
+			var sess map[string]any
+			if json.Unmarshal(sessData, &sess) == nil {
+				sess["user_prompt"] = prompt
+				if updated, err := json.MarshalIndent(sess, "", "  "); err == nil {
+					_ = os.WriteFile(".bap-session.json", updated, 0600)
+				}
+			}
+		}
+
+		// Notify control plane of user prompt
+		serverURL := resolveServerURL()
+		sessionID := os.Getenv("BAP_SESSION_ID")
+		if sessionID == "" {
+			if sessData, err := os.ReadFile(".bap-session.json"); err == nil {
+				var sInfo struct {
+					SessionID string `json:"session_id"`
+				}
+				_ = json.Unmarshal(sessData, &sInfo)
+				sessionID = sInfo.SessionID
+			}
+		}
+		if sessionID != "" && serverURL != "" {
+			reqBody, _ := json.Marshal(map[string]any{
+				"session_id":  sessionID,
+				"user_prompt": prompt,
+			})
+			client := getHTTPClient()
+			resp, _ := client.Post(serverURL+"/api/v1/sessions/prompt", "application/json", bytes.NewReader(reqBody))
+			if resp != nil {
+				_ = resp.Body.Close()
+			}
+		}
+	}
+
+	os.Stdout.WriteString("{\"status\":\"ok\"}\n")
+	os.Exit(0)
+}
+
 func main() {
 	// 1. Read event payload from stdin
 	inputBytes, err := io.ReadAll(os.Stdin)
@@ -71,7 +246,19 @@ func main() {
 		return
 	}
 
-	// 2. Intercept direct file inspection tools (Read, View, Edit, Write)
+	// 2. Lifecycle Hook Handling: SessionStart
+	if strings.EqualFold(payload.HookEventName, "SessionStart") {
+		handleSessionStartHook(payload)
+		return
+	}
+
+	// 3. Lifecycle Hook Handling: UserPromptSubmit / UserPrompt
+	if strings.EqualFold(payload.HookEventName, "UserPromptSubmit") || strings.EqualFold(payload.HookEventName, "UserPrompt") {
+		handleUserPromptHook(payload)
+		return
+	}
+
+	// 4. Intercept direct file inspection tools (Read, View, Edit, Write)
 	targetFile := payload.ToolInput.FilePath
 	if targetFile == "" {
 		targetFile = payload.ToolInput.Path
@@ -177,6 +364,19 @@ func main() {
 	cmd := exec.Command(ltdBin, execArgs...)
 	cmd.Env = os.Environ()
 	cmd.Env = append(cmd.Env, "BAP_SESSION_ID="+sessionID)
+
+	// Inject active user prompt if captured
+	var activePrompt string
+	if pBytes, err := os.ReadFile(".bap-prompt.txt"); err == nil {
+		activePrompt = strings.TrimSpace(string(pBytes))
+	}
+	if activePrompt == "" {
+		activePrompt = os.Getenv("BAP_USER_PROMPT")
+	}
+	if activePrompt != "" {
+		cmd.Env = append(cmd.Env, "BAP_USER_PROMPT="+activePrompt)
+	}
+
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

@@ -17,6 +17,7 @@ import (
 type AuditEntry struct {
 	EventID      string    `json:"event_id,omitempty"`
 	SessionID    string    `json:"session_id,omitempty"`
+	UserPrompt   string    `json:"user_prompt,omitempty"`
 	UserID       string    `json:"user_id,omitempty"`
 	UserEmail    string    `json:"user_email,omitempty"`
 	SPIFFEID     string    `json:"spiffe_id,omitempty"`

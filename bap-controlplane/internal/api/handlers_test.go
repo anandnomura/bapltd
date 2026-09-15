@@ -24,7 +24,11 @@ func setupTestServer() *Server {
 
 func TestAPIFullLifecycle(t *testing.T) {
 	srv := setupTestServer()
-	ts := httptest.NewServer(srv.Handler())
+	srv.SetAdminSecurity("test-admin", true)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Header.Set("X-BAP-Admin-Token", "test-admin")
+		srv.Handler().ServeHTTP(w, r)
+	}))
 	defer ts.Close()
 
 	client := ts.Client()

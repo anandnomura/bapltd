@@ -7,6 +7,23 @@ import (
 	"bap-controlplane/pkg/types"
 )
 
+func TestRequestedScopesCannotEscalateAuthority(t *testing.T) {
+	minter := NewTokenMinter("test-secret", time.Minute)
+	agent := &types.RegisteredAgent{AgentID: "scoped-agent", PermittedScopes: []string{"api:read"}}
+	for _, scope := range []string{"*", "api:write", "cli:exec"} {
+		if _, _, err := minter.Mint(agent, "hash", []string{scope}); err == nil {
+			t.Fatalf("scope escalation accepted: %s", scope)
+		}
+	}
+	token, _, err := minter.Mint(agent, "hash", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := minter.Consume(token, "cli:exec"); err == nil {
+		t.Fatal("cli:exec bypassed scope validation")
+	}
+}
+
 func TestTokenMinter_MintAndVerify(t *testing.T) {
 	secret := "test-secret-key-very-secure-12345"
 	minter := NewTokenMinter(secret, 10*time.Minute)

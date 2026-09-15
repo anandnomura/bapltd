@@ -70,11 +70,23 @@ func (tm *TokenMinter) Mint(agent *types.RegisteredAgent, candidateHash string, 
 	expiresAt := now.Add(tm.defaultTTL)
 
 	scopes := agent.PermittedScopes
-	if len(requestedScopes) > 0 {
-		scopes = requestedScopes
-	}
 	if len(scopes) == 0 {
 		scopes = []string{"cli:exec", "zero-trust"}
+	}
+	if len(requestedScopes) > 0 {
+		for _, requested := range requestedScopes {
+			allowed := false
+			for _, permitted := range scopes {
+				if permitted == requested || permitted == "*" || (strings.HasSuffix(permitted, "*") && strings.HasPrefix(requested, strings.TrimSuffix(permitted, "*"))) {
+					allowed = true
+					break
+				}
+			}
+			if !allowed {
+				return "", time.Time{}, fmt.Errorf("requested scope %q is not permitted", requested)
+			}
+		}
+		scopes = requestedScopes
 	}
 
 	idBytes := make([]byte, 8)
@@ -147,7 +159,7 @@ func (tm *TokenMinter) Verify(tokenStr string) (*GrantClaims, error) {
 		return nil, fmt.Errorf("failed to parse claims JSON: %w", err)
 	}
 
-	if time.Now().Unix() > claims.Exp {
+	if time.Now().Unix() >= claims.Exp {
 		return nil, fmt.Errorf("token has expired")
 	}
 
@@ -183,7 +195,7 @@ func (tm *TokenMinter) Consume(tokenStr, resource string) (*GrantClaims, error) 
 				break
 			}
 		}
-		if !matched && resource != "cli:exec" {
+		if !matched {
 			return nil, fmt.Errorf("grant scope does not authorize requested resource %q", resource)
 		}
 	}

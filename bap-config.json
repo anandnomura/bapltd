@@ -1,5 +1,5 @@
 {
-  "controlplane_url": "http://amn010731.nomura.com:8080",
+  "controlplane_url": "https://localhost:8443",
   "gateway_url": "http://localhost:9090",
   "envoy_url": "http://localhost:10000",
   "trust_domain": "bap.internal",

@@ -9,6 +9,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"bap-controlplane/internal/api"
@@ -23,7 +25,7 @@ import (
 
 func main() {
 	port := flag.Int("port", 8080, "Port for bapcontrolplane HTTP server")
-	secretKey := flag.String("secret", "ltd-service-bounded-authority-secret-key-32b!", "HMAC signing secret for tokens")
+	secretKey := flag.String("secret", "", "HMAC signing secret for tokens")
 	adminToken := flag.String("admin-token", "", "Administrative secret token for control APIs (default: auto-generated or read from BAP_ADMIN_TOKEN)")
 	allowRemoteAdmin := flag.Bool("allow-remote-admin", false, "Allow remote network callers to invoke admin APIs with valid token (default: false, localhost only)")
 	grantTTL := flag.Int("ttl", 30, "Default grant TTL in minutes")
@@ -36,7 +38,17 @@ func main() {
 	certPath := flag.String("tls-cert", "", "Path to TLS certificate PEM file")
 	keyPath := flag.String("tls-key", "", "Path to TLS private key PEM file")
 	dbPath := flag.String("db", "", "Path to SQLite database file for state persistence (default: bap-controlplane.db, 'memory' for in-memory)")
+	allowedOrigins := flag.String("allowed-origins", os.Getenv("BAP_ALLOWED_ORIGINS"), "Comma-separated exact browser origins; same-origin only by default")
 	flag.Parse()
+	if (*certPath == "") != (*keyPath == "") {
+		log.Fatal("Both -tls-cert and -tls-key are required")
+	}
+	if *autoTLS && *certPath != "" {
+		log.Fatal("Do not combine -tls-auto with certificate files")
+	}
+	if *certPath != "" {
+		*useTLS = true
+	}
 
 	if *httpsFlag {
 		*useTLS = true
@@ -53,19 +65,29 @@ func main() {
 		if _, err := rand.Read(b); err == nil {
 			*adminToken = "bap_adm_" + hex.EncodeToString(b)
 		} else {
-			*adminToken = "bap_adm_sec_" + fmt.Sprintf("%d", time.Now().UnixNano())
+			log.Fatal("Unable to generate administrative credential securely")
 		}
-		log.Printf("[bapcontrolplane] Generated dynamic administrative secret token: %s", *adminToken)
+		log.Printf("[bapcontrolplane] Generated admin credential; retrieve it from the protected .bap-admin-token file")
 	} else {
 		log.Printf("[bapcontrolplane] Administrative security enabled with configured token")
 	}
-	_ = os.WriteFile(".bap-admin-token", []byte(*adminToken), 0600)
+	if err := os.WriteFile(".bap-admin-token", []byte(*adminToken), 0600); err != nil {
+		log.Fatalf("Cannot write admin credential file: %v", err)
+	}
 
 	if envSecret := os.Getenv("BAP_SECRET_KEY"); envSecret != "" {
 		*secretKey = envSecret
 	}
 	if *secretKey == "ltd-service-bounded-authority-secret-key-32b!" {
-		log.Printf("[bapcontrolplane] WARNING: Running with default HMAC secret key. Set BAP_SECRET_KEY in production!")
+		log.Fatal("The published demo signing secret is not permitted; configure BAP_SECRET_KEY")
+	}
+	if *secretKey == "" {
+		key := make([]byte, 32)
+		if _, err := rand.Read(key); err != nil {
+			log.Fatal("Unable to generate signing key securely")
+		}
+		*secretKey = hex.EncodeToString(key)
+		log.Print("Using ephemeral signing key; configure BAP_SECRET_KEY for stable credentials across restart")
 	}
 
 	if envTD := os.Getenv("BAP_TRUST_DOMAIN"); envTD != "" {
@@ -120,10 +142,13 @@ func main() {
 
 	server := api.NewServer(regStore, otcStore, minter, policyStore, auditStore, sessionStore)
 	server.SetAdminSecurity(*adminToken, *allowRemoteAdmin)
+	if err := server.SetAllowedOrigins(strings.Split(*allowedOrigins, ",")); err != nil {
+		log.Fatal(err)
+	}
 
 	addr := fmt.Sprintf(":%d", *port)
 	proto := "http"
-	if *useTLS || *autoTLS {
+	if *useTLS || *autoTLS || *httpsFlag {
 		proto = "https"
 	}
 	log.Printf("[bapcontrolplane] Central Control Plane for Bounded Authority Plane starting on %s://%s (Alias: ltd-service)", proto, addr)
@@ -137,25 +162,43 @@ func main() {
 		WriteTimeout: 10 * time.Second,
 	}
 
-	if *useTLS || *autoTLS {
-		if *autoTLS || (*certPath == "" && *keyPath == "") {
-			log.Printf("[bapcontrolplane] Generating self-signed TLS certificates for development...")
-			tlsCert, certPEM, keyPEM, err := tlsutil.GenerateSelfSignedCert([]string{"localhost", "127.0.0.1"}, 365*24*time.Hour)
-			if err != nil {
-				log.Fatalf("[bapcontrolplane] Failed to generate self-signed cert: %v", err)
+	if *useTLS || *autoTLS || *httpsFlag {
+		// 1. Auto-discover provisioned controlplane-cert.pem if flags omitted
+		if *certPath == "" && *keyPath == "" {
+			for _, dir := range []string{".", "..", "../.."} {
+				candCert := filepath.Join(dir, "controlplane-cert.pem")
+				candKey := filepath.Join(dir, "controlplane-key.pem")
+				if _, errC := os.Stat(candCert); errC == nil {
+					if _, errK := os.Stat(candKey); errK == nil {
+						*certPath = candCert
+						*keyPath = candKey
+						break
+					}
+				}
 			}
-			_ = tlsutil.SaveCertAndKey("controlplane-cert.pem", "controlplane-key.pem", certPEM, keyPEM)
-			log.Printf("[bapcontrolplane] Exported dev cert to controlplane-cert.pem for client trust verification")
-			srv.TLSConfig = &tls.Config{
-				Certificates: []tls.Certificate{tlsCert},
-			}
-			if err := srv.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
+		}
+
+		// 2. If certificate and key are found, load them directly
+		if *certPath != "" && *keyPath != "" {
+			log.Printf("[bapcontrolplane] Loading TLS certificate from %s and key from %s", *certPath, *keyPath)
+			if err := srv.ListenAndServeTLS(*certPath, *keyPath); err != nil && err != http.ErrServerClosed {
 				log.Fatalf("[bapcontrolplane] Fatal TLS server error: %v", err)
 			}
 			return
 		}
 
-		if err := srv.ListenAndServeTLS(*certPath, *keyPath); err != nil && err != http.ErrServerClosed {
+		// 3. Fallback: generate self-signed ephemeral certificates for rapid local dev
+		log.Printf("[bapcontrolplane] Generating self-signed TLS certificates for development...")
+		tlsCert, certPEM, keyPEM, err := tlsutil.GenerateSelfSignedCert([]string{"localhost", "127.0.0.1", "a.b.com"}, 365*24*time.Hour)
+		if err != nil {
+			log.Fatalf("[bapcontrolplane] Failed to generate self-signed cert: %v", err)
+		}
+		_ = tlsutil.SaveCertAndKey("controlplane-cert.pem", "controlplane-key.pem", certPEM, keyPEM)
+		log.Printf("[bapcontrolplane] Exported dev cert to controlplane-cert.pem for client trust verification")
+		srv.TLSConfig = &tls.Config{
+			Certificates: []tls.Certificate{tlsCert},
+		}
+		if err := srv.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("[bapcontrolplane] Fatal TLS server error: %v", err)
 		}
 		return

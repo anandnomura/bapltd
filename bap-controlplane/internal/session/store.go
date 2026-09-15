@@ -143,6 +143,12 @@ func (s *Store) Start(req SessionStartRequest) (*Session, error) {
 
 	now := time.Now().UTC()
 	if existing, found := s.sessions[sessionID]; found {
+		if existing.Status == "revoked" {
+			return nil, fmt.Errorf("session is revoked; administrator restore required")
+		}
+		if req.UserPrompt != "" {
+			existing.UserPrompt = req.UserPrompt
+		}
 		existing.Status = "active"
 		existing.LastActiveAt = now
 		if req.ClientPID > 0 {
@@ -198,6 +204,7 @@ func (s *Store) Start(req SessionStartRequest) (*Session, error) {
 		AllowedCount: 0,
 		DeniedCount:  0,
 		Events:       make([]audit.Event, 0),
+		UserPrompt:   req.UserPrompt,
 	}
 
 	s.sessions[sessionID] = sess
@@ -214,6 +221,10 @@ func (s *Store) End(sessionID string, reason string) error {
 	sess, found := s.sessions[sessionID]
 	if !found {
 		return fmt.Errorf("session %q not found", sessionID)
+	}
+
+	if sess.Status == "revoked" {
+		return fmt.Errorf("revoked session requires administrator restore")
 	}
 
 	now := time.Now().UTC()
@@ -285,13 +296,13 @@ func (s *Store) RevokeTarget(target string, reason string) (*Session, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	targetLower := strings.ToLower(target)
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return nil, fmt.Errorf("target is required")
+	}
 	now := time.Now().UTC()
 	for _, sess := range s.sessions {
-		if strings.Contains(strings.ToLower(sess.SessionID), targetLower) ||
-			strings.Contains(strings.ToLower(sess.InstanceID), targetLower) ||
-			strings.Contains(strings.ToLower(sess.UserID), targetLower) ||
-			strings.Contains(strings.ToLower(sess.UserEmail), targetLower) {
+		if sess.SessionID == target {
 			sess.Status = "revoked"
 			sess.CloseReason = reason
 			sess.LastActiveAt = now
@@ -307,13 +318,13 @@ func (s *Store) RestoreTarget(target string) (*Session, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	targetLower := strings.ToLower(target)
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return nil, fmt.Errorf("target is required")
+	}
 	now := time.Now().UTC()
 	for _, sess := range s.sessions {
-		if strings.Contains(strings.ToLower(sess.SessionID), targetLower) ||
-			strings.Contains(strings.ToLower(sess.InstanceID), targetLower) ||
-			strings.Contains(strings.ToLower(sess.UserID), targetLower) ||
-			strings.Contains(strings.ToLower(sess.UserEmail), targetLower) {
+		if sess.SessionID == target {
 			sess.Status = "active"
 			sess.CloseReason = ""
 			sess.LastActiveAt = now
@@ -440,6 +451,29 @@ func (s *Store) Heartbeat(sessionID string) (*Session, error) {
 	now := time.Now().UTC()
 	sess.LastActiveAt = now
 	// If prematurely closed by idle timeout while process is still actively pinging, resurrect to active
+	if sess.Status == "closed" && sess.CloseReason == "idle_timeout" {
+		sess.Status = "active"
+		sess.EndedAt = nil
+		sess.CloseReason = ""
+	}
+	s.saveSessionToDB(sess)
+	cp := *sess
+	return &cp, nil
+}
+
+// SetPrompt updates the UserPrompt and LastActiveAt timestamp for a session.
+func (s *Store) SetPrompt(sessionID, prompt string) (*Session, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	sess, exists := s.sessions[sessionID]
+	if !exists {
+		return nil, fmt.Errorf("session %q not found", sessionID)
+	}
+
+	now := time.Now().UTC()
+	sess.UserPrompt = prompt
+	sess.LastActiveAt = now
 	if sess.Status == "closed" && sess.CloseReason == "idle_timeout" {
 		sess.Status = "active"
 		sess.EndedAt = nil

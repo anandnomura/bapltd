@@ -347,8 +347,11 @@ cd /d "%ROOT_DIR%"
 if "!CP_IS_LOCAL!"=="0" goto :skip_start_cp
 taskkill /F /IM bapcontrolplane.exe >nul 2>&1
 taskkill /F /IM bapgateway.exe >nul 2>&1
-echo [*] Starting local BAP Control Plane on port !CP_PORT!...
-start "BAP Control Plane" /min "%ROOT_DIR%dist\windows-amd64\controlplane\bapcontrolplane.exe" -port !CP_PORT! -ttl 30 -trust-domain bap.internal
+set "CP_TLS_ARG="
+echo !CP_URL! | findstr /i "^https:" >nul 2>&1
+if !ERRORLEVEL! equ 0 set "CP_TLS_ARG=-https"
+echo [*] Starting local BAP Control Plane on port !CP_PORT! !CP_TLS_ARG!...
+start "BAP Control Plane" /min "%ROOT_DIR%dist\windows-amd64\controlplane\bapcontrolplane.exe" -port !CP_PORT! !CP_TLS_ARG! -admin-token admin123 -ttl 30 -trust-domain bap.internal
 ping -n 3 127.0.0.1 >nul
 goto :after_start_cp
 

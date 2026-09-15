@@ -25,7 +25,32 @@ Designed for lead architects, security engineers, and developer tools teams who 
 
 ---
 
-## 2. The 30-Second Opening Elevator Pitch
+## 2. Local vs. Corporate Intranet Environments
+
+By default, BAP may be configured to connect to a corporate intranet host (e.g. `http://a.b.com:8080` in `bap-config.json`). If you are demonstrating on a local machine, isolated laptop, or outside the corporate VPN, you have two options:
+
+### A. Instant Local Flag (`-local`)
+Run the demo with the `-local` flag. This immediately overrides any corporate endpoint config, forcing all services (`bapcontrolplane` on `:8080` and `bapgateway` on `:9090`) to start and communicate strictly on `localhost`:
+```powershell
+.\cio_demo.bat -local
+```
+
+### B. Automatic Network Fallback
+If you run `.\cio_demo.bat` without flags, BAP tests connectivity to the configured corporate host. If unreachable (e.g., VPN is disconnected or host is offline), **it automatically falls back to `http://localhost:8080`** and spins up local background services so the demo never hangs or errors.
+
+### C. Permanently Reconfiguring Endpoints
+To switch between corporate and local endpoints permanently:
+```cmd
+:: Switch workspace to local mode:
+.\configure_endpoints.bat http://localhost:8080 http://localhost:9090
+
+:: Switch workspace to corporate host:
+.\configure_endpoints.bat http://a.b.com:8080 http://a.b.com:9090
+```
+
+---
+
+## 3. The 30-Second Opening Elevator Pitch
 
 When you begin the meeting with your CIO, set the stage with this opening statement:
 
@@ -37,7 +62,7 @@ When you begin the meeting with your CIO, set the stage with this opening statem
 
 ---
 
-## 3. Step-by-Step Presentation Script
+## 4. Step-by-Step Presentation Script
 
 | Step | Topic | What You Say to the CIO | What You Do in Terminal | What the CIO Sees on the Browser |
 | :---: | :--- | :--- | :--- | :--- |
@@ -53,7 +78,7 @@ When you begin the meeting with your CIO, set the stage with this opening statem
 
 ---
 
-## 4. Tough CIO Questions & Winning Answers
+## 5. Tough CIO Questions & Winning Answers
 
 ### Q1: *"Will this slow down my developers?"*
 > **Answer**: *"No. BAP evaluates Cedar policies locally in memory on the edge node. Execution latency is under 2 milliseconds — faster than human perception. Developers experience zero lag when running builds, tests, or git commands."*
@@ -81,5 +106,8 @@ When you begin the meeting with your CIO, set the stage with this opening statem
 > - **Option 1 (Production Enterprise Cloud & Linux)**: Uses **Envoy Proxy on Podman / Docker / Kubernetes**. The `envoyproxy/envoy` container image is an open-source CNCF standard already vetted and pre-approved in corporate container registries. It uses standard `envoy.filters.http.ext_authz` filters with zero custom binaries required on the network perimeter.
 > - **Option 3 (Instant Desktop Demo & Edge Nodes)**: For developer workstations, edge brokers, and executive demos, we provide a zero-dependency pure-Go native PEP (`bapgateway.exe`) that starts in under 5ms without requiring containers, hypervisors, or complex virtualization setup. Both options share identical authorization semantics and BAP Grant consumption protocols."*
 
+### Q9: *"Who can trigger the emergency kill switch, and what stops an attacker from guessing the control plane API?"*
+> **Answer**: *"All administrative and mutating control plane APIs (`/api/v1/control/kill-switch`, `/api/v1/control/agent/kill`, `/api/v1/sessions/revoke`) are protected by cryptographically secure 256-bit Admin Bearer Tokens or corporate SSO JWTs (e.g. role `supervisor` or `ciso`). By default, remote network callers are rejected unless remote admin mode is explicitly enabled (`-allow-remote-admin`). Even on HTTPS, an unauthenticated caller attempting to hit control endpoints receives `401 Unauthorized` or `403 Forbidden`."*
 
-
+### Q10: *"Are developers' proprietary code prompts visible to anyone who accesses the control plane?"*
+> **Answer**: *"No. Developer prompts and task instructions are masked by default (`[Protected: Leadership Authentication Required]`). Only authenticated leadership and security admins holding administrative credentials or SSO supervisor roles can unmask raw prompts for fleet-wide learning, policy optimization, and compliance auditing."*

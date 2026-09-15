@@ -16,6 +16,7 @@ import (
 
 	"bap-edge/internal/attest"
 	"bap-edge/internal/config"
+	"bap-edge/internal/httptransport"
 	"bap-edge/internal/policystore"
 )
 
@@ -68,7 +69,7 @@ func RunRegister(args []string) error {
 	code := fs.String("code", "", "One-time registration code (e.g. LTD-OTC-XXXX or BAP-FLEET-XXXX)")
 	configPath := fs.String("config", DefaultCredentialsPath(), "Path to store enrolled credentials")
 	customInstanceID := fs.String("instance-id", "", "Custom instance identifier (optional)")
-	caCertPath := fs.String("ca-cert", "", "Path to custom CA certificate for HTTPS verification")
+	caCertPath := fs.String("ca-cert", os.Getenv("BAP_CA_CERT"), "Path to custom CA certificate for HTTPS verification")
 	insecureTLS := fs.Bool("insecure", false, "Skip TLS certificate verification (development only)")
 
 	if err := fs.Parse(args); err != nil {
@@ -106,27 +107,27 @@ func RunRegister(args []string) error {
 		return fmt.Errorf("failed to encode registration payload: %w", err)
 	}
 
-	// Configure TLS client
-	tlsConfig := &tls.Config{}
+	// Configure TLS client with embedded Root CA support
+	httpClient := httptransport.New(10 * time.Second)
 	if *insecureTLS {
-		tlsConfig.InsecureSkipVerify = true
+		httpClient = &http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			},
+			Timeout: 10 * time.Second,
+		}
 	} else if *caCertPath != "" {
-		caData, err := os.ReadFile(*caCertPath)
-		if err != nil {
-			return fmt.Errorf("failed to read CA certificate from %s: %w", *caCertPath, err)
+		if caData, err := os.ReadFile(*caCertPath); err == nil {
+			pool := x509.NewCertPool()
+			if pool.AppendCertsFromPEM(caData) {
+				httpClient = &http.Client{
+					Transport: &http.Transport{
+						TLSClientConfig: &tls.Config{RootCAs: pool},
+					},
+					Timeout: 10 * time.Second,
+				}
+			}
 		}
-		pool := x509.NewCertPool()
-		if !pool.AppendCertsFromPEM(caData) {
-			return fmt.Errorf("failed to parse CA certificate from %s", *caCertPath)
-		}
-		tlsConfig.RootCAs = pool
-	}
-
-	httpClient := &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: tlsConfig,
-		},
-		Timeout: 10 * time.Second,
 	}
 
 	endpoint := fmt.Sprintf("%s/api/v1/agents/register", *serverURL)

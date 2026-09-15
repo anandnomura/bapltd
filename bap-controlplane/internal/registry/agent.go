@@ -178,13 +178,13 @@ func (s *Store) RevokeTarget(target string) (*types.RegisteredAgent, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	targetLower := strings.ToLower(target)
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return nil, fmt.Errorf("target is required")
+	}
 	now := time.Now()
 	for _, a := range s.agents {
-		if strings.Contains(strings.ToLower(a.AgentID), targetLower) ||
-			strings.Contains(strings.ToLower(a.InstanceID), targetLower) ||
-			strings.Contains(strings.ToLower(a.OwnerEmail), targetLower) ||
-			strings.Contains(strings.ToLower(a.AgentName), targetLower) {
+		if a.AgentID == target {
 			a.Status = types.StatusRevoked
 			a.RevokedAt = &now
 			return a, nil
@@ -197,12 +197,12 @@ func (s *Store) RestoreTarget(target string) (*types.RegisteredAgent, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	targetLower := strings.ToLower(target)
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return nil, fmt.Errorf("target is required")
+	}
 	for _, a := range s.agents {
-		if strings.Contains(strings.ToLower(a.AgentID), targetLower) ||
-			strings.Contains(strings.ToLower(a.InstanceID), targetLower) ||
-			strings.Contains(strings.ToLower(a.OwnerEmail), targetLower) ||
-			strings.Contains(strings.ToLower(a.AgentName), targetLower) {
+		if a.AgentID == target {
 			a.Status = types.StatusActive
 			a.RevokedAt = nil
 			return a, nil
@@ -243,7 +243,10 @@ func (s *Store) List() []*types.RegisteredAgent {
 
 	list := make([]*types.RegisteredAgent, 0, len(s.agents))
 	for _, a := range s.agents {
-		list = append(list, a)
+		copy := *a
+		copy.AllowedBinaryHashes = append([]string(nil), a.AllowedBinaryHashes...)
+		copy.PermittedScopes = append([]string(nil), a.PermittedScopes...)
+		list = append(list, &copy)
 	}
 	return list
 }
@@ -264,7 +267,16 @@ func (s *Store) EnsureSessionAgent(appID, instanceID, spiffeID, userEmail, hostn
 		instanceID = "default"
 	}
 	agentID := fmt.Sprintf("agent-%s-%s", strings.ToLower(appID), instanceID)
+	for _, enrolled := range s.agents {
+		if enrolled.AppID == appID && enrolled.InstanceID == instanceID {
+			agentID = enrolled.AgentID
+			break
+		}
+	}
 	if existing, found := s.agents[agentID]; found {
+		if existing.Status == types.StatusRevoked {
+			return existing
+		}
 		existing.Status = types.StatusActive
 		existing.LastHeartbeatAt = &now
 		if spiffeID != "" && spiffeID != "NA" {
@@ -306,6 +318,9 @@ func (s *Store) EndSessionAgent(appID, instanceID string) {
 	now := time.Now()
 	for _, a := range s.agents {
 		if strings.EqualFold(a.AppID, appID) && (instanceID == "" || a.InstanceID == instanceID || instanceID == "default") {
+			if a.Status == types.StatusRevoked {
+				continue
+			}
 			a.Status = "deregistered"
 			a.LastHeartbeatAt = &now
 		}
@@ -326,6 +341,9 @@ func (s *Store) PurgeStale(maxIdle time.Duration) int {
 				lastAct = *a.LastHeartbeatAt
 			}
 			if now.Sub(lastAct) > maxIdle {
+				if a.Status == types.StatusRevoked {
+					continue
+				}
 				a.Status = "deregistered"
 				a.LastHeartbeatAt = &now
 				count++
@@ -344,6 +362,9 @@ func (s *Store) Reset() int {
 	count := 0
 	for _, a := range s.agents {
 		if a.Status == types.StatusActive {
+			if a.Status == types.StatusRevoked {
+				continue
+			}
 			a.Status = "deregistered"
 			a.LastHeartbeatAt = &now
 			count++
