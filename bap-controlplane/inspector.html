@@ -384,6 +384,12 @@
           <span>Activity Stream & Replayer</span>
         </button>
 
+        <button id="tab-btn-prompts" class="tab-btn px-4 py-2 text-xs font-bold rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition flex items-center space-x-1.5">
+          <span class="text-indigo-400 font-bold">💬</span>
+          <span>User Prompts & Command Flow</span>
+          <span id="prompts-count-pill" class="ml-1 px-1.5 py-0.2 bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 rounded-full text-[10px]">0</span>
+        </button>
+
         <button id="tab-btn-sessions" class="tab-btn px-4 py-2 text-xs font-bold rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition flex items-center space-x-1.5">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
           <span>Agent Sessions</span>
@@ -412,7 +418,7 @@
         <!-- Filters Ribbon -->
         <div class="flex flex-wrap items-center justify-between gap-3 text-xs">
           <div class="flex flex-wrap items-center gap-2">
-            <span class="text-slate-400">Filter Source:</span>
+            <span class="text-slate-400">Source:</span>
             <button data-filter-src="all" class="filter-src-btn px-2.5 py-1 rounded-md bg-slate-800 text-white font-medium border border-slate-700">All</button>
             <button data-filter-src="antigravity" class="filter-src-btn px-2.5 py-1 rounded-md bg-slate-900 text-slate-400 border border-slate-800 hover:bg-slate-800">Antigravity</button>
             <button data-filter-src="claude-code" class="filter-src-btn px-2.5 py-1 rounded-md bg-slate-900 text-slate-400 border border-slate-800 hover:bg-slate-800">Claude Code</button>
@@ -421,19 +427,31 @@
             <button data-filter-src="controlplane" class="filter-src-btn px-2.5 py-1 rounded-md bg-slate-900 text-slate-400 border border-slate-800 hover:bg-slate-800">Control Plane</button>
           </div>
 
-          <div class="flex items-center space-x-3">
+          <div class="flex flex-wrap items-center gap-2.5">
             <div class="flex items-center space-x-1.5">
-              <span class="text-slate-400">Session:</span>
+              <span class="text-slate-400 font-mono">User:</span>
+              <select id="filter-user-select" class="bg-slate-900 border border-slate-700 text-slate-200 rounded px-2 py-1 text-xs font-mono">
+                <option value="all">All Users</option>
+              </select>
+            </div>
+
+            <div class="flex items-center space-x-1.5">
+              <span class="text-slate-400 font-mono">Session:</span>
               <select id="filter-session-select" class="bg-slate-900 border border-slate-700 text-slate-200 rounded px-2 py-1 text-xs font-mono">
                 <option value="all">All Sessions</option>
               </select>
             </div>
 
             <div class="flex items-center space-x-1.5">
-              <span class="text-slate-400">Decision:</span>
+              <span class="text-slate-400 font-mono">Decision:</span>
               <button data-filter-dec="all" class="filter-dec-btn px-2.5 py-1 rounded-md bg-slate-800 text-white font-medium border border-slate-700">All</button>
-              <button data-filter-dec="allow" class="filter-dec-btn px-2.5 py-1 rounded-md bg-slate-900 text-slate-400 border border-slate-800 hover:bg-slate-800">Allow Only</button>
-              <button data-filter-dec="deny" class="filter-dec-btn px-2.5 py-1 rounded-md bg-slate-900 text-slate-400 border border-slate-800 hover:bg-slate-800">Deny Only</button>
+              <button data-filter-dec="allow" class="filter-dec-btn px-2.5 py-1 rounded-md bg-slate-900 text-slate-400 border border-slate-800 hover:bg-slate-800">Allow</button>
+              <button data-filter-dec="deny" class="filter-dec-btn px-2.5 py-1 rounded-md bg-slate-900 text-slate-400 border border-slate-800 hover:bg-slate-800">Deny</button>
+              <button data-filter-dec="intent" class="filter-dec-btn px-2.5 py-1 rounded-md bg-slate-900 text-slate-400 border border-slate-800 hover:bg-slate-800">Prompts</button>
+            </div>
+
+            <div class="flex items-center space-x-1.5">
+              <input id="timeline-search-input" type="text" placeholder="Search commands..." class="bg-slate-900 border border-slate-700 text-slate-200 rounded px-2.5 py-1 text-xs font-mono focus:ring-1 focus:ring-cyan-500 placeholder-slate-500 w-36 sm:w-48">
             </div>
           </div>
         </div>
@@ -441,6 +459,72 @@
         <!-- Event Cards List -->
         <div id="event-cards-container" class="space-y-2.5 max-h-[580px] overflow-y-auto scrollbar-thin pr-1.5">
           <!-- Populated by JavaScript -->
+        </div>
+      </div>
+
+      <!-- TAB: USER PROMPTS & INTENT FLOW -->
+      <div id="tab-pane-prompts" class="tab-pane hidden space-y-4">
+        <!-- Controls & Filter Ribbon -->
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-lg flex flex-wrap items-center justify-between gap-3 text-xs">
+          <div class="flex flex-wrap items-center gap-3">
+            <div class="flex items-center space-x-1.5">
+              <span class="text-slate-400 font-mono">👤 User:</span>
+              <select id="prompt-filter-user" class="bg-slate-950 border border-slate-700 text-slate-200 rounded px-2.5 py-1 text-xs font-mono">
+                <option value="all">All Users</option>
+              </select>
+            </div>
+
+            <div class="flex items-center space-x-1.5">
+              <span class="text-slate-400 font-mono">🤖 App:</span>
+              <select id="prompt-filter-app" class="bg-slate-950 border border-slate-700 text-slate-200 rounded px-2.5 py-1 text-xs font-mono">
+                <option value="all">All Workloads</option>
+                <option value="claude-code">Claude Code</option>
+                <option value="antigravity">Antigravity IDE</option>
+                <option value="copilot">Copilot CLI</option>
+                <option value="python">Python SDK</option>
+              </select>
+            </div>
+
+            <div class="flex items-center space-x-1.5">
+              <span class="text-slate-400 font-mono">🛡️ Outcome:</span>
+              <select id="prompt-filter-outcome" class="bg-slate-950 border border-slate-700 text-slate-200 rounded px-2.5 py-1 text-xs font-mono">
+                <option value="all">All Prompts</option>
+                <option value="threats">Contains Denied / Blocked Attacks</option>
+                <option value="allowed">All Commands Permitted</option>
+                <option value="no_commands">No Commands Executed (Text / Refusal)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="flex items-center space-x-2 w-full md:w-auto">
+            <input id="prompt-search-input" type="text" placeholder="Search prompts & commands..." class="bg-slate-950 border border-slate-700 text-slate-200 rounded px-3 py-1.5 text-xs font-mono focus:ring-1 focus:ring-indigo-500 placeholder-slate-500 w-full md:w-64">
+            <button id="btn-refresh-prompts" class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded border border-slate-700 cursor-pointer" title="Refresh Prompts">🔄</button>
+          </div>
+        </div>
+
+        <!-- Prompts Summary Stats -->
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+          <div class="bg-slate-900 border border-slate-800 rounded-xl p-3 flex items-center justify-between">
+            <span class="text-slate-400 font-mono">Total Prompts</span>
+            <span id="stat-prompts-total" class="text-white font-bold font-mono text-sm">0</span>
+          </div>
+          <div class="bg-slate-900 border border-slate-800 rounded-xl p-3 flex items-center justify-between">
+            <span class="text-emerald-400 font-mono">Permitted Workloads</span>
+            <span id="stat-prompts-allowed" class="text-emerald-400 font-bold font-mono text-sm">0</span>
+          </div>
+          <div class="bg-slate-900 border border-slate-800 rounded-xl p-3 flex items-center justify-between">
+            <span class="text-rose-400 font-mono">Blocked Threats</span>
+            <span id="stat-prompts-threats" class="text-rose-400 font-bold font-mono text-sm">0</span>
+          </div>
+          <div class="bg-slate-900 border border-slate-800 rounded-xl p-3 flex items-center justify-between">
+            <span class="text-amber-400 font-mono">No Tool Calls (Refused)</span>
+            <span id="stat-prompts-empty" class="text-amber-400 font-bold font-mono text-sm">0</span>
+          </div>
+        </div>
+
+        <!-- Prompts Container -->
+        <div id="prompts-list-container" class="space-y-3.5 max-h-[650px] overflow-y-auto scrollbar-thin pr-1.5">
+          <!-- Populated dynamically by JavaScript -->
         </div>
       </div>
 
@@ -953,6 +1037,12 @@ when {
     let currentFilterSource = "all";
     let currentFilterDecision = "all";
     let currentFilterSession = "all";
+    let currentFilterUser = "all";
+    let currentSearchText = "";
+    let promptFilterUser = "all";
+    let promptFilterApp = "all";
+    let promptFilterOutcome = "all";
+    let promptSearchText = "";
     let allLiveSessions = [];
     let knownActiveSessionIds = new Set();
     let everSeenSessionIds = new Set();
@@ -1735,9 +1825,68 @@ when {
         });
       }
 
+      // Filter User Dropdown in Timeline
+      const filterUserSelect = document.getElementById("filter-user-select");
+      if (filterUserSelect) {
+        filterUserSelect.addEventListener("change", (e) => {
+          currentFilterUser = e.target.value;
+          renderTimeline();
+        });
+      }
+
+      // Timeline Search Input
+      const timelineSearchInput = document.getElementById("timeline-search-input");
+      if (timelineSearchInput) {
+        timelineSearchInput.addEventListener("input", (e) => {
+          currentSearchText = e.target.value.toLowerCase().trim();
+          renderTimeline();
+        });
+      }
+
+      // Prompts Tab Filters
+      const promptFilterUserEl = document.getElementById("prompt-filter-user");
+      if (promptFilterUserEl) {
+        promptFilterUserEl.addEventListener("change", (e) => {
+          promptFilterUser = e.target.value;
+          renderPromptsTab(allLiveSessions, currentEvents);
+        });
+      }
+
+      const promptFilterAppEl = document.getElementById("prompt-filter-app");
+      if (promptFilterAppEl) {
+        promptFilterAppEl.addEventListener("change", (e) => {
+          promptFilterApp = e.target.value;
+          renderPromptsTab(allLiveSessions, currentEvents);
+        });
+      }
+
+      const promptFilterOutcomeEl = document.getElementById("prompt-filter-outcome");
+      if (promptFilterOutcomeEl) {
+        promptFilterOutcomeEl.addEventListener("change", (e) => {
+          promptFilterOutcome = e.target.value;
+          renderPromptsTab(allLiveSessions, currentEvents);
+        });
+      }
+
+      const promptSearchInputEl = document.getElementById("prompt-search-input");
+      if (promptSearchInputEl) {
+        promptSearchInputEl.addEventListener("input", (e) => {
+          promptSearchText = e.target.value.toLowerCase().trim();
+          renderPromptsTab(allLiveSessions, currentEvents);
+        });
+      }
+
+      const btnRefreshPrompts = document.getElementById("btn-refresh-prompts");
+      if (btnRefreshPrompts) {
+        btnRefreshPrompts.addEventListener("click", () => {
+          checkLiveConnection();
+        });
+      }
+
       // Tab Switching
       const tabs = [
         { btn: "tab-btn-timeline", pane: "tab-pane-timeline" },
+        { btn: "tab-btn-prompts", pane: "tab-pane-prompts" },
         { btn: "tab-btn-sessions", pane: "tab-pane-sessions" },
         { btn: "tab-btn-fleet", pane: "tab-pane-fleet" },
         { btn: "tab-btn-chain", pane: "tab-pane-chain" },
@@ -1756,6 +1905,9 @@ when {
             });
             btnElem.className = "tab-btn px-4 py-2 text-xs font-bold rounded-lg bg-cyan-600/20 text-cyan-300 border border-cyan-500/30 transition flex items-center space-x-1.5";
             paneElem.classList.remove("hidden");
+            if (tab.btn === "tab-btn-prompts") {
+              renderPromptsTab(allLiveSessions, currentEvents);
+            }
           });
         }
       });
@@ -1964,6 +2116,7 @@ when {
       if (!ev) return;
 
       const isDeny = ev.decision === "deny";
+      const isIntent = ev.decision === "intent" || ev.decision === "prompt" || ev.executable === "user_prompt";
       const isAllowed = ev.decision === "allow";
 
       // Nodes
@@ -1987,7 +2140,7 @@ when {
       const promptEl = document.getElementById("flow-prompt-text");
       const promptSrc = document.getElementById("flow-prompt-source");
       if (promptEl) {
-        promptEl.textContent = ev.user_prompt || (isDeny ? "Attempted security-sensitive operation" : "Safe developer toolchain execution");
+        promptEl.textContent = ev.user_prompt || (isIntent ? (ev.full_command || "Developer prompt") : (isDeny ? "Attempted security-sensitive operation" : "Safe developer toolchain execution"));
       }
       if (promptSrc) {
         promptSrc.textContent = ev.source || "claude-code";
@@ -1998,7 +2151,7 @@ when {
 
       if (isDeny) {
         badge.textContent = "BLOCKED / DENY";
-        badge.className = "px-2 py-0.5 rounded text-rose-400 bg-rose-500/10 border border-rose-500/30";
+        badge.className = "px-2 py-0.5 rounded text-rose-400 bg-rose-500/10 border border-rose-500/30 font-bold";
         statusBanner.textContent = "⛔ ZERO-TRUST SHIELD: Pre-Process Interception Denied (" + (ev.duration_ms || 1) + "ms)";
         statusBanner.className = "text-xs px-3 py-1 rounded-full font-mono bg-rose-950/60 text-rose-300 border border-rose-800/60 font-bold";
 
@@ -2011,9 +2164,24 @@ when {
         document.getElementById("flow-decision-text").textContent = "DENY (Blocked)";
         document.getElementById("flow-cedar-rule").textContent = "Cedar Forbid Clause";
         document.getElementById("flow-target-status").textContent = "Blocked (No Shell Spawn)";
+      } else if (isIntent) {
+        badge.textContent = "💬 INTENT / PROMPT";
+        badge.className = "px-2 py-0.5 rounded text-indigo-300 bg-indigo-500/20 border border-indigo-500/40 font-bold";
+        statusBanner.textContent = "💬 DEVELOPER INTENT LOGGED: Prompt captured via UserPromptSubmit hook";
+        statusBanner.className = "text-xs px-3 py-1 rounded-full font-mono bg-indigo-950/60 text-indigo-300 border border-indigo-800/60 font-bold";
+
+        nodeAgent.className = "bg-indigo-950/60 border-2 border-indigo-500 rounded-xl p-3.5 text-center glow-indigo";
+        nodeHook.className = "bg-slate-800 border-2 border-indigo-600/60 rounded-xl p-3.5 text-center";
+        nodeEdge.className = "bg-indigo-950/30 border-2 border-indigo-500 rounded-xl p-3.5 text-center";
+        nodeCedar.className = "bg-slate-900 border-2 border-slate-700 rounded-xl p-3.5 text-center opacity-70";
+        nodeDest.className = "bg-slate-900/40 border-2 border-slate-800 rounded-xl p-3.5 text-center opacity-40";
+
+        document.getElementById("flow-decision-text").textContent = "PROMPT";
+        document.getElementById("flow-cedar-rule").textContent = "Intent Telemetry";
+        document.getElementById("flow-target-status").textContent = "Awaiting Tool Calls";
       } else {
         badge.textContent = "ALLOWED";
-        badge.className = "px-2 py-0.5 rounded text-emerald-400 bg-emerald-500/10 border border-emerald-500/30";
+        badge.className = "px-2 py-0.5 rounded text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 font-bold";
         statusBanner.textContent = "✓ ZERO-TRUST VERIFIED: Permitted Execution Active (" + (ev.duration_ms || 1) + "ms)";
         statusBanner.className = "text-xs px-3 py-1 rounded-full font-mono bg-emerald-950/60 text-emerald-300 border border-emerald-800/60 font-bold";
 
@@ -2045,54 +2213,71 @@ when {
           if (currentFilterSource === "cli" && !ev.source.includes("cli") && !ev.source.includes("bapedge")) return;
           if (currentFilterSource === "controlplane" && !ev.source.includes("controlplane")) return;
         }
+        if (currentFilterUser !== "all") {
+          if (ev.user_id !== currentFilterUser && ev.user_email !== currentFilterUser) return;
+        }
         if (currentFilterDecision !== "all") {
           if (currentFilterDecision === "allow" && ev.decision !== "allow") return;
           if (currentFilterDecision === "deny" && ev.decision !== "deny") return;
+          if (currentFilterDecision === "intent" && ev.decision !== "intent" && ev.decision !== "prompt" && ev.executable !== "user_prompt") return;
         }
         if (currentFilterSession !== "all") {
           if (ev.session_id && ev.session_id !== currentFilterSession) return;
         }
+        if (currentSearchText) {
+          const hay = (ev.full_command + " " + ev.executable + " " + (ev.user_prompt || "") + " " + (ev.user_id || "") + " " + (ev.session_id || "")).toLowerCase();
+          if (!hay.includes(currentSearchText)) return;
+        }
 
         const isDeny = ev.decision === "deny";
+        const isIntent = ev.decision === "intent" || ev.decision === "prompt" || ev.executable === "user_prompt";
         const isCurrent = idx === currentIndex;
 
         const card = document.createElement("div");
         card.id = `event-card-${idx}`;
         card.className = `p-3.5 rounded-xl border transition cursor-pointer flex flex-col md:flex-row items-start md:items-center justify-between gap-3 text-xs ${
           isCurrent 
-            ? (isDeny ? 'bg-rose-950/30 border-rose-500/80 shadow-lg shadow-rose-950/50' : 'bg-emerald-950/30 border-emerald-500/80 shadow-lg shadow-emerald-950/50')
-            : 'bg-slate-900 border-slate-800 hover:border-slate-700 hover:bg-slate-850'
+            ? (isDeny ? 'bg-rose-950/30 border-rose-500/80 shadow-lg shadow-rose-950/50' : isIntent ? 'bg-indigo-950/40 border-indigo-500/80 shadow-lg shadow-indigo-950/50' : 'bg-emerald-950/30 border-emerald-500/80 shadow-lg shadow-emerald-950/50')
+            : (isIntent ? 'bg-slate-900 border-indigo-950/80 hover:border-indigo-500/50' : 'bg-slate-900 border-slate-800 hover:border-slate-700 hover:bg-slate-850')
         }`;
 
         const badgeClass = isDeny 
           ? "bg-rose-500/10 text-rose-400 border-rose-500/30"
-          : "bg-emerald-500/10 text-emerald-400 border-emerald-500/30";
+          : isIntent
+            ? "bg-indigo-500/20 text-indigo-300 border-indigo-500/40 font-bold"
+            : "bg-emerald-500/10 text-emerald-400 border-emerald-500/30";
+
+        const badgeText = isIntent ? "💬 INTENT" : ev.decision.toUpperCase();
 
         const isAgSource = (ev.source || "").toLowerCase().includes("antigravity");
         const srcBadgeClass = isAgSource 
           ? "bg-indigo-950/80 text-indigo-300 border border-indigo-700/60 font-semibold" 
           : "bg-slate-800 text-cyan-300 border border-slate-700";
 
-        const promptBadge = ev.user_prompt ? `
+        const promptBadge = (!isIntent && ev.user_prompt) ? `
           <div class="mt-1.5 flex items-center space-x-2 text-[11px] font-mono text-indigo-200 bg-indigo-950/70 px-2.5 py-1 rounded-lg border border-indigo-500/40">
             <span class="text-indigo-400 font-bold">💬 Prompt:</span>
             <span class="font-medium text-white truncate max-w-xl" title="${escapeHtml(ev.user_prompt)}">"${escapeHtml(ev.user_prompt)}"</span>
           </div>
         ` : '';
 
+        const cmdDisplay = isIntent
+          ? `<span class="text-indigo-200 font-semibold font-mono text-xs">Prompt: "${escapeHtml(ev.full_command || ev.user_prompt)}"</span>`
+          : `<code class="font-bold text-slate-200 text-sm font-mono truncate max-w-xs md:max-w-md">${escapeHtml(ev.full_command || ev.executable)}</code>`;
+
         card.innerHTML = `
           <div class="flex-1 min-w-0">
             <div class="flex flex-wrap items-center space-x-2.5">
               <span class="font-mono text-slate-500 text-[11px]">#${idx + 1}</span>
               <span class="px-2 py-0.5 rounded font-bold uppercase text-[10px] border ${badgeClass}">
-                ${ev.decision.toUpperCase()}
+                ${badgeText}
               </span>
               <span class="px-2 py-0.5 rounded text-[10px] font-mono ${srcBadgeClass}">
                 ${ev.source}
               </span>
               ${ev.session_id ? `<span class="px-1.5 py-0.5 rounded text-[9px] font-mono bg-purple-950/80 text-purple-300 border border-purple-800/50 truncate max-w-[130px]" title="${escapeHtml(ev.session_id)}">${escapeHtml(ev.session_id)}</span>` : ''}
               ${ev.user_id && ev.user_id !== 'NA' ? `<span class="px-1.5 py-0.5 rounded text-[9px] font-mono bg-amber-950/80 text-amber-300 border border-amber-800/50 truncate max-w-[100px]" title="User: ${escapeHtml(ev.user_id)}">👤 ${escapeHtml(ev.user_id)}</span>` : ''}
-              <code class="font-bold text-slate-200 text-sm font-mono truncate max-w-xs md:max-w-md">${escapeHtml(ev.full_command || ev.executable)}</code>
+              ${cmdDisplay}
             </div>
             ${promptBadge}
           </div>
@@ -2110,6 +2295,281 @@ when {
         });
 
         eventCardsContainer.appendChild(card);
+      });
+    }
+
+    // --- RENDER USER PROMPTS & COMMAND FLOW TAB ---
+    function renderPromptsTab(sessions, events) {
+      const container = document.getElementById("prompts-list-container");
+      if (!container) return;
+
+      const allSessions = sessions || allLiveSessions || [];
+      const allEvts = events || currentEvents || [];
+
+      // Extract unique prompts
+      const promptsMap = new Map();
+      const userSet = new Set();
+
+      allSessions.forEach(s => {
+        if (s.user_id && s.user_id !== "NA") userSet.add(s.user_id);
+        if (s.user_email) userSet.add(s.user_email);
+        if (s.user_prompt && s.user_prompt.trim()) {
+          const key = (s.session_id || "") + "::" + s.user_prompt.trim();
+          if (!promptsMap.has(key)) {
+            promptsMap.set(key, {
+              prompt: s.user_prompt.trim(),
+              session_id: s.session_id,
+              user_id: s.user_id || s.user_email || "Developer",
+              user_email: s.user_email || "",
+              app_id: s.app_id || "claude-code",
+              hostname: s.hostname || "localhost",
+              started_at: s.started_at || new Date().toISOString(),
+              status: s.status || "active"
+            });
+          }
+        }
+      });
+
+      allEvts.forEach(ev => {
+        if (ev.user_id && ev.user_id !== "NA") userSet.add(ev.user_id);
+        if (ev.user_prompt && ev.user_prompt.trim()) {
+          const key = (ev.session_id || "") + "::" + ev.user_prompt.trim();
+          if (!promptsMap.has(key)) {
+            promptsMap.set(key, {
+              prompt: ev.user_prompt.trim(),
+              session_id: ev.session_id,
+              user_id: ev.user_id || "Developer",
+              user_email: ev.user_email || "",
+              app_id: ev.source || "claude-code",
+              hostname: "localhost",
+              started_at: ev.timestamp || new Date().toISOString(),
+              status: "active"
+            });
+          }
+        }
+      });
+
+      // Update User filter dropdown options in both Prompts tab & Timeline
+      const userFilterEl = document.getElementById("prompt-filter-user");
+      if (userFilterEl) {
+        const curUserVal = userFilterEl.value;
+        userFilterEl.innerHTML = '<option value="all">All Users</option>';
+        Array.from(userSet).sort().forEach(u => {
+          const opt = document.createElement("option");
+          opt.value = u;
+          opt.textContent = u;
+          if (u === curUserVal) opt.selected = true;
+          userFilterEl.appendChild(opt);
+        });
+      }
+
+      const timelineUserFilterEl = document.getElementById("filter-user-select");
+      if (timelineUserFilterEl) {
+        const curTimelineVal = timelineUserFilterEl.value;
+        timelineUserFilterEl.innerHTML = '<option value="all">All Users</option>';
+        Array.from(userSet).sort().forEach(u => {
+          const opt = document.createElement("option");
+          opt.value = u;
+          opt.textContent = u;
+          if (u === curTimelineVal) opt.selected = true;
+          timelineUserFilterEl.appendChild(opt);
+        });
+      }
+
+      let promptList = Array.from(promptsMap.values());
+      const pillEl = document.getElementById("prompts-count-pill");
+      if (pillEl) pillEl.textContent = promptList.length;
+
+      let statTotal = promptList.length;
+      let statAllowed = 0;
+      let statThreats = 0;
+      let statEmpty = 0;
+
+      // Correlate commands for each prompt
+      promptList.forEach(p => {
+        const matchedCommands = allEvts.filter(ev => {
+          if (ev.decision === "intent" || ev.executable === "user_prompt") return false;
+          if (ev.session_id && p.session_id && ev.session_id === p.session_id) return true;
+          if (ev.user_prompt && ev.user_prompt === p.prompt) return true;
+          return false;
+        });
+        p.commands = matchedCommands;
+
+        const hasDeny = matchedCommands.some(c => c.decision === "deny");
+        const hasAllow = matchedCommands.some(c => c.decision === "allow");
+        if (hasDeny) statThreats++;
+        else if (hasAllow) statAllowed++;
+        else statEmpty++;
+      });
+
+      // Update counter ribbons
+      const elTotal = document.getElementById("stat-prompts-total");
+      const elAllowed = document.getElementById("stat-prompts-allowed");
+      const elThreats = document.getElementById("stat-prompts-threats");
+      const elEmpty = document.getElementById("stat-prompts-empty");
+      if (elTotal) elTotal.textContent = statTotal;
+      if (elAllowed) elAllowed.textContent = statAllowed;
+      if (elThreats) elThreats.textContent = statThreats;
+      if (elEmpty) elEmpty.textContent = statEmpty;
+
+      // Apply Filters
+      let filtered = promptList.filter(p => {
+        if (promptFilterUser !== "all") {
+          if (p.user_id !== promptFilterUser && p.user_email !== promptFilterUser) return false;
+        }
+        if (promptFilterApp !== "all") {
+          if (!p.app_id.toLowerCase().includes(promptFilterApp.toLowerCase())) return false;
+        }
+        if (promptFilterOutcome === "threats") {
+          if (!p.commands.some(c => c.decision === "deny")) return false;
+        } else if (promptFilterOutcome === "allowed") {
+          if (p.commands.length === 0 || p.commands.some(c => c.decision === "deny")) return false;
+        } else if (promptFilterOutcome === "no_commands") {
+          if (p.commands.length > 0) return false;
+        }
+        if (promptSearchText) {
+          const hay = (p.prompt + " " + p.user_id + " " + p.user_email + " " + p.session_id + " " + p.app_id + " " + p.commands.map(c => c.full_command || c.executable).join(" ")).toLowerCase();
+          if (!hay.includes(promptSearchText)) return false;
+        }
+        return true;
+      });
+
+      if (filtered.length === 0) {
+        container.innerHTML = `
+          <div class="p-8 text-center bg-slate-900 border border-slate-800 rounded-xl text-slate-400 text-xs font-mono space-y-2">
+            <span class="text-2xl">💬</span>
+            <p class="text-slate-300 font-semibold">No developer prompts matching current filter.</p>
+            <p class="text-[11px] text-slate-500">Run Claude Code, Antigravity, or simple_local_test.bat to observe live prompt-to-command flows.</p>
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = "";
+      filtered.forEach((p) => {
+        const card = document.createElement("div");
+        const hasDeny = p.commands.some(c => c.decision === "deny");
+        const hasCommands = p.commands.length > 0;
+        
+        card.className = `p-4 rounded-xl border transition shadow-lg ${
+          hasDeny 
+            ? "bg-gradient-to-br from-slate-900 via-rose-950/20 to-slate-900 border-rose-500/50" 
+            : hasCommands 
+              ? "bg-gradient-to-br from-slate-900 via-indigo-950/20 to-slate-900 border-slate-800 hover:border-indigo-500/50"
+              : "bg-slate-900/90 border-slate-800/80"
+        } space-y-3.5`;
+
+        let commandsHtml = "";
+        if (!hasCommands) {
+          commandsHtml = `
+            <div class="p-3 rounded-lg bg-amber-950/30 border border-amber-800/40 text-xs font-mono flex items-start space-x-2.5">
+              <span class="text-amber-400 text-sm">ℹ️</span>
+              <div>
+                <span class="text-amber-300 font-bold">No Local Tool Calls Executed</span>
+                <p class="text-[11px] text-slate-400 mt-0.5 leading-relaxed">
+                  The AI agent did not spawn any shell or CLI tool executions for this prompt. The model either answered directly with text or refused the requested action (e.g. LLM safety alignment). BAP Zero-Trust hooks remained vigilant and active.
+                </p>
+              </div>
+            </div>
+          `;
+        } else {
+          commandsHtml = `
+            <div class="space-y-1.5">
+              <div class="flex items-center justify-between text-[11px] font-mono text-slate-400 px-1">
+                <span class="font-bold flex items-center space-x-1.5 text-cyan-300">
+                  <span>⚡</span>
+                  <span>${p.commands.length} Downstream Command${p.commands.length === 1 ? '' : 's'} Flowing from this Prompt:</span>
+                </span>
+                <span class="text-[10px] text-slate-500">Cedar Zero-Trust Policy Enforcement</span>
+              </div>
+              <div class="space-y-1">
+                ${p.commands.map(cmd => {
+                  const isBlocked = cmd.decision === "deny";
+                  return `
+                    <div class="p-2.5 rounded-lg border text-xs font-mono flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 ${
+                      isBlocked 
+                        ? 'bg-rose-950/40 border-rose-500/60 text-rose-200' 
+                        : 'bg-slate-950/80 border-slate-800 text-slate-300'
+                    }">
+                      <div class="flex items-center space-x-2 min-w-0 flex-1">
+                        <span class="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase ${
+                          isBlocked 
+                            ? 'bg-rose-500 text-white' 
+                            : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                        }">
+                          ${isBlocked ? 'BLOCKED' : 'ALLOW'}
+                        </span>
+                        <code class="font-bold text-xs ${isBlocked ? 'text-rose-300 font-bold' : 'text-slate-100'} truncate max-w-sm sm:max-w-md">
+                          ${escapeHtml(cmd.full_command || cmd.executable)}
+                        </code>
+                      </div>
+                      <div class="flex items-center space-x-3 text-[11px] text-slate-400 shrink-0 self-end sm:self-auto">
+                        <span class="text-slate-500">${cmd.duration_ms || 1}ms</span>
+                        <span class="text-[10px] ${isBlocked ? 'text-rose-400 font-semibold' : 'text-slate-500'} truncate max-w-[220px]" title="${escapeHtml(cmd.reason || '')}">
+                          ${escapeHtml(cmd.reason || (isBlocked ? 'Blocked by Cedar rule' : 'Permitted'))}
+                        </span>
+                      </div>
+                    </div>
+                  `;
+                }).join('')}
+              </div>
+            </div>
+          `;
+        }
+
+        const isAg = p.app_id.toLowerCase().includes("antigravity");
+        const isClaude = p.app_id.includes("claude");
+        const isCopilot = p.app_id.includes("copilot");
+        const appLabel = isAg ? "Antigravity IDE" : isClaude ? "Claude Code" : isCopilot ? "Copilot CLI" : p.app_id;
+        const appColor = isAg ? "bg-indigo-500 text-white" : isClaude ? "bg-orange-500 text-white" : isCopilot ? "bg-blue-500 text-white" : "bg-emerald-500 text-white";
+
+        card.innerHTML = `
+          <!-- Card Header: User & Session Attribution -->
+          <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800/80 pb-2.5 text-xs font-mono">
+            <div class="flex items-center space-x-2.5">
+              <span class="w-6 h-6 rounded-full ${appColor} flex items-center justify-center font-bold text-[10px] shadow">
+                ${(p.user_id || 'U')[0].toUpperCase()}
+              </span>
+              <div>
+                <span class="text-white font-bold text-sm tracking-wide">👤 ${escapeHtml(p.user_id)}</span>
+                ${p.user_email && p.user_email !== p.user_id ? `<span class="text-slate-400 text-[11px] ml-1">(${escapeHtml(p.user_email)})</span>` : ''}
+              </div>
+            </div>
+
+            <div class="flex items-center space-x-2">
+              <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-800 text-cyan-300 border border-slate-700">
+                ${escapeHtml(appLabel)}
+              </span>
+              ${p.session_id ? `
+                <span class="px-2 py-0.5 rounded text-[10px] bg-purple-950/80 text-purple-300 border border-purple-800/50" title="${escapeHtml(p.session_id)}">
+                  ${escapeHtml(p.session_id)}
+                </span>
+              ` : ''}
+              <span class="text-[10px] text-slate-500">${new Date(p.started_at).toLocaleTimeString()}</span>
+            </div>
+          </div>
+
+          <!-- Prompt Body Box -->
+          <div class="bg-indigo-950/30 border border-indigo-500/30 rounded-xl p-3.5 space-y-1.5">
+            <div class="flex items-center justify-between">
+              <span class="text-[10px] uppercase font-mono font-bold text-indigo-400 tracking-wider flex items-center space-x-1.5">
+                <span>💬</span>
+                <span>Developer Prompt / Intent</span>
+              </span>
+              <span class="text-[9px] font-mono text-indigo-300/70 bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/20">
+                UserPromptSubmit Hook
+              </span>
+            </div>
+            <p class="text-sm font-semibold text-white font-mono leading-relaxed select-all">
+              "${escapeHtml(p.prompt)}"
+            </p>
+          </div>
+
+          <!-- Downstream Commands Flowing In -->
+          ${commandsHtml}
+        `;
+
+        container.appendChild(card);
       });
     }
 
