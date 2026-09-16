@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"strings"
 )
 
 func (s *Server) registerControlPlaneRoutes() {
@@ -26,6 +27,24 @@ func (s *Server) registerControlPlaneRoutes() {
 	s.mux.HandleFunc("/inspector.html", s.handleInspectorHTML("inspector.html", "BAP Activity Inspector"))
 	s.mux.HandleFunc("/inspector_v2", s.handleInspectorHTML("inspector_v2.html", "BAP Inspector V2 - Executive Cockpit"))
 	s.mux.HandleFunc("/inspector_v2.html", s.handleInspectorHTML("inspector_v2.html", "BAP Inspector V2 - Executive Cockpit"))
+
+	s.mux.HandleFunc("/assets/admin-client.js", func(w http.ResponseWriter, r *http.Request) {
+		candidates := []string{
+			"internal/api/web/admin-client.js",
+			"bap-controlplane/internal/api/web/admin-client.js",
+			"../internal/api/web/admin-client.js",
+			"../bap-controlplane/internal/api/web/admin-client.js",
+		}
+		for _, c := range candidates {
+			if data, err := os.ReadFile(c); err == nil {
+				w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write(data)
+				return
+			}
+		}
+		http.NotFound(w, r)
+	})
 }
 
 func (s *Server) handleInspectorHTML(filename string, title string) http.HandlerFunc {
@@ -48,7 +67,14 @@ func (s *Server) handleInspectorHTML(filename string, title string) http.Handler
 				w.Header().Set("Content-Type", "text/html; charset=utf-8")
 				w.WriteHeader(http.StatusOK)
 				if r.Method != http.MethodHead {
-					_, _ = w.Write(data)
+					if isLoopbackAddress(r.RemoteAddr) && s.adminToken != "" {
+						html := string(data)
+						tokenMeta := `<meta name="bap-admin-token" content="` + s.adminToken + `">` + "\n</head>"
+						html = strings.Replace(html, "</head>", tokenMeta, 1)
+						_, _ = w.Write([]byte(html))
+					} else {
+						_, _ = w.Write(data)
+					}
 				}
 				return
 			}

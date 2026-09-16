@@ -109,6 +109,7 @@ function App() {
   const rows = agents.map(agent => ({ ...agent, presence: presence(agent, serverNow) }));
   const counts = rows.reduce((acc, agent) => { const status = agent.presence.status; if (agent.presence.visible) acc[status] = (acc[status] || 0) + 1; return acc; }, {});
   const filtered = rows.filter(agent => (view === 'history' || agent.presence.visible) && [agent.agent_id, agent.app_id, agent.instance_id, agent.owner_email, agent.hostname].some(value => String(value || '').toLowerCase().includes(search.toLowerCase())));
+  const displayedRows = filtered;
   const shownEvents = events.filter(event => (!selectedAgent || event.session_id === selectedAgent.sessionID || event.source === selectedAgent.appID && event.spiffe_id === selectedAgent.spiffeID) && (decisionFilter === 'all' || event.decision === decisionFilter)).slice().reverse();
   function promptFor(event) {
     if (!sensitive) return event.user_prompt ? 'Protected · admin reveal required' : 'Not captured';
@@ -117,7 +118,7 @@ function App() {
     return captured && captured !== protectedText ? captured : fromSession && fromSession !== protectedText ? fromSession : 'Not captured';
   }
   function targetFor(agent) {
-    return sessions.find(session => session.app_id === agent.app_id && session.instance_id === agent.instance_id && session.status !== 'closed')?.session_id || agent.agent_id;
+    return sessions.find(session => (session.session_id === agent.instance_id || session.instance_id === agent.instance_id || (session.app_id === agent.app_id && agent.agent_id.includes(session.session_id))) && session.status !== 'closed')?.session_id || agent.agent_id;
   }
   const activeAdminState = data?.kill_switch;
   return <>
@@ -131,22 +132,29 @@ function App() {
       {notice && <div className="notice" role="status">{notice}</div>}
       {activeAdminState && <div className="freeze-banner"><strong>Fleet freeze is active</strong><span>All connected clients must refresh their policy to observe this state.</span><button disabled={!connected || pending} onClick={() => openAction({ title: 'Restore fleet', path: '/control/kill-switch', body: { enabled: false }, impact: 'Lift the global freeze for all workloads.' })}>Restore fleet · Admin</button></div>}
       <section className="metrics" aria-label="Fleet summary">
-        <Metric title="Active agents" value={counts.active || 0} description={`${counts.stale || 0} stale · reporting overdue`}/>
-        <Metric title="Offline agents" value={counts.offline || 0} description="Remain visible until explicitly removed"/>
-        <Metric title="Revoked agents" value={counts.revoked || 0} description="Require explicit admin restore"/>
+        <Metric title="Active workloads" value={counts.active || 0} description={counts.active ? 'Operational and protected' : 'No active workloads'}/>
+        <Metric title="Quarantined / Revoked" value={counts.revoked || 0} description={counts.revoked ? 'Action required · restore access' : 'Zero workloads blocked'}/>
         <Metric title="Tool actions" value={events.length} description={`${events.filter(e => e.decision === 'allow').length} allowed · ${events.filter(e => e.decision === 'deny').length} denied`}/>
       </section>
       <section id="registry" className="panel">
         <div className="panel-title"><div><h2>Agent registry <span className="live-dot"/></h2><p>Live presence, identity and administrative status.</p></div><button className="danger-outline" disabled={!connected || pending} onClick={() => openAction({ title: activeAdminState ? 'Restore fleet' : 'Freeze fleet', path: '/control/kill-switch', body: { enabled: !activeAdminState }, impact: activeAdminState ? 'Lift the global freeze for all workloads.' : 'Freeze all workloads when they receive the updated policy. Offline clients may not have received it yet.' })}>{activeAdminState ? 'Restore fleet' : 'Freeze fleet'} · Admin</button></div>
         <div className="toolbar"><div className="tabs" role="group" aria-label="Agent view"><button className={view === 'live' ? 'selected' : ''} onClick={() => setView('live')}>Fleet view</button><button className={view === 'history' ? 'selected' : ''} onClick={() => setView('history')}>All agents & history</button></div><label className="search-label"><span className="sr-only">Search agents</span><input type="search" placeholder="Search agent, user or host…" value={search} onChange={e => setSearch(e.target.value)}/></label></div>
-        <div className="table-wrap"><table><thead><tr><th>Agent / instance</th><th>User</th><th>Host</th><th>Status</th><th>Last seen</th><th>Admin action</th></tr></thead><tbody>{filtered.map(agent => <tr key={agent.agent_id}>
-          <td><button className="agent-link" onClick={() => { const sessionID = targetFor(agent); setSelectedAgent({ sessionID, appID: agent.app_id, spiffeID: agent.spiffe_id, name: agent.agent_name }); document.getElementById('activity')?.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' }); }}>{agent.agent_name || agent.app_id}</button><small>{agent.instance_id || agent.agent_id}</small></td>
-          <td>{agent.owner_email || 'Not reported'}</td><td>{agent.hostname || 'Not reported'}</td>
-          <td><Badge status={agent.presence.status}/></td>
-          <td>{elapsed(agent.presence.age)}</td><td>{['active', 'revoked', 'stale', 'offline'].includes(agent.presence.status) ? <button disabled={!connected || pending} className={agent.status !== 'revoked' ? 'danger-outline' : ''} onClick={() => openAction({ title: agent.status === 'revoked' ? 'Restore authority' : 'Revoke authority', path: '/control/agent/kill', body: { target: agent.agent_id, action: agent.status === 'revoked' ? 'restore' : 'revoke' }, impact: agent.status === 'revoked' ? `Restore governed tool authority for ${agent.agent_name || agent.app_id}.` : `Block future governed tool actions for ${agent.agent_name || agent.app_id}. This does not terminate the Claude process or interrupt text already being generated.` })}>{agent.status === 'revoked' ? 'Restore' : 'Revoke'}</button> : '—'}</td>
-        </tr>)}</tbody></table></div>
-        {!filtered.length && <div className="empty">{data ? 'No agents in this view. Registered clients appear here as they report activity.' : 'Connecting to your control plane…'}</div>}
-        <footer className="panel-foot">Agents remain visible when contact is overdue. Stale and offline are presence signals; revoked is an explicit administrative state.</footer>
+        <div className="table-wrap"><table><thead><tr><th>Agent / App</th><th>User</th><th>Session / PID</th><th>Status</th><th>Last seen</th><th>Admin action</th></tr></thead><tbody>{displayedRows.map(agent => {
+          const sessionID = targetFor(agent);
+          const linkedSess = sessions.find(s => s.session_id === sessionID || s.session_id === agent.instance_id);
+          const userName = agent.owner_email || agent.user_id || linkedSess?.user_id || 'User';
+          const clientPID = linkedSess?.client_pid || (sessionID && sessionID.includes("pid-") ? sessionID.split("pid-")[1] : null);
+          return <tr key={agent.agent_id}>
+            <td><button className="agent-link" onClick={() => { setSelectedAgent({ sessionID, appID: agent.app_id, spiffeID: agent.spiffe_id, name: agent.agent_name }); document.getElementById('activity')?.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' }); }}>{agent.agent_name || agent.app_id}</button><small>{agent.spiffe_id || agent.agent_id}</small></td>
+            <td><strong>{userName}</strong></td>
+            <td><code>{sessionID}</code>{clientPID ? <small>PID: {clientPID}</small> : null}</td>
+            <td><Badge status={agent.presence.status}/></td>
+            <td>{elapsed(agent.presence.age)}</td>
+            <td>{['active', 'revoked'].includes(agent.presence.status) ? (agent.status === 'revoked' ? <button disabled={!connected || pending} className="primary" onClick={() => openAction({ title: 'Restore Access', path: '/control/agent/kill', body: { target: sessionID || agent.agent_id, action: 'restore' }, impact: `Restore access for ${userName} (${agent.agent_name || agent.app_id}). Future sessions will be permitted.` })}>Restore Access</button> : <div style={{ display: 'flex', gap: '6px' }}><button disabled={!connected || pending} className="outline" onClick={() => openAction({ title: 'Stop Session', path: '/control/agent/kill', body: { target: sessionID || agent.agent_id, action: 'stop' }, impact: `Terminate active session for ${userName} (${agent.agent_name || agent.app_id}). Future sessions by this user are permitted.` })}>Stop Session</button><button disabled={!connected || pending} className="danger-outline" onClick={() => openAction({ title: 'Revoke Access', path: '/control/agent/kill', body: { target: sessionID || agent.agent_id, action: 'revoke' }, impact: `Revoke access for ${userName} (${agent.agent_name || agent.app_id}). All active sessions are terminated and future sessions blocked until restored.` })}>Revoke Access</button></div>) : '—'}</td>
+          </tr>;
+        })}</tbody></table></div>
+        {!displayedRows.length && <div className="empty">{data ? 'No active workloads in this view. Launch Claude Code (run_claude_ollama.bat) to begin.' : 'Connecting to your control plane…'}</div>}
+        <footer className="panel-foot">Active workloads stream real-time telemetry. Revoked workloads remain visible until restored by an administrator.</footer>
       </section>
       <section id="activity" className="panel"><div className="panel-title"><div><h2>Prompts & tool activity</h2><p>Captured intent alongside actual tool actions. No sample events.</p></div><div>{sensitive ? <button onClick={() => { setSensitive(null); setRevealUntil(0); }}>Hide protected data</button> : <button disabled={!connected || pending} onClick={() => openAction({ title: 'Reveal protected telemetry', path: '/admin/inspector/data', reveal: true, impact: 'Show user, session and prompt telemetry in this browser for 60 seconds.' })}>Reveal telemetry · Admin</button>}</div></div>
         <div className="toolbar"><div>{selectedAgent && <button onClick={() => setSelectedAgent(null)}>× {selectedAgent.name} · clear filter</button>}</div><div className="tabs">{['all', 'allow', 'deny'].map(decision => <button key={decision} className={decisionFilter === decision ? 'selected' : ''} onClick={() => setDecisionFilter(decision)}>{decision === 'all' ? 'All actions' : decision === 'allow' ? 'Allowed' : 'Denied'}</button>)}</div></div>

@@ -363,6 +363,12 @@ Features:
 Remove-Item Env:\GOOS -ErrorAction SilentlyContinue
 Remove-Item Env:\GOARCH -ErrorAction SilentlyContinue
 
+# Verify asset synchronization across all platforms and packages
+$checkScript = Join-Path $rootDir "scripts\check_stale_copies.ps1"
+if (Test-Path $checkScript) {
+    & $checkScript
+}
+
 $elapsed = (Get-Date) - $startTime
 Write-Host "`n===============================================================================" -ForegroundColor Cyan
 Write-Host ("   ALL PLATFORMS & ROLE PACKAGES BUILT IN {0:N1}s" -f $elapsed.TotalSeconds) -ForegroundColor Green

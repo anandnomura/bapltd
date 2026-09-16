@@ -168,9 +168,14 @@ func RunExec(args []string) {
 	}
 
 	if !allowed {
+		suggestion := ""
+		if strings.Contains(reason, "escapes_workspace") || authz.CheckCommandWorkspaceEscape(authz.GetWorkspaceRoot(), fullCommand) {
+			suggestion = "Directory traversal outside the workspace is prohibited. Commands and file paths must remain within the workspace boundary. Child project access (e.g. Maven child modules) inside the workspace is permitted."
+		}
 		resp := types.ExecResponse{
-			Allowed: false,
-			Reason:  reason,
+			Allowed:    false,
+			Reason:     reason,
+			Suggestion: suggestion,
 		}
 		ec.exit(resp, 1)
 	}

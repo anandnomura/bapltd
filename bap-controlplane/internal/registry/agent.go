@@ -251,6 +251,33 @@ func (s *Store) List() []*types.RegisteredAgent {
 	return list
 }
 
+// ListVisible returns registered agents, pruning non-revoked agents older than maxAge.
+// Revoked agents are NEVER pruned so administrators can inspect and restore them.
+func (s *Store) ListVisible(maxAge time.Duration, isUserRevoked func(string) bool) []*types.RegisteredAgent {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	now := time.Now()
+	list := make([]*types.RegisteredAgent, 0, len(s.agents))
+	for _, a := range s.agents {
+		isRevoked := a.Status == types.StatusRevoked || (isUserRevoked != nil && isUserRevoked(a.OwnerEmail))
+		if !isRevoked && maxAge > 0 {
+			lastAct := a.CreatedAt
+			if a.LastHeartbeatAt != nil {
+				lastAct = *a.LastHeartbeatAt
+			}
+			if now.Sub(lastAct) > maxAge {
+				continue
+			}
+		}
+		copy := *a
+		copy.AllowedBinaryHashes = append([]string(nil), a.AllowedBinaryHashes...)
+		copy.PermittedScopes = append([]string(nil), a.PermittedScopes...)
+		list = append(list, &copy)
+	}
+	return list
+}
+
 func (s *Store) TrustDomain() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -342,6 +369,9 @@ func (s *Store) EndSessionAgent(appID, instanceID string) {
 	now := time.Now()
 	for _, a := range s.agents {
 		if strings.EqualFold(a.AppID, appID) {
+			if a.Status == types.StatusRevoked {
+				continue
+			}
 			if instanceID != "" && a.InstanceID == instanceID {
 				a.Status = "deregistered"
 				a.LastHeartbeatAt = &now

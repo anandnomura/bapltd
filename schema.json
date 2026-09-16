@@ -27,6 +27,14 @@
               "full_command": {
                 "type": "String",
                 "required": true
+              },
+              "args": {
+                "type": "String",
+                "required": false
+              },
+              "escapes_workspace": {
+                "type": "Boolean",
+                "required": false
               }
             }
           }

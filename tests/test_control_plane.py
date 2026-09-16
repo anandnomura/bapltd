@@ -512,7 +512,7 @@ def main():
             matching_agents = [a for a in agents_list if a.get("app_id") == "claude-code"]
             assert any(a.get("status") == "deregistered" for a in matching_agents), "Agent was not marked deregistered in registry"
 
-            status, inspector_resp = http_get_json(f"{base_url}/api/v1/inspector/data")
+            status, inspector_resp = http_get_json(f"{base_url}/api/v1/inspector/data", headers={"Authorization": f"Bearer {admin_token}"})
             assert status == 200
             active_sessions = [s for s in inspector_resp.get("sessions", []) if s.get("status") == "active"]
             assert not any(s.get("session_id") == sess_id for s in active_sessions), "Session still active on inspector dashboard"
@@ -530,11 +530,10 @@ def main():
             assert ag_start["status"] == "active"
             print(f"[*] Started Antigravity session: {ag_sess_id}")
 
-            # Verify Antigravity appears in Live Inspector radar
-            status, ag_radar = http_get_json(f"{base_url}/api/v1/inspector/data")
+            status, ag_radar = http_get_json(f"{base_url}/api/v1/inspector/data", headers={"Authorization": f"Bearer {admin_token}"})
             assert status == 200
             active_ag = [s for s in ag_radar.get("sessions", []) if s.get("session_id") == ag_sess_id]
-            assert len(active_ag) == 1, "Antigravity session missing from Live Workload Radar"
+            assert len(active_ag) == 1, f"Antigravity session {ag_sess_id} missing from Live Workload Radar"
             assert active_ag[0]["app_id"] == "antigravity"
 
             # Stream allowed & denied commands from Antigravity

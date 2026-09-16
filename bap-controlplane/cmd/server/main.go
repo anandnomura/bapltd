@@ -60,6 +60,19 @@ func main() {
 	if envAdmin := os.Getenv("BAP_ADMIN_TOKEN"); envAdmin != "" && *adminToken == "" {
 		*adminToken = envAdmin
 	}
+	// Check if an existing valid .bap-admin-token file exists on disk to persist across server restarts
+	if *adminToken == "" {
+		for _, tokenCandidate := range []string{".bap-admin-token", filepath.Join("..", ".bap-admin-token")} {
+			if data, err := os.ReadFile(tokenCandidate); err == nil {
+				trimmed := strings.TrimSpace(string(data))
+				if strings.HasPrefix(trimmed, "bap_adm_") && len(trimmed) >= 16 {
+					*adminToken = trimmed
+					log.Printf("[bapcontrolplane] Reusing existing administrative credential from %s", tokenCandidate)
+					break
+				}
+			}
+		}
+	}
 	if *adminToken == "" {
 		b := make([]byte, 16)
 		if _, err := rand.Read(b); err == nil {

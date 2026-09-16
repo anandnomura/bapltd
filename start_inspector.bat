@@ -16,16 +16,37 @@ if "%CP_URL%"=="" set CP_URL=http://localhost:8080
 :: Check if CP_URL points to localhost
 set "IS_LOCAL=0"
 echo %CP_URL% | findstr /i "localhost 127.0.0.1 ::1" >nul 2>&1
-if %errorlevel% equ 0 set "IS_LOCAL=1"
+:: Determine port and HTTPS scheme
+set "CP_PORT=8443"
+set "CP_HTTPS=1"
+echo %CP_URL% | findstr /i "http://" >nul 2>&1
+if %errorlevel% equ 0 (
+    set "CP_PORT=8080"
+    set "CP_HTTPS=0"
+)
+echo %CP_URL% | findstr /i ":8080" >nul 2>&1
+if %errorlevel% equ 0 (
+    set "CP_PORT=8080"
+    set "CP_HTTPS=0"
+)
+echo %CP_URL% | findstr /i ":8443" >nul 2>&1
+if %errorlevel% equ 0 (
+    set "CP_PORT=8443"
+    set "CP_HTTPS=1"
+)
 
 if "%IS_LOCAL%"=="1" (
     :: Local mode: check or launch local daemon
-    powershell -NoProfile -Command "if (Get-NetTCPConnection -LocalPort 8080 -State Listen -ErrorAction SilentlyContinue) { exit 0 } else { exit 1 }"
+    powershell -NoProfile -Command "if (Get-NetTCPConnection -LocalPort %CP_PORT% -State Listen -ErrorAction SilentlyContinue) { exit 0 } else { exit 1 }"
     if %errorlevel% equ 0 (
         echo [*] Local bapcontrolplane is already running on %CP_URL%.
     ) else (
-        echo [*] Launching local bapcontrolplane daemon on port 8080...
-        powershell -NoProfile -Command "$p = if (Test-Path '.\dist\windows-amd64\controlplane\bapcontrolplane.exe') { '.\dist\windows-amd64\controlplane\bapcontrolplane.exe' } elseif (Test-Path '.\dist\windows-amd64\bapcontrolplane.exe') { '.\dist\windows-amd64\bapcontrolplane.exe' } else { '.\bap-controlplane\bapcontrolplane.exe' }; Start-Process -FilePath $p -ArgumentList '-port 8080 -ttl 30 -trust-domain bap.internal' -WindowStyle Hidden"
+        echo [*] Launching local bapcontrolplane daemon on %CP_URL%...
+        if "%CP_HTTPS%"=="1" (
+            powershell -NoProfile -Command "$p = if (Test-Path '.\dist\windows-amd64\controlplane\bapcontrolplane.exe') { '.\dist\windows-amd64\controlplane\bapcontrolplane.exe' } elseif (Test-Path '.\dist\windows-amd64\bapcontrolplane.exe') { '.\dist\windows-amd64\bapcontrolplane.exe' } else { '.\bap-controlplane\bapcontrolplane.exe' }; Start-Process -FilePath $p -ArgumentList '-port %CP_PORT% -https -ttl 30 -trust-domain bap.internal' -WindowStyle Hidden"
+        ) else (
+            powershell -NoProfile -Command "$p = if (Test-Path '.\dist\windows-amd64\controlplane\bapcontrolplane.exe') { '.\dist\windows-amd64\controlplane\bapcontrolplane.exe' } elseif (Test-Path '.\dist\windows-amd64\bapcontrolplane.exe') { '.\dist\windows-amd64\bapcontrolplane.exe' } else { '.\bap-controlplane\bapcontrolplane.exe' }; Start-Process -FilePath $p -ArgumentList '-port %CP_PORT% -ttl 30 -trust-domain bap.internal' -WindowStyle Hidden"
+        )
         ping -n 3 127.0.0.1 >nul
     )
 ) else (
@@ -44,8 +65,17 @@ if /i "%1"=="v2" set "TARGET_PATH=/inspector_v2"
 if /i "%1"=="-v2" set "TARGET_PATH=/inspector_v2"
 if /i "%1"=="--v2" set "TARGET_PATH=/inspector_v2"
 
+set "ADMIN_TOK="
+if exist ".bap-admin-token" (
+    set /p ADMIN_TOK=<.bap-admin-token
+)
+set "TOKEN_QUERY="
+if not "%ADMIN_TOK%"=="" (
+    set "TOKEN_QUERY=?token=%ADMIN_TOK%"
+)
+
 echo [*] Opening Inspector Dashboard in your default browser (%TARGET_PATH%)...
-start %CP_URL%%TARGET_PATH%
+start %CP_URL%%TARGET_PATH%%TOKEN_QUERY%
 
 echo.
 echo ===============================================================================

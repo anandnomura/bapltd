@@ -78,18 +78,30 @@ func NewAuthorizer(policyPath string) (*Authorizer, error) {
 // - Action:    Action::"Execute"
 // - Resource:  Command::"CLI"
 func (a *Authorizer) Evaluate(executable, fullCommand, args string) (bool, string, error) {
+	return a.EvaluateWithWorkspace(executable, fullCommand, args, GetWorkspaceRoot())
+}
+
+// EvaluateWithWorkspace evaluates whether executing the given command is permitted
+// within the specified workspaceRoot directory boundary.
+func (a *Authorizer) EvaluateWithWorkspace(executable, fullCommand, args, workspaceRoot string) (bool, string, error) {
 	normalizedExec := strings.ToLower(executable)
 	normalizedFull := strings.ToLower(fullCommand)
 	normalizedArgs := strings.ToLower(args)
+
+	escapesWorkspace := false
+	if workspaceRoot != "" {
+		escapesWorkspace = CheckCommandWorkspaceEscape(workspaceRoot, fullCommand)
+	}
 
 	req := cedar.Request{
 		Principal: cedar.NewEntityUID("Agent", "Local"),
 		Action:    cedar.NewEntityUID("Action", "Execute"),
 		Resource:  cedar.NewEntityUID("Command", "CLI"),
 		Context: cedar.NewRecord(cedar.RecordMap{
-			cedar.String("executable"):   cedar.String(normalizedExec),
-			cedar.String("full_command"): cedar.String(normalizedFull),
-			cedar.String("args"):         cedar.String(normalizedArgs),
+			cedar.String("executable"):        cedar.String(normalizedExec),
+			cedar.String("full_command"):      cedar.String(normalizedFull),
+			cedar.String("args"):              cedar.String(normalizedArgs),
+			cedar.String("escapes_workspace"): cedar.Boolean(escapesWorkspace),
 		}),
 	}
 

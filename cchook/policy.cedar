@@ -17,13 +17,24 @@ permit (
         "mvn", "gradle", "cargo", "git",
         "java", "javac",
         "ls", "dir", "mkdir", "echo", "pwd", "cat", "type", "printenv",
-        "cmd", "powershell", "pwsh",
+        "cd", "chdir", "pushd", "popd",
         "cmd", "powershell", "pwsh", "bash", "sh", "zsh",
-        "grep", "findstr", "head", "tail", "wc", "sort", "uniq", "more"
+        "grep", "findstr", "head", "tail", "wc", "sort", "uniq", "more",
+        "taskkill", "kill", "pkill", "killall"
     ].contains(context.executable)
 };
 
-// 2. Forbid Policy:
+// 2. Forbid Policy: Directory Traversal Outside Workspace Boundary
+// Strictly blocks any execution that attempts to navigate or access files outside the workspace root.
+forbid (
+    principal == Agent::"Local",
+    action == Action::"Execute",
+    resource == Command::"CLI"
+) when {
+    context.escapes_workspace == true
+};
+
+// 3. Forbid Policy: Sensitive Operations & Exfiltration
 // Strict forbid overriding permit for:
 // - Exfiltration utilities: curl, wget, nc, ssh, socat, PowerShell web cmdlets
 // - Sensitive credential directories: ~/.aws, .ssh
@@ -99,6 +110,11 @@ forbid (
             context.full_command like "*>*" ||
             context.full_command like "*|*"
         )
+    ) ||
+    // Anti-Tampering: Prevent agent from killing or deleting BAP governance processes/binaries
+    (
+        (context.full_command like "*bapedge*" || context.full_command like "*bapcontrolplane*" || context.full_command like "*bapgateway*" || context.full_command like "*cchook*" || context.full_command like "*copilot-interceptor*") &&
+        (context.full_command like "*kill*" || context.full_command like "*stop-process*" || context.full_command like "*remove-item*" || context.full_command like "*taskkill*" || context.full_command like "*pkill*" || context.full_command like "*del *" || context.full_command like "*rm *")
     )
 };
 

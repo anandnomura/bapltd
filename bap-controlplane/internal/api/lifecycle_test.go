@@ -54,8 +54,11 @@ func TestOverlappingSessionsHaveIndependentPresence(t *testing.T) {
 		t.Fatalf("heartbeat second session: %d %s", w.Code, w.Body.String())
 	}
 	for _, agent := range s.registry.List() {
-		if agent.Status != types.StatusActive {
-			t.Fatalf("session shutdown changed durable agent status: %+v", agent)
+		if agent.InstanceID == "session-two" && agent.Status != types.StatusActive {
+			t.Fatalf("session-two should remain active after session-one end: %+v", agent)
+		}
+		if agent.InstanceID == "session-one" && agent.Status != "deregistered" {
+			t.Fatalf("session-one should be deregistered after shutdown: %+v", agent)
 		}
 	}
 }
@@ -151,4 +154,3 @@ func TestRevokedSessionHeartbeatAndPromptBlock(t *testing.T) {
 		t.Fatalf("expected HTTP 403 Forbidden for revoked prompt, got: %d %s", wPrompt.Code, wPrompt.Body.String())
 	}
 }
-

@@ -26,6 +26,17 @@ if "%BAP_SERVER_URL%"=="" (
 )
 if "%BAP_SERVER_URL%"=="" set BAP_SERVER_URL=http://localhost:8080
 
+:: Ensure local control plane is running if targeting localhost
+echo !BAP_SERVER_URL! | findstr /i "localhost 127.0.0.1 ::1" >nul 2>&1
+if !ERRORLEVEL! equ 0 (
+    powershell -NoProfile -Command "$u = [System.Uri]'!BAP_SERVER_URL!'; $port = $u.Port; if (Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue) { exit 0 } else { exit 1 }"
+    if !ERRORLEVEL! neq 0 (
+        echo [*] Launching local BAP Control Plane daemon on !BAP_SERVER_URL!...
+        powershell -NoProfile -Command "$u = [System.Uri]'!BAP_SERVER_URL!'; $port = $u.Port; $isHttps = $u.Scheme -eq 'https'; $args = '-port ' + $port + ' -ttl 30 -trust-domain bap.internal'; if ($isHttps) { $args += ' -https' }; $p = if (Test-Path '.\dist\windows-amd64\controlplane\bapcontrolplane.exe') { '.\dist\windows-amd64\controlplane\bapcontrolplane.exe' } elseif (Test-Path '.\dist\windows-amd64\bapcontrolplane.exe') { '.\dist\windows-amd64\bapcontrolplane.exe' } else { '.\bap-controlplane\bapcontrolplane.exe' }; Start-Process -FilePath $p -ArgumentList $args -WindowStyle Hidden"
+        ping -n 3 127.0.0.1 >nul
+    )
+)
+
 :: 4. Resolve and build cchook interceptor
 if not exist "cchook\interceptor.exe" (
     echo [*] Building cchook\interceptor.exe...
@@ -78,18 +89,7 @@ if not "%~1"=="" (
     echo %~1> ".bap-prompt.txt"
 )
 
-:: 5. Write workspace session marker
-(
-    echo {
-    echo   "session_id": "%BAP_SESSION_ID%",
-    echo   "server_url": "%BAP_SERVER_URL%",
-    echo   "user": "%USERNAME%",
-    echo   "hostname": "%COMPUTERNAME%",
-    echo   "user_prompt": "%BAP_USER_PROMPT%"
-    echo }
-) > ".bap-session.json"
-
-:: Resolve bapedge binary for continuous background heartbeat watcher
+:: 5. Resolve bapedge binary for zero-trust lifecycle governance
 set "BAPEDGE_BIN="
 if exist "dist\windows-amd64\claude-client\bapedge.exe" (
     set "BAPEDGE_BIN=dist\windows-amd64\claude-client\bapedge.exe"
@@ -102,21 +102,30 @@ if exist "dist\windows-amd64\claude-client\bapedge.exe" (
     if !ERRORLEVEL! equ 0 set "BAPEDGE_BIN=bapedge.exe"
 )
 
-:: Start continuous background heartbeat watcher thread
+:: 6. Zero-Trust Session Pre-Flight & Heartbeat Watcher Enrollment
 if not "!BAPEDGE_BIN!"=="" (
-    !BAPEDGE_BIN! watch --server "%BAP_SERVER_URL%" --session-id "%BAP_SESSION_ID%" --detach >nul 2>&1
+    !BAPEDGE_BIN! session-start --server "!BAP_SERVER_URL!" --session-id "!BAP_SESSION_ID!" --app-id "claude-code" --prompt "!BAP_USER_PROMPT!"
+    if !ERRORLEVEL! equ 2 (
+        if exist ".bap-session.json" del /f /q ".bap-session.json" >nul 2>&1
+        exit /b 2
+    )
+) else (
+    (
+        echo {
+        echo   "session_id": "%BAP_SESSION_ID%",
+        echo   "server_url": "%BAP_SERVER_URL%",
+        echo   "user": "%USERNAME%",
+        echo   "hostname": "%COMPUTERNAME%",
+        echo   "user_prompt": "%BAP_USER_PROMPT%"
+        echo }
+    ) > ".bap-session.json"
 )
-
-:: 6. Notify BAP Control Plane of Session Start (fail-securely ignored if offline)
-curl.exe -s --max-time 2 --connect-timeout 2 -X POST "%BAP_SERVER_URL%/api/v1/sessions/start" ^
-    -H "Content-Type: application/json" ^
-    -d "{\"session_id\":\"%BAP_SESSION_ID%\",\"app_id\":\"claude-code\",\"user_id\":\"%USERNAME%\",\"hostname\":\"%COMPUTERNAME%\",\"user_prompt\":\"%BAP_USER_PROMPT%\"}" >nul 2>&1
 
 echo [*] Ollama Endpoint: %ANTHROPIC_BASE_URL%
 echo [*] Model:           %OLLAMA_MODEL%
 echo [*] Session ID:      %BAP_SESSION_ID%
 echo [*] PreToolUse Hook: cchook\interceptor.exe (Zero-Trust bapedge broker)
-echo [*] Liveness Watcher: Active (heartbeats pulsing, no idle timeout)
+echo [*] Liveness Watcher: Active (heartbeats pulsing, immediate kill on Stop/Revoke)
 echo [*] Telemetry:       Streaming to %BAP_SERVER_URL% ^& ltd-audit.jsonl
 echo ===============================================================================
 
@@ -155,10 +164,14 @@ if "%~1"=="" (
     call %CLAUDE_BIN% --dangerously-skip-permissions --model %OLLAMA_MODEL% -p %1 <nul
 )
 
-:: 8. Notify BAP Control Plane of Session End (with strict 2s timeout so it never hangs)
-curl.exe -s --max-time 2 --connect-timeout 2 -X POST "%BAP_SERVER_URL%/api/v1/sessions/end" ^
-    -H "Content-Type: application/json" ^
-    -d "{\"session_id\":\"%BAP_SESSION_ID%\",\"reason\":\"session exited\"}" >nul 2>&1
+:: 8. Clean Session Teardown
+if not "!BAPEDGE_BIN!"=="" (
+    !BAPEDGE_BIN! session-end --server "!BAP_SERVER_URL!" --session-id "!BAP_SESSION_ID!" >nul 2>&1
+) else (
+    curl.exe -s -k --max-time 2 --connect-timeout 2 -X POST "!BAP_SERVER_URL!/api/v1/sessions/end" ^
+        -H "Content-Type: application/json" ^
+        -d "{\"session_id\":\"!BAP_SESSION_ID!\",\"reason\":\"session exited\"}" >nul 2>&1
+)
 
 if exist ".bap-session.json" del /f /q ".bap-session.json" >nul 2>&1
 if exist ".bap-prompt.txt" del /f /q ".bap-prompt.txt" >nul 2>&1

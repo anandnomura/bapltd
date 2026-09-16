@@ -39,13 +39,22 @@ if "%~1"=="" (
 if "!SERVER_URL:~-1!"=="/" set "SERVER_URL=!SERVER_URL:~0,-1!"
 
 echo.
-echo [*] Checking connectivity to Linux BAP Control Plane at !SERVER_URL!...
+echo [*] Checking connectivity to BAP Control Plane at !SERVER_URL!...
+echo !SERVER_URL! | findstr /i "localhost 127.0.0.1 ::1" >nul 2>&1
+if !ERRORLEVEL! equ 0 (
+    powershell -NoProfile -Command "$u = [System.Uri]'!SERVER_URL!'; $port = $u.Port; if (Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue) { exit 0 } else { exit 1 }"
+    if !ERRORLEVEL! neq 0 (
+        echo [*] Launching local BAP Control Plane daemon on !SERVER_URL!...
+        powershell -NoProfile -Command "$u = [System.Uri]'!SERVER_URL!'; $port = $u.Port; $isHttps = $u.Scheme -eq 'https'; $args = '-port ' + $port + ' -ttl 30 -trust-domain bap.internal'; if ($isHttps) { $args += ' -https' }; $p = if (Test-Path '%BAP_HOME%dist\windows-amd64\controlplane\bapcontrolplane.exe') { '%BAP_HOME%dist\windows-amd64\controlplane\bapcontrolplane.exe' } elseif (Test-Path '%BAP_HOME%dist\windows-amd64\bapcontrolplane.exe') { '%BAP_HOME%dist\windows-amd64\bapcontrolplane.exe' } else { '%BAP_HOME%bap-controlplane\bapcontrolplane.exe' }; Start-Process -FilePath $p -ArgumentList $args -WindowStyle Hidden"
+        ping -n 3 127.0.0.1 >nul
+    )
+)
 curl.exe -s --max-time 3 --connect-timeout 2 -X GET "!SERVER_URL!/api/v1/health" | findstr /i "ok healthy ltd-service" >nul 2>&1
 if !ERRORLEVEL! equ 0 (
-    echo [+] SUCCESS: Connected to Linux BAP Control Plane.
+    echo [+] SUCCESS: Connected to BAP Control Plane.
 ) else (
     echo [-] WARNING: Could not reach !SERVER_URL!/api/v1/health.
-    echo     Please verify the Linux server IP, port, and firewall.
+    echo     Please verify the server IP, port, and firewall.
     echo     Proceeding in local-edge mode - Cedar policies still enforced locally.
 )
 
@@ -146,33 +155,22 @@ set "TME=%TME:.=%"
 set "BAP_SESSION_ID=sess-claude-%RND%-%TME%"
 set "BAP_SERVER_URL=!SERVER_URL!"
 
-:: Write workspace session marker so all tool hooks use the exact same session ID
-(
-    echo {
-    echo   "session_id": "!BAP_SESSION_ID!",
-    echo   "server_url": "!SERVER_URL!",
-    echo   "user": "%USERNAME%",
-    echo   "hostname": "%COMPUTERNAME%"
-    echo }
-) > ".bap-session.json"
-
-:: 6. Notify Control Plane of Workload Enrollment (Live Radar)
-set "CURL_CA_ARG="
-if exist "controlplane-cert.pem" (
-    set "CURL_CA_ARG=--cacert controlplane-cert.pem"
-    set "BAP_CA_CERT=%~dp0controlplane-cert.pem"
-) else (
-    set "CURL_CA_ARG=-k"
-)
-curl.exe -s !CURL_CA_ARG! --max-time 2 --connect-timeout 2 -X POST "!SERVER_URL!/api/v1/sessions/start" ^
-    -H "Content-Type: application/json" ^
-    -d "{\"session_id\":\"!BAP_SESSION_ID!\",\"app_id\":\"claude-code\",\"user_id\":\"%USERNAME%\",\"hostname\":\"%COMPUTERNAME%\",\"client_pid\":0}" >nul 2>&1
-
-:: Start native bapedge background watcher thread to guarantee deregistration even on Ctrl+C or window close [X]
+:: 6. Zero-Trust Session Pre-Flight & Heartbeat Watcher Enrollment
 if not "!BAPEDGE_BIN!"=="" (
-    !BAPEDGE_BIN! watch --server "!SERVER_URL!" --session-id "!BAP_SESSION_ID!" --detach >nul 2>&1
+    !BAPEDGE_BIN! session-start --server "!SERVER_URL!" --session-id "!BAP_SESSION_ID!" --app-id "claude-code"
+    if !ERRORLEVEL! equ 2 (
+        if exist ".bap-session.json" del /f /q ".bap-session.json" >nul 2>&1
+        exit /b 2
+    )
 ) else (
-    start "" /b powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "%~dp0scripts\watch_session.ps1" -ServerUrl "!SERVER_URL!" -SessionId "!BAP_SESSION_ID!" >nul 2>&1
+    (
+        echo {
+        echo   "session_id": "!BAP_SESSION_ID!",
+        echo   "server_url": "!SERVER_URL!",
+        echo   "user": "%USERNAME%",
+        echo   "hostname": "%COMPUTERNAME%"
+        echo }
+    ) > ".bap-session.json"
 )
 
 echo.
@@ -215,12 +213,23 @@ call !CLAUDE_BIN! %*
 
 :: 9. Graceful Session Teardown
 echo.
-echo [*] Claude Code exited. Deregistering session !BAP_SESSION_ID! from Linux server...
-curl.exe -s --max-time 2 --connect-timeout 2 -X POST "!SERVER_URL!/api/v1/sessions/end" ^
-    -H "Content-Type: application/json" ^
-    -d "{\"session_id\":\"!BAP_SESSION_ID!\",\"reason\":\"Claude Code closed gracefully\"}" >nul 2>&1
+echo [*] Claude Code exited. Deregistering session !BAP_SESSION_ID! from server...
+if not "!BAPEDGE_BIN!"=="" (
+    !BAPEDGE_BIN! session-end --server "!SERVER_URL!" --session-id "!BAP_SESSION_ID!" >nul 2>&1
+) else (
+    set "CURL_CA_ARG="
+    if exist "controlplane-cert.pem" (
+        set "CURL_CA_ARG=--cacert controlplane-cert.pem"
+    ) else (
+        set "CURL_CA_ARG=-k"
+    )
+    curl.exe -s !CURL_CA_ARG! --max-time 2 --connect-timeout 2 -X POST "!SERVER_URL!/api/v1/sessions/end" ^
+        -H "Content-Type: application/json" ^
+        -d "{\"session_id\":\"!BAP_SESSION_ID!\",\"reason\":\"Claude Code closed gracefully\"}" >nul 2>&1
+)
 
 if exist ".bap-session.json" del /f /q ".bap-session.json" >nul 2>&1
-echo [+] Session cleanly closed on Linux dashboard.
+if exist ".bap-prompt.txt" del /f /q ".bap-prompt.txt" >nul 2>&1
+echo [+] Session cleanly closed on dashboard.
 endlocal
 exit /b 0

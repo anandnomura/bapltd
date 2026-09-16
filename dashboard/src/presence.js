@@ -1,14 +1,17 @@
 export const STALE_MS = 15_000;
-export const OFFLINE_MS = 60_000;
+export const OFFLINE_MS = 15_000;
 
 export function presence(agent, now) {
   const last = Date.parse(agent.last_heartbeat_at || agent.enrolled_at || agent.created_at);
   const age = Number.isFinite(last) ? Math.max(0, now - last) : Infinity;
   if (agent.status === 'revoked') return { status: 'revoked', age, visible: true };
   if (['deregistered', 'closed', 'inactive'].includes(agent.status) || age >= OFFLINE_MS) {
-    return { status: 'offline', age, visible: true };
+    return { status: 'offline', age, visible: false };
   }
-  return { status: agent.status === 'active' && age >= STALE_MS ? 'stale' : agent.status, age, visible: true };
+  if (agent.status === 'active' && age >= STALE_MS) {
+    return { status: 'stale', age, visible: false };
+  }
+  return { status: agent.status, age, visible: true };
 }
 
 export function elapsed(ms) {

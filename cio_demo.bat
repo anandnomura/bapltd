@@ -164,7 +164,7 @@ echo   [1] [PASS]      Test Safe Multi-Stage Build (Sub-2ms Zero-Friction Pass)
 echo   [2] [BLOCK]     Simulate Malicious Attack (Gateway PEP Dropped at Perimeter)
 echo   [3] [SCALE]     Toggle Fleet Scale (5 Active Squads vs 25 Enterprise Nodes)
 echo   [4] [KILL-ALL]  Toggle Global Emergency Kill-Switch (CISO Enterprise Override)
-echo   [5] [KILL-ONE]  Targeted Agent Isolation (Surgically Revoke 'Carol' Without Stopping Fleet)
+echo   [5] [REVOKE]    Targeted Agent Isolation (Revoke Access for 'Carol' Without Stopping Fleet)
 echo   [6] [AUDIT]     Verify Cryptographic Audit Chain (100%% Anti-Tamper Merkle Proof)
 echo   [7] [EXIT]      Exit Demonstration and Cleanly Deregister Fleet
 echo ----------------------------------------------------------------------------------------------------

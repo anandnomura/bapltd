@@ -3,6 +3,7 @@ package authz
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -259,6 +260,85 @@ func TestRealPolicyCedarFile(t *testing.T) {
 		}
 		if allowed {
 			t.Errorf("expected %q to be denied by default, but it was ALLOWED!", tc.fullCommand)
+		}
+	}
+}
+
+func TestWorkspaceContainment(t *testing.T) {
+	realPolicyPath := filepath.Join("..", "..", "policy.cedar")
+	if _, err := os.Stat(realPolicyPath); err != nil {
+		realPolicyPath = filepath.Join("..", "policy.cedar")
+	}
+
+	authz, err := NewAuthorizer(realPolicyPath)
+	if err != nil {
+		t.Fatalf("Failed to load real policy.cedar: %v", err)
+	}
+
+	tempWorkspace, err := os.MkdirTemp("", "bap-workspace-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp workspace: %v", err)
+	}
+	defer os.RemoveAll(tempWorkspace)
+
+	// Create child project directories inside workspace (e.g. Maven child modules)
+	childDir := filepath.Join(tempWorkspace, "child-module")
+	if err := os.MkdirAll(childDir, 0755); err != nil {
+		t.Fatalf("Failed to create child dir: %v", err)
+	}
+	siblingDir := filepath.Join(tempWorkspace, "sibling-module")
+	if err := os.MkdirAll(siblingDir, 0755); err != nil {
+		t.Fatalf("Failed to create sibling dir: %v", err)
+	}
+
+	// 1. Child project commands MUST be allowed (Inside Workspace)
+	allowedInside := []struct {
+		executable  string
+		fullCommand string
+		desc        string
+	}{
+		{"mvn", "mvn clean install", "mvn at root"},
+		{"mvn", "mvn -f child-module/pom.xml compile", "mvn targeting child pom"},
+		{"mvn", "cd child-module && mvn test", "cd into child module and build"},
+		{"mvn", "cd child-module && cd ../sibling-module && mvn package", "cd across sibling modules inside workspace"},
+		{"ls", "ls child-module/src", "ls inside child module"},
+		{"cat", "cat child-module/pom.xml", "cat child module pom"},
+		{"git", "git status child-module", "git status on child module"},
+	}
+
+	for _, tc := range allowedInside {
+		allowed, reason, err := authz.EvaluateWithWorkspace(tc.executable, tc.fullCommand, "", tempWorkspace)
+		if err != nil {
+			t.Fatalf("EvaluateWithWorkspace error for %s (%s): %v", tc.fullCommand, tc.desc, err)
+		}
+		if !allowed {
+			t.Errorf("expected child project command %q (%s) to be ALLOWED, got denied: %s", tc.fullCommand, tc.desc, reason)
+		}
+	}
+
+	// 2. Traversal escaping workspace root MUST be strictly denied (Outside Workspace)
+	forbiddenEscapes := []struct {
+		executable  string
+		fullCommand string
+		desc        string
+	}{
+		{"ls", "cd ../.. && ls", "cd above workspace root"},
+		{"mvn", "cd ../../other && mvn clean", "cd outside workspace to build"},
+		{"mvn", "mvn -f ../../external/pom.xml compile", "mvn targeting external pom"},
+		{"cat", "cat ../../secret.txt", "cat file outside workspace"},
+		{"cat", "cat ../../../etc/passwd", "cat path traversal to root"},
+	}
+
+	for _, tc := range forbiddenEscapes {
+		allowed, reason, err := authz.EvaluateWithWorkspace(tc.executable, tc.fullCommand, "", tempWorkspace)
+		if err != nil {
+			t.Fatalf("EvaluateWithWorkspace error for %s (%s): %v", tc.fullCommand, tc.desc, err)
+		}
+		if allowed {
+			t.Errorf("expected traversal escape %q (%s) to be FORBIDDEN, but it was ALLOWED!", tc.fullCommand, tc.desc)
+		}
+		if !strings.Contains(reason, "policy") {
+			t.Errorf("expected Cedar policy denial reason for %q, got: %s", tc.fullCommand, reason)
 		}
 	}
 }

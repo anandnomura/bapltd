@@ -43,7 +43,7 @@ The following table summarizes all capabilities implemented in the BAP architect
 | **12** | **Fail-Secure Offline Resilience** | `bapedge` | Local policy cache in `~/.ltd/policy/` (`policy.cedar`, `schema.json`, `policy-state.json`). | Developers can code on planes or during server outages; forbid invariants strictly enforced offline. |
 | **13** | **Persistent Emergency Lock** | `bapedge` | Persistent `kill_switch: true` in local policy state surviving restarts and network partitions. | Disconnecting a laptop from the network cannot undo or bypass a revoked kill switch. |
 | **14** | **Dynamic Central Policy Sync** | `bapcontrolplane` | Version and digest synchronization via `POST /api/v1/policy/sync`. | Security teams can push policy updates or trigger emergency lockdowns across the entire fleet instantly. |
-| **15** | **Hierarchical Kill-Switches** | `bapcontrolplane` | Per-instance `/api/v1/agents/revoke` vs Fleet-wide `/api/v1/apps/revoke`. | Granular blast radius: revoke one compromised container or terminate all instances under an app. |
+| **15** | **Two-Tier Access Control & Isolation** | `bapcontrolplane` | **Stop Session** (terminates running session/PID) vs. **Revoke Access** (user-level block rejecting future `/api/v1/sessions/start` with 403) vs. **Restore Access**. | Precision blast radius: cleanly end an active task while allowing future work, or revoke a compromised user account fleet-wide while retaining full audit records. |
 | **16** | **Agent Liveness Heartbeats** | `bapcontrolplane` | Instance heartbeat ping `/api/v1/instances/heartbeat` updating `last_heartbeat_at`. | Active health tracking; dead or stale instances are detected and reclaimed. |
 | **17** | **Tamper-Evident SHA-256 Chain** | `bapcontrolplane` | Sequential hash-chain linking: $H_n = \text{SHA256}(H_{n-1} \parallel \text{Event})$. | Cryptographically detects any retroactive modification or deletion of edge audit logs. |
 | **18** | **Local Telemetry Logger** | `bapedge` | Non-blocking structured append to `ltd-audit.jsonl` (timestamp, source, command, PID, latency, reason). | Comprehensive local observability for every single tool call and shell execution. |
@@ -375,6 +375,16 @@ graph TD
     5. **Default Fallback**: `http://localhost:8080` (safe developer laptop fallback).
   - **CLI Command**: `bapedge config show` and `bapedge config set --server <url> [--global]`.
   - **Universal Reach**: `bapedge`, `cchook` (Claude Code), `copilot`, `bap-sdk` (Python), and `bapgateway` all automatically bind to this single central host.
+
+---
+
+### Pillar 18: Two-Tier Workload Isolation (Stop Session vs. Revoke Access) & Stale Session Management
+- **The Gap**: When an autonomous agent exhibits runaway behavior or a credential is compromised, administrators need nuanced control. A blunt process termination is inadequate if the agent can simply restart, while a global fleet freeze disrupts innocent engineering squads. Furthermore, disconnected or historical sessions clutter administrative dashboards.
+- **BAP Implementation**:
+  - **Stop Session**: Targets the active session and process (`PID`) only. Sets the session state to `closed`, signals `bapedge watch` to terminate the active workload, but leaves the user eligible to start future sessions. Ideal for canceling long-running tasks or clearing transient errors.
+  - **Revoke Access**: Enforces a strict, user-level persistent block on `username` and `owner_email`. Terminates any active session, burns active authority grants, and writes a persistent revocation marker (`.bap-revoked`). Any subsequent attempt by this user to launch an agent via `POST /api/v1/sessions/start` or through wrapper scripts (`run_claude_ollama.bat`, `run_claude_bap.bat`) is rejected with **HTTP 403 Forbidden** (exit code 2).
+  - **Restore Access**: Reverses user-level revocation, removes the `.bap-revoked` marker, and restores the user's eligibility to start new agent sessions without requiring system re-enrollment or server restarts.
+  - **Intelligent Stale Pruning with Revocation Exemption**: Sessions and agent registrations inactive for greater than 2 hours are automatically filtered from the real-time radar and dashboards to maintain high signal-to-noise for leadership. Crucially, **revoked users and instances are strictly exempt from pruning**, guaranteeing that administrators can always inspect and restore revoked entities.
 
 ---
 

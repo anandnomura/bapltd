@@ -177,6 +177,7 @@ func remotelyRevoked(serverURL, sessionID string) (bool, string) {
 	var state struct {
 		KillSwitch      bool     `json:"kill_switch"`
 		RevokedSessions []string `json:"revoked_sessions"`
+		RevokedUsers    []string `json:"revoked_users"`
 	}
 	if json.NewDecoder(resp.Body).Decode(&state) != nil {
 		return false, ""
@@ -189,15 +190,26 @@ func remotelyRevoked(serverURL, sessionID string) (bool, string) {
 			return true, fmt.Sprintf("session %q authority has been revoked by an administrator", sessionID)
 		}
 	}
+	currentUser := os.Getenv("USERNAME")
+	if currentUser == "" {
+		currentUser = os.Getenv("USER")
+	}
+	if currentUser != "" {
+		for _, ru := range state.RevokedUsers {
+			if strings.EqualFold(strings.TrimSpace(ru), currentUser) {
+				return true, fmt.Sprintf("user %q access has been revoked by an administrator", currentUser)
+			}
+		}
+	}
 	return false, ""
 }
 
 func killProcessPID(pid int) {
-	if pid <= 0 {
+	if pid <= 0 || pid == os.Getpid() {
 		return
 	}
 	if runtime.GOOS == "windows" {
-		_ = exec.Command("taskkill", "/F", "/T", "/PID", fmt.Sprintf("%d", pid)).Run()
+		_ = exec.Command("taskkill", "/F", "/T", "/PID", fmt.Sprintf("%d", pid), "/FI", "IMAGENAME ne bapcontrolplane.exe").Run()
 	} else {
 		if p, err := os.FindProcess(pid); err == nil {
 			_ = p.Kill()
@@ -319,18 +331,25 @@ func isSessionRevoked(serverURL, sessionID string) (bool, string) {
 		if data, err := os.ReadFile(cand); err == nil {
 			var info struct {
 				SessionID string `json:"session_id"`
+				UserID    string `json:"user_id"`
 				Reason    string `json:"reason"`
 			}
 			if json.Unmarshal(data, &info) == nil {
-				if info.SessionID == "" || sessionID == "" || strings.EqualFold(info.SessionID, sessionID) || strings.Contains(strings.ToLower(sessionID), strings.ToLower(info.SessionID)) {
+				currentUser := os.Getenv("USERNAME")
+				if currentUser == "" {
+					currentUser = os.Getenv("USER")
+				}
+				userMatch := info.UserID != "" && strings.EqualFold(info.UserID, currentUser)
+				sessMatch := info.SessionID != "" && (strings.EqualFold(info.SessionID, sessionID) || strings.Contains(strings.ToLower(sessionID), strings.ToLower(info.SessionID)))
+				if userMatch || sessMatch || (info.SessionID == "" && info.UserID == "") {
 					reason := info.Reason
 					if reason == "" {
-						reason = "Session authority revoked by security administrator (local tombstone marker active)"
+						reason = "User access revoked by security administrator (local tombstone marker active)"
 					}
 					return true, reason
 				}
 			} else {
-				return true, "Session authority revoked by security administrator"
+				return true, "Access revoked by security administrator"
 			}
 		}
 	}
@@ -382,15 +401,19 @@ func outputPromptBlocked(sessionID, reason string) {
 	enc.SetIndent("", "  ")
 	_ = enc.Encode(resp)
 
-	// Option 3 Rogue Process Termination: If local tombstone was already active or persistent rogue attempts occur, terminate parent process
-	for _, cand := range []string{".bap-revoked", "../.bap-revoked"} {
-		if _, err := os.Stat(cand); err == nil {
-			ppid := os.Getppid()
-			if ppid > 0 {
-				fmt.Fprintf(os.Stderr, "[BAP ZERO-TRUST] ⚡ Terminating rogue agent process (PID: %d)...\n", ppid)
-				killProcessPID(ppid)
+	ppid := os.Getppid()
+	if ppid > 0 {
+		fmt.Fprintf(os.Stderr, "[BAP ZERO-TRUST] ⚡ Terminating rogue agent process (PID: %d)...\n", ppid)
+		killProcessPID(ppid)
+	}
+	for _, loc := range []string{".bap-session.json", "../.bap-session.json"} {
+		if data, err := os.ReadFile(loc); err == nil {
+			var sInfo struct {
+				PID int `json:"pid"`
 			}
-			break
+			if json.Unmarshal(data, &sInfo) == nil && sInfo.PID > 0 {
+				killProcessPID(sInfo.PID)
+			}
 		}
 	}
 
@@ -476,32 +499,44 @@ func main() {
 		return
 	}
 
-	// 4. Intercept direct file inspection tools (Read, View, Edit, Write)
+	workspaceRoot := resolveWorkspaceRoot()
+
+	// 4. Intercept direct file inspection/modification tools (Read, View, Edit, Write)
 	targetFile := payload.ToolInput.FilePath
 	if targetFile == "" {
 		targetFile = payload.ToolInput.Path
 	}
 	if targetFile != "" {
 		normPath := strings.ToLower(filepath.ToSlash(targetFile))
+		if isPathOutsideWorkspace(workspaceRoot, targetFile) {
+			outputDecision("deny", fmt.Sprintf("Directory traversal outside workspace is forbidden for file %q", targetFile), "Access to files outside the project root is prohibited. Child module and subproject files are permitted inside the workspace.")
+			return
+		}
 		if strings.Contains(normPath, ".env") || strings.Contains(normPath, ".aws") || strings.Contains(normPath, ".ssh") {
 			outputDecision("deny", fmt.Sprintf("Access to sensitive credential file %q is strictly forbidden by policy", targetFile), "Sensitive credential file access blocked")
 			return
 		}
-		// If it's a safe file read/view, allow
-		if payload.ToolName == "Read" || payload.ToolName == "View" {
-			outputDecision("allow", "", "File access permitted")
+		// If it's a safe file tool operation (Read, View, Edit, Write), allow immediately
+		if payload.ToolName == "Read" || payload.ToolName == "View" || payload.ToolName == "Edit" || payload.ToolName == "Write" {
+			outputDecision("allow", "", "File operation within workspace permitted")
 			return
 		}
 	}
 
-	// 3. Process Command execution (Bash or generic command)
+	// 5. Process Command execution (Bash or generic command)
 	command := strings.TrimSpace(payload.ToolInput.Command)
 	if command == "" {
-		if payload.ToolName == "Read" || payload.ToolName == "View" {
-			outputDecision("allow", "", "File read allowed")
+		if payload.ToolName == "Read" || payload.ToolName == "View" || payload.ToolName == "Edit" || payload.ToolName == "Write" {
+			outputDecision("allow", "", "File operation permitted")
 			return
 		}
 		outputDecision("deny", "No command or target specified in tool input", "Empty command")
+		return
+	}
+
+	// Pre-flight check for shell command directory traversal escaping workspace
+	if checkCommandWorkspaceEscape(workspaceRoot, command) {
+		outputDecision("deny", fmt.Sprintf("Directory traversal outside workspace is forbidden in command: %s", command), "Commands cannot navigate or reference paths outside the project workspace root. Child projects (e.g. Maven child modules) inside the workspace are permitted.")
 		return
 	}
 
@@ -710,4 +745,195 @@ func outputDecision(decision, reason, context string) {
 	enc.SetIndent("", "  ")
 	_ = enc.Encode(resp)
 	os.Exit(0)
+}
+
+func resolveWorkspaceRoot() string {
+	if root := os.Getenv("BAP_WORKSPACE_ROOT"); root != "" {
+		if abs, err := filepath.Abs(root); err == nil {
+			return filepath.Clean(abs)
+		}
+	}
+	if root := os.Getenv("LTD_WORKSPACE_ROOT"); root != "" {
+		if abs, err := filepath.Abs(root); err == nil {
+			return filepath.Clean(abs)
+		}
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		dir := cwd
+		for {
+			if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+				return filepath.Clean(dir)
+			}
+			parent := filepath.Dir(dir)
+			if parent == dir || parent == "" {
+				break
+			}
+			dir = parent
+		}
+		return filepath.Clean(cwd)
+	}
+	return "."
+}
+
+func isPathOutsideWorkspace(workspaceRoot, targetPath string) bool {
+	if workspaceRoot == "" || targetPath == "" {
+		return false
+	}
+	cleanRoot := filepath.Clean(workspaceRoot)
+	var absTarget string
+	if filepath.IsAbs(targetPath) {
+		absTarget = filepath.Clean(targetPath)
+	} else {
+		absTarget = filepath.Clean(filepath.Join(cleanRoot, targetPath))
+	}
+
+	rel, err := filepath.Rel(cleanRoot, absTarget)
+	if err != nil {
+		return true
+	}
+	return rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || strings.HasPrefix(rel, "../")
+}
+
+func checkCommandWorkspaceEscape(workspaceRoot, fullCommand string) bool {
+	if workspaceRoot == "" || fullCommand == "" {
+		return false
+	}
+	cleanRoot := filepath.Clean(workspaceRoot)
+	currentDir := cleanRoot
+
+	cmdUnified := fullCommand
+	for _, sep := range []string{"&&", "||", ";", "|", "&"} {
+		cmdUnified = strings.ReplaceAll(cmdUnified, sep, "\n")
+	}
+
+	lines := strings.Split(cmdUnified, "\n")
+	for _, rawLine := range lines {
+		line := strings.TrimSpace(rawLine)
+		if line == "" {
+			continue
+		}
+
+		tokens := tokenizeHookCommand(line)
+		if len(tokens) == 0 {
+			continue
+		}
+
+		first := strings.ToLower(tokens[0])
+		if first == "cd" || first == "chdir" || first == "pushd" {
+			if len(tokens) >= 2 {
+				cdTarget := strings.Trim(tokens[1], "\"'")
+				if strings.EqualFold(cdTarget, "/d") && len(tokens) >= 3 {
+					cdTarget = strings.Trim(tokens[2], "\"'")
+				}
+				if cdTarget == "" || cdTarget == "~" {
+					return true
+				}
+				var nextAbs string
+				if filepath.IsAbs(cdTarget) {
+					nextAbs = filepath.Clean(cdTarget)
+				} else {
+					nextAbs = filepath.Clean(filepath.Join(currentDir, cdTarget))
+				}
+				if isPathOutsideWorkspace(cleanRoot, nextAbs) {
+					return true
+				}
+				currentDir = nextAbs
+			}
+			continue
+		}
+
+		for i, tok := range tokens {
+			if i == 0 {
+				if !strings.HasPrefix(tok, "..") {
+					continue
+				}
+			}
+			tokVal := strings.Trim(tok, "\"'")
+			if idx := strings.Index(tokVal, "="); idx != -1 && strings.HasPrefix(tokVal, "-") {
+				tokVal = tokVal[idx+1:]
+			}
+			if strings.Contains(tokVal, "..") {
+				var absArg string
+				if filepath.IsAbs(tokVal) {
+					absArg = filepath.Clean(tokVal)
+				} else {
+					absArg = filepath.Clean(filepath.Join(currentDir, tokVal))
+				}
+				if isPathOutsideWorkspace(cleanRoot, absArg) {
+					return true
+				}
+			}
+			if isExplicitAbsolutePath(tokVal) {
+				cleanAbs := filepath.Clean(tokVal)
+				if isPathOutsideWorkspace(cleanRoot, cleanAbs) && !isSystemBinaryPath(cleanAbs) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func isExplicitAbsolutePath(p string) bool {
+	if len(p) >= 3 && p[1] == ':' && (p[2] == '\\' || p[2] == '/') {
+		return true
+	}
+	if strings.HasPrefix(p, "\\\\") || strings.HasPrefix(p, "//") {
+		return true
+	}
+	if strings.HasPrefix(p, "/") && !strings.HasPrefix(p, "/c") && !strings.HasPrefix(p, "/d") && !strings.HasPrefix(p, "/s") && !strings.HasPrefix(p, "/b") {
+		return true
+	}
+	return false
+}
+
+func isSystemBinaryPath(p string) bool {
+	lower := strings.ToLower(filepath.ToSlash(p))
+	systemPrefixes := []string{
+		"c:/windows/",
+		"c:/program files/",
+		"c:/program files (x86)/",
+		"/usr/bin/",
+		"/bin/",
+		"/usr/local/bin/",
+	}
+	for _, sp := range systemPrefixes {
+		if strings.HasPrefix(lower, sp) && (strings.HasSuffix(lower, ".exe") || !strings.Contains(filepath.Base(lower), ".")) {
+			return true
+		}
+	}
+	return false
+}
+
+func tokenizeHookCommand(cmd string) []string {
+	var tokens []string
+	var current strings.Builder
+	inQuote := false
+	var quoteChar rune
+
+	for _, r := range cmd {
+		if inQuote {
+			if r == quoteChar {
+				inQuote = false
+			}
+			current.WriteRune(r)
+		} else {
+			if r == '"' || r == '\'' {
+				inQuote = true
+				quoteChar = r
+				current.WriteRune(r)
+			} else if r == ' ' || r == '\t' {
+				if current.Len() > 0 {
+					tokens = append(tokens, current.String())
+					current.Reset()
+				}
+			} else {
+				current.WriteRune(r)
+			}
+		}
+	}
+	if current.Len() > 0 {
+		tokens = append(tokens, current.String())
+	}
+	return tokens
 }

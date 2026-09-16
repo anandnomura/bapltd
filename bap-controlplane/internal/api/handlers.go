@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -632,7 +634,7 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	var sessionFound, agentFound bool
 
 	if s.sessionStore != nil {
-		if s.sessionStore.IsRevoked(id) {
+		if s.sessionStore.IsRevoked(id) || s.sessionStore.IsUserRevoked(id) {
 			writeJSON(w, http.StatusOK, map[string]any{
 				"id":         id,
 				"session_id": id,
@@ -642,6 +644,30 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 				"time":       time.Now().UTC(),
 			})
 			return
+		}
+		if sess, err := s.sessionStore.Get(id); err == nil {
+			if sess.Status == "revoked" || s.sessionStore.IsUserRevoked(sess.UserID) || s.sessionStore.IsUserRevoked(sess.UserEmail) {
+				writeJSON(w, http.StatusOK, map[string]any{
+					"id":         id,
+					"session_id": id,
+					"status":     "revoked",
+					"action":     "terminate",
+					"reason":     "Session authority revoked by administrator",
+					"time":       time.Now().UTC(),
+				})
+				return
+			}
+			if sess.Status == "closed" {
+				writeJSON(w, http.StatusOK, map[string]any{
+					"id":         id,
+					"session_id": id,
+					"status":     "closed",
+					"action":     "terminate",
+					"reason":     "Session closed",
+					"time":       time.Now().UTC(),
+				})
+				return
+			}
 		}
 		if sess, err := s.sessionStore.Heartbeat(id); err == nil {
 			sessionFound = true
@@ -710,7 +736,11 @@ func (s *Server) handleInspectorData(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	agents := s.registry.List()
+	var isUserRevoked func(string) bool
+	if s.sessionStore != nil {
+		isUserRevoked = s.sessionStore.IsUserRevoked
+	}
+	agents := s.registry.ListVisible(2*time.Hour, isUserRevoked)
 	centralEvents := s.auditStore.List(200)
 	valid, chainErr := s.auditStore.VerifyChain()
 	chainStatus := "valid"
@@ -757,9 +787,11 @@ func (s *Server) handleInspectorData(w http.ResponseWriter, r *http.Request) {
 
 	var sessionsList any = []any{}
 	var revokedSessions []string
+	var revokedUsers []string
 	if s.sessionStore != nil {
-		sessionsList = s.sessionStore.List(50)
+		sessionsList = s.sessionStore.ListVisible(50, 2*time.Hour)
 		revokedSessions = s.sessionStore.ListRevoked()
+		revokedUsers = s.sessionStore.ListRevokedUsers()
 	}
 
 	s.lastDemoMu.RLock()
@@ -786,6 +818,7 @@ func (s *Server) handleInspectorData(w http.ResponseWriter, r *http.Request) {
 		"agents":                 agents,
 		"sessions":               sessionsList,
 		"revoked_sessions":       revokedSessions,
+		"revoked_users":          revokedUsers,
 		"central_events":         centralEvents,
 		"edge_events":            edgeLogs,
 		"last_demo_action":       lastAct,
@@ -808,12 +841,15 @@ func (s *Server) handleGetRevocations(w http.ResponseWriter, r *http.Request) {
 	}
 	bundle := s.policyStore.GetBundle()
 	var revokedSessions []string
+	var revokedUsers []string
 	if s.sessionStore != nil {
 		revokedSessions = s.sessionStore.ListRevoked()
+		revokedUsers = s.sessionStore.ListRevokedUsers()
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"kill_switch":      bundle.KillSwitch,
 		"revoked_sessions": revokedSessions,
+		"revoked_users":    revokedUsers,
 		"updated_at":       time.Now().UTC(),
 	})
 }
@@ -834,9 +870,15 @@ func (s *Server) handleSessionStart(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "New agent sessions are forbidden: CISO emergency kill-switch is active across the fleet")
 		return
 	}
-	if s.sessionStore != nil && s.sessionStore.IsRevoked(req.SessionID) {
-		writeError(w, http.StatusForbidden, "Session authority for "+req.SessionID+" is revoked")
-		return
+	if s.sessionStore != nil {
+		if s.sessionStore.IsUserRevoked(req.UserID) || s.sessionStore.IsUserRevoked(req.UserEmail) {
+			writeError(w, http.StatusForbidden, "User access has been revoked by administrator")
+			return
+		}
+		if s.sessionStore.IsRevoked(req.SessionID) {
+			writeError(w, http.StatusForbidden, "Session authority for "+req.SessionID+" is revoked")
+			return
+		}
 	}
 	if s.registry != nil {
 		for _, a := range s.registry.List() {
@@ -879,10 +921,24 @@ func (s *Server) handleSessionEnd(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "session_id is required")
 		return
 	}
-	if err := s.sessionStore.End(req.SessionID, req.Reason); err != nil {
-		writeError(w, http.StatusNotFound, "Failed to end session: "+err.Error())
-		return
+
+	var sess *session.Session
+	if s.sessionStore != nil {
+		sess, _ = s.sessionStore.Get(req.SessionID)
+		if err := s.sessionStore.End(req.SessionID, req.Reason); err != nil {
+			writeError(w, http.StatusNotFound, "Failed to end session: "+err.Error())
+			return
+		}
 	}
+
+	if s.registry != nil && sess != nil {
+		instanceID := sess.InstanceID
+		if instanceID == "" {
+			instanceID = sess.SessionID
+		}
+		s.registry.EndSessionAgent(sess.AppID, instanceID)
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"session_id": req.SessionID,
 		"status":     "closed",
@@ -917,7 +973,7 @@ func (s *Server) handleSessionPrompt(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "Session store unavailable")
 		return
 	}
-	if s.sessionStore.IsRevoked(req.SessionID) {
+	if s.sessionStore.IsRevoked(req.SessionID) || s.sessionStore.IsUserRevoked(req.SessionID) {
 		writeError(w, http.StatusForbidden, "Session authority has been revoked by administrator. Prompts are blocked.")
 		return
 	}
@@ -926,8 +982,8 @@ func (s *Server) handleSessionPrompt(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "Failed to update prompt: "+err.Error())
 		return
 	}
-	if sess.Status == "revoked" {
-		writeError(w, http.StatusForbidden, "Session authority has been revoked by administrator. Prompts are blocked.")
+	if sess.Status == "revoked" || s.sessionStore.IsUserRevoked(sess.UserID) || s.sessionStore.IsUserRevoked(sess.UserEmail) {
+		writeError(w, http.StatusForbidden, "User access has been revoked by administrator. Prompts are blocked.")
 		return
 	}
 	// Also log a telemetry event for prompt observability
@@ -1313,6 +1369,19 @@ func (s *Server) handleDemoFleetScale(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func killProcessPID(pid int) {
+	if pid <= 0 || pid == os.Getpid() {
+		return
+	}
+	if runtime.GOOS == "windows" {
+		_ = exec.Command("taskkill", "/F", "/T", "/PID", fmt.Sprintf("%d", pid), "/FI", "IMAGENAME ne bapcontrolplane.exe").Run()
+	} else {
+		if p, err := os.FindProcess(pid); err == nil {
+			_ = p.Kill()
+		}
+	}
+}
+
 func (s *Server) handleTargetedKillAgent(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
@@ -1322,6 +1391,7 @@ func (s *Server) handleTargetedKillAgent(w http.ResponseWriter, r *http.Request)
 	var req struct {
 		Target string `json:"target"`
 		Action string `json:"action"`
+		UserID string `json:"user_id,omitempty"`
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1329,13 +1399,21 @@ func (s *Server) handleTargetedKillAgent(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	target := strings.TrimSpace(req.Target)
-	if target == "" || (req.Action != "restore" && req.Action != "revoke") {
-		writeError(w, http.StatusBadRequest, "Exact target and action (revoke or restore) are required")
+	action := strings.ToLower(strings.TrimSpace(req.Action))
+	if action == "unrevoke" {
+		action = "restore"
+	}
+	if target == "" || (action != "restore" && action != "revoke" && action != "stop") {
+		writeError(w, http.StatusBadRequest, "Exact target and action (stop, revoke, or restore) are required")
 		return
 	}
 	sessionTarget, agentTarget := "", ""
+	var targetSession *session.Session
+	var targetAgent *types.RegisteredAgent
+
 	if sess, err := s.sessionStore.Get(target); err == nil {
 		sessionTarget = sess.SessionID
+		targetSession = sess
 		for _, agent := range s.registry.List() {
 			linkedInstance := sess.InstanceID
 			if linkedInstance == "" {
@@ -1343,11 +1421,13 @@ func (s *Server) handleTargetedKillAgent(w http.ResponseWriter, r *http.Request)
 			}
 			if agent.InstanceID == linkedInstance && agent.AppID == sess.AppID {
 				agentTarget = agent.AgentID
+				targetAgent = agent
 				break
 			}
 		}
 	} else if agent, err := s.registry.Get(target); err == nil {
 		agentTarget = agent.AgentID
+		targetAgent = agent
 		if s.sessionStore != nil {
 			for _, sess := range s.sessionStore.List(0) {
 				linkedInstance := sess.InstanceID
@@ -1356,30 +1436,179 @@ func (s *Server) handleTargetedKillAgent(w http.ResponseWriter, r *http.Request)
 				}
 				if sess.AppID == agent.AppID && linkedInstance == agent.InstanceID && sess.Status != "closed" {
 					sessionTarget = sess.SessionID
+					targetSession = sess
 					break
 				}
 			}
 		}
 	}
+
+	// Also check if target matches any session by InstanceID, UserID, or UserEmail
+	if sessionTarget == "" && agentTarget == "" && s.sessionStore != nil {
+		for _, sess := range s.sessionStore.List(0) {
+			if strings.EqualFold(sess.SessionID, target) || strings.EqualFold(sess.InstanceID, target) || strings.EqualFold(sess.UserID, target) || strings.EqualFold(sess.UserEmail, target) {
+				sessionTarget = sess.SessionID
+				targetSession = sess
+				break
+			}
+		}
+	}
+
 	if sessionTarget == "" && agentTarget == "" {
+		if action == "revoke" || action == "restore" {
+			userID := target
+			if req.UserID != "" {
+				userID = req.UserID
+			}
+			if action == "revoke" {
+				if s.sessionStore != nil {
+					s.sessionStore.RevokeUser(userID, "Revoked by administrator")
+				}
+				markerData := map[string]any{
+					"user_id":    userID,
+					"status":     "revoked",
+					"revoked_at": time.Now().UTC(),
+					"reason":     "User access revoked by administrator",
+				}
+				if mb, err := json.MarshalIndent(markerData, "", "  "); err == nil {
+					_ = os.WriteFile(".bap-revoked", mb, 0644)
+					_ = os.WriteFile("../.bap-revoked", mb, 0644)
+				}
+				writeJSON(w, http.StatusOK, map[string]any{
+					"target":      target,
+					"user_id":     userID,
+					"status":      "revoked",
+					"action":      "revoke",
+					"message":     fmt.Sprintf("User %s access revoked by administrator. Future sessions blocked.", userID),
+					"kill_status": "REVOKED",
+				})
+				return
+			} else {
+				if s.sessionStore != nil {
+					s.sessionStore.RestoreUser(userID)
+				}
+				_ = os.Remove(".bap-revoked")
+				_ = os.Remove("../.bap-revoked")
+				writeJSON(w, http.StatusOK, map[string]any{
+					"target":      target,
+					"user_id":     userID,
+					"status":      "active",
+					"action":      "restore",
+					"message":     fmt.Sprintf("User %s access restored by administrator.", userID),
+					"kill_status": "RESTORED",
+				})
+				return
+			}
+		}
 		writeError(w, http.StatusNotFound, "No exact session or agent ID found")
 		return
 	}
-	isRestore := req.Action == "restore"
 
-	if isRestore {
-		var restoredName string
-		if s.sessionStore != nil {
-			if sess, err := s.sessionStore.RestoreTarget(sessionTarget); err == nil {
-				restoredName = sess.InstanceID
+	// 1. ACTION: STOP SESSION (session termination only, no user revocation)
+	if action == "stop" {
+		var stoppedName string
+		if targetSession != nil {
+			stoppedName = targetSession.InstanceID
+			if stoppedName == "" {
+				stoppedName = targetSession.SessionID
 			}
+		} else if targetAgent != nil {
+			stoppedName = targetAgent.InstanceID
+		}
+		if stoppedName == "" {
+			stoppedName = target
+		}
+
+		if s.sessionStore != nil && sessionTarget != "" {
+			_ = s.sessionStore.End(sessionTarget, "Session stopped by administrator")
 		}
 		if s.registry != nil {
-			_, _ = s.registry.RestoreTarget(agentTarget)
+			if targetSession != nil {
+				s.registry.EndSessionAgent(targetSession.AppID, targetSession.InstanceID)
+			} else if targetAgent != nil {
+				s.registry.EndSessionAgent(targetAgent.AppID, targetAgent.InstanceID)
+			}
+		}
+
+		// Directly terminate the local workload process if client PID is recorded
+		if targetSession != nil && targetSession.ClientPID > 0 {
+			killProcessPID(targetSession.ClientPID)
+		}
+
+		now := time.Now().UTC()
+		s.auditStore.Ingest([]audit.Event{
+			{
+				Source:      "bap-controlplane",
+				SessionID:   sessionTarget,
+				Executable:  "bapcontrolplane",
+				FullCommand: fmt.Sprintf("STOP_SESSION target=%s", target),
+				Decision:    "deny",
+				Reason:      fmt.Sprintf("Session %s stopped by administrator. Workload process terminated.", stoppedName),
+				DurationMs:  1,
+				Timestamp:   now.Format(time.RFC3339),
+				ExitCode:    0,
+			},
+		})
+
+		termMsg := "Workload process terminated."
+		if targetSession == nil || targetSession.ClientPID <= 0 {
+			termMsg = "workload process was not terminated (no client PID recorded)."
+		}
+
+		writeJSON(w, http.StatusOK, map[string]any{
+			"target":      target,
+			"agent_name":  stoppedName,
+			"session_id":  sessionTarget,
+			"status":      "closed",
+			"action":      "stop",
+			"message":     fmt.Sprintf("Session %s successfully stopped. %s Future sessions by this user are permitted.", stoppedName, termMsg),
+			"kill_status": "STOPPED",
+		})
+		return
+	}
+
+	// 2. ACTION: RESTORE ACCESS (unblocks user, clears revocation)
+	if action == "restore" {
+		var restoredName string
+		userID := req.UserID
+		if targetSession != nil {
+			restoredName = targetSession.InstanceID
+			if userID == "" {
+				userID = targetSession.UserID
+			}
+			if userID == "" || userID == "NA" {
+				userID = targetSession.UserEmail
+			}
+		}
+		if targetAgent != nil {
+			if restoredName == "" {
+				restoredName = targetAgent.InstanceID
+			}
+			if userID == "" || userID == "NA" {
+				userID = targetAgent.OwnerEmail
+			}
 		}
 		if restoredName == "" {
 			restoredName = target
 		}
+		if userID == "" || userID == "NA" {
+			userID = target
+		}
+
+		if s.sessionStore != nil {
+			if userID != "" {
+				s.sessionStore.RestoreUser(userID)
+			}
+			if sessionTarget != "" {
+				_, _ = s.sessionStore.RestoreTarget(sessionTarget)
+			}
+		}
+		if s.registry != nil && agentTarget != "" {
+			_, _ = s.registry.RestoreTarget(agentTarget)
+		}
+
+		_ = os.Remove(".bap-revoked")
+		_ = os.Remove("../.bap-revoked")
 
 		now := time.Now().UTC()
 		s.auditStore.Ingest([]audit.Event{
@@ -1387,9 +1616,9 @@ func (s *Server) handleTargetedKillAgent(w http.ResponseWriter, r *http.Request)
 				Source:      "bap-controlplane",
 				SessionID:   "admin-ciso-override",
 				Executable:  "bapcontrolplane",
-				FullCommand: fmt.Sprintf("RESTORE_AGENT target=%s", target),
+				FullCommand: fmt.Sprintf("RESTORE_ACCESS target=%s user=%s", target, userID),
 				Decision:    "allow",
-				Reason:      fmt.Sprintf("Surgical kill-switch lifted: Agent %s authority restored by CISO.", restoredName),
+				Reason:      fmt.Sprintf("Access restored by administrator for %s (user: %s).", restoredName, userID),
 				DurationMs:  1,
 				Timestamp:   now.Format(time.RFC3339),
 				ExitCode:    0,
@@ -1399,60 +1628,106 @@ func (s *Server) handleTargetedKillAgent(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusOK, map[string]any{
 			"target":      target,
 			"agent_name":  restoredName,
+			"user_id":     userID,
 			"status":      "active",
-			"action":      "restored",
-			"message":     fmt.Sprintf("Targeted agent %s successfully restored to active status.", restoredName),
+			"action":      "restore",
+			"message":     fmt.Sprintf("Access successfully restored for %s. User can now start new sessions.", restoredName),
 			"kill_status": "RESTORED",
 		})
 		return
 	}
 
-	// Revoke / isolate target
+	// 3. ACTION: REVOKE ACCESS (user-level block, terminates sessions, rejects future sessions)
 	var revokedName string
 	var spiffeID string
-	var sessionID string
-	if s.sessionStore != nil {
-		if sess, err := s.sessionStore.RevokeTarget(sessionTarget, "Targeted isolation via CISO kill-switch"); err == nil {
-			revokedName = sess.InstanceID
-			spiffeID = sess.SPIFFEID
-			sessionID = sess.SessionID
+	userID := req.UserID
+	if targetSession != nil {
+		revokedName = targetSession.InstanceID
+		spiffeID = targetSession.SPIFFEID
+		if userID == "" {
+			userID = targetSession.UserID
+		}
+		if userID == "" || userID == "NA" {
+			userID = targetSession.UserEmail
 		}
 	}
-	if s.registry != nil {
-		if a, err := s.registry.RevokeTarget(agentTarget); err == nil {
-			if revokedName == "" {
-				revokedName = a.InstanceID
-				spiffeID = a.SPIFFEID
-			}
+	if targetAgent != nil {
+		if revokedName == "" {
+			revokedName = targetAgent.InstanceID
+		}
+		if spiffeID == "" {
+			spiffeID = targetAgent.SPIFFEID
+		}
+		if userID == "" || userID == "NA" {
+			userID = targetAgent.OwnerEmail
 		}
 	}
 	if revokedName == "" {
 		revokedName = target
+	}
+	if userID == "" || userID == "NA" {
+		userID = target
+	}
+
+	if s.sessionStore != nil {
+		if userID != "" {
+			s.sessionStore.RevokeUser(userID, "Revoked by administrator")
+		}
+		if sessionTarget != "" {
+			_, _ = s.sessionStore.RevokeTarget(sessionTarget, "Revoked by administrator")
+		}
+	}
+	if s.registry != nil && agentTarget != "" {
+		_, _ = s.registry.RevokeTarget(agentTarget)
+	}
+
+	// Directly terminate the local workload process if client PID is recorded
+	if targetSession != nil && targetSession.ClientPID > 0 {
+		killProcessPID(targetSession.ClientPID)
+	}
+
+	// Write marker tombstone so local edge hooks immediately know
+	markerData := map[string]any{
+		"session_id": sessionTarget,
+		"user_id":    userID,
+		"status":     "revoked",
+		"revoked_at": time.Now().UTC(),
+		"reason":     "User access revoked by administrator",
+	}
+	if mb, err := json.MarshalIndent(markerData, "", "  "); err == nil {
+		_ = os.WriteFile(".bap-revoked", mb, 0644)
+		_ = os.WriteFile("../.bap-revoked", mb, 0644)
 	}
 
 	now := time.Now().UTC()
 	s.auditStore.Ingest([]audit.Event{
 		{
 			Source:      "bap-controlplane",
-			SessionID:   sessionID,
+			SessionID:   sessionTarget,
 			Executable:  "bapcontrolplane",
-			FullCommand: fmt.Sprintf("REVOKE_AGENT target=%s", target),
+			FullCommand: fmt.Sprintf("REVOKE_ACCESS target=%s user=%s", target, userID),
 			Decision:    "deny",
-			Reason:      fmt.Sprintf("Session authority revoked by administrator for %s. Future governed tool actions are blocked.", revokedName),
+			Reason:      fmt.Sprintf("Access revoked by administrator for user %s (target %s). All active sessions terminated and future sessions blocked.", userID, revokedName),
 			DurationMs:  1,
 			Timestamp:   now.Format(time.RFC3339),
 			ExitCode:    1,
 		},
 	})
 
+	processTermMsg := "Workload process terminated and future sessions blocked."
+	if targetSession == nil || targetSession.ClientPID <= 0 {
+		processTermMsg = "workload process was not terminated (no client PID recorded) and future sessions blocked."
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"target":      target,
 		"agent_name":  revokedName,
+		"user_id":     userID,
 		"spiffe_id":   spiffeID,
-		"session_id":  sessionID,
+		"session_id":  sessionTarget,
 		"status":      "revoked",
-		"action":      "isolated",
-		"message":     fmt.Sprintf("Authority revoked for %s (%s). Future governed tool actions are blocked; the workload process was not terminated.", revokedName, spiffeID),
+		"action":      "revoke",
+		"message":     fmt.Sprintf("Access revoked for %s (%s). %s", revokedName, spiffeID, processTermMsg),
 		"kill_status": "REVOKED",
 	})
 }

@@ -382,7 +382,7 @@
         </div>
         <div>
           <h3 class="text-base font-bold text-white">Sovereign Admin Authentication</h3>
-          <p class="text-xs text-slate-400">Unlock live prompt unmasking & surgical kill switches</p>
+          <p class="text-xs text-slate-400">Unlock live prompt unmasking & agent access controls</p>
         </div>
       </div>
 
@@ -408,37 +408,39 @@
   </div>
 
   <!-- ==================================================================== -->
-  <!-- MODAL 2: SURGICAL REVOCATION DOUBLE CONFIRMATION DIALOG -->
+  <!-- MODAL 2: ACCESS CONTROL DOUBLE CONFIRMATION DIALOG -->
   <!-- ==================================================================== -->
   <div id="modal-confirm-revoke" class="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 hidden flex items-center justify-center p-4">
-    <div class="bg-slate-900 border border-rose-500/50 rounded-2xl max-w-md w-full p-6 shadow-2xl shadow-rose-950/50 text-slate-100 animate-in fade-in zoom-in-95 duration-200 space-y-4">
+    <div class="bg-slate-900 border border-slate-700 rounded-2xl max-w-md w-full p-6 shadow-2xl text-slate-100 animate-in fade-in zoom-in-95 duration-200 space-y-4">
       <div class="flex items-center space-x-3">
-        <div class="w-10 h-10 rounded-xl bg-rose-500/20 border border-rose-500/40 flex items-center justify-center text-rose-400 text-xl font-bold">
+        <div class="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 text-xl font-bold">
           ⚠️
         </div>
         <div>
-          <h3 class="text-base font-bold text-rose-400">Confirm Surgical Revocation</h3>
-          <p class="text-xs text-slate-400">Extreme Security Action: Authority Burn & Process Kill</p>
+          <h3 class="text-base font-bold text-white">Manage Workload Access</h3>
+          <p class="text-xs text-slate-400">Choose session termination or user revocation</p>
         </div>
       </div>
 
       <p class="text-xs text-slate-300 leading-relaxed">
-        Are you sure you want to surgically revoke and isolate <strong id="modal-revoke-name" class="text-white font-mono font-bold"></strong>?
+        Target: <strong id="modal-revoke-name" class="text-white font-mono font-bold"></strong>
       </p>
 
-      <div class="bg-slate-950 border border-slate-800 rounded-xl p-3.5 text-xs font-mono text-slate-400 space-y-1.5">
-        <div><span class="text-slate-500">Target Session:</span> <span id="modal-revoke-id" class="text-amber-300 font-semibold"></span></div>
-        <div><span class="text-slate-500">Authority:</span> <span class="text-rose-400 font-semibold">Permanently Burned</span></div>
-        <div><span class="text-slate-500">Input Gating:</span> <span class="text-rose-400 font-semibold">User Prompts Blocked (Exit Code 2)</span></div>
-        <div><span class="text-slate-500">Process Action:</span> <span class="text-rose-400 font-semibold">Workload PID Terminated via bapedge</span></div>
+      <div class="bg-slate-950 border border-slate-800 rounded-xl p-3.5 text-xs font-mono text-slate-400 space-y-2">
+        <div><span class="text-slate-500">Target Session:</span> <span id="modal-revoke-id" class="text-cyan-300 font-semibold"></span></div>
+        <div class="border-t border-slate-800 pt-1.5"><strong class="text-amber-400">Stop Session:</strong> Terminates this running session and process. Future sessions permitted.</div>
+        <div><strong class="text-rose-400">Revoke Access:</strong> User-level block. Terminates workload and forbids future sessions until restored.</div>
       </div>
 
-      <div class="flex items-center justify-end space-x-3 pt-2">
-        <button id="btn-revoke-cancel" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold transition cursor-pointer">
+      <div class="flex items-center justify-end space-x-2 pt-2">
+        <button id="btn-revoke-cancel" class="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold transition cursor-pointer">
           Cancel
         </button>
-        <button id="btn-revoke-confirm" class="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-bold transition shadow-lg shadow-rose-900/50 cursor-pointer">
-          🚨 Confirm Revoke & Kill
+        <button id="btn-action-stop" class="px-3.5 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-xs font-bold transition cursor-pointer">
+          Stop Session
+        </button>
+        <button id="btn-action-revoke" class="px-3.5 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-bold transition cursor-pointer">
+          Revoke Access
         </button>
       </div>
     </div>
@@ -471,6 +473,22 @@
       setupModals();
       setupFilters();
       
+      const urlParams = new URLSearchParams(window.location.search);
+      const urlToken = urlParams.get("token") || urlParams.get("admin_token");
+      if (urlToken) {
+        sessionStorage.setItem("bap_admin_token", urlToken);
+      }
+      if (!adminToken) {
+        adminToken = sessionStorage.getItem("bap_admin_token") || "";
+      }
+      if (!adminToken) {
+        const meta = document.querySelector('meta[name="bap-admin-token"]');
+        if (meta && meta.content) {
+          adminToken = meta.content;
+          sessionStorage.setItem("bap_admin_token", adminToken);
+        }
+      }
+
       // Auto-validate token if stored
       if (adminToken) {
         await validateAdminToken(adminToken, false);
@@ -552,13 +570,22 @@
         pendingRevokeTarget = null;
       });
 
-      // Revoke Modal Confirm
-      document.getElementById("btn-revoke-confirm")?.addEventListener("click", async () => {
+      // Stop Session
+      document.getElementById("btn-action-stop")?.addEventListener("click", async () => {
         if (!pendingRevokeTarget) return;
         modalRevoke.classList.add("hidden");
         const target = pendingRevokeTarget;
         pendingRevokeTarget = null;
-        await executeRevocation(target);
+        await executeAccessAction(target, "stop");
+      });
+
+      // Revoke Access
+      document.getElementById("btn-action-revoke")?.addEventListener("click", async () => {
+        if (!pendingRevokeTarget) return;
+        modalRevoke.classList.add("hidden");
+        const target = pendingRevokeTarget;
+        pendingRevokeTarget = null;
+        await executeAccessAction(target, "revoke");
       });
 
       // Manual Refresh Button
@@ -698,35 +725,35 @@
       const agents = data.agents || [];
       const centralEvents = data.central_events || [];
 
-      // 1. Total Agents
-      const uniqueApps = new Set(agents.map(a => a.app_id || 'claude-code'));
-      document.getElementById("kpi-total-agents").textContent = Math.max(agents.length, sessions.length);
-      document.getElementById("kpi-agent-types").textContent = Array.from(uniqueApps).join(", ") || "Claude Code";
-
-      // 2. Harnesses Status
+      // 1 & 2. Workload Status
       const now = Date.now();
       let activeCount = 0;
-      let staleCount = 0;
       let quarantinedCount = 0;
 
       sessions.forEach(s => {
         if (s.status === "revoked") {
           quarantinedCount++;
-        } else if (s.status === "closed") {
-          // offline
-        } else {
+        } else if (s.status === "active") {
           const lastActive = s.last_active_at ? new Date(s.last_active_at).getTime() : 0;
           const diffSec = (now - lastActive) / 1000;
-          if (diffSec <= 6) {
+          if (diffSec <= 15) {
             activeCount++;
-          } else {
-            staleCount++;
           }
         }
       });
 
+      const uniqueApps = new Set(agents.map(a => a.app_id || 'claude-code'));
+      document.getElementById("kpi-total-agents").textContent = activeCount;
+      document.getElementById("kpi-agent-types").textContent = Array.from(uniqueApps).join(", ") || "Claude Code";
       document.getElementById("kpi-active-harnesses").textContent = activeCount;
-      document.getElementById("kpi-stale-quarantined").textContent = `${staleCount} Stale | ${quarantinedCount} Quarantined`;
+      const healthEl = document.getElementById("kpi-stale-quarantined");
+      if (healthEl) {
+        if (quarantinedCount > 0) {
+          healthEl.innerHTML = `<span class="text-rose-400 font-bold">${quarantinedCount} Quarantined (Action Required)</span>`;
+        } else {
+          healthEl.innerHTML = `<span class="text-emerald-400 font-bold">All Workloads Healthy</span>`;
+        }
+      }
 
       // 3. User Prompts Streamed
       const promptEvents = centralEvents.filter(ev => ev.user_prompt || ev.executable === "user_prompt");
@@ -782,23 +809,34 @@
       if (!container || !cachedData) return;
 
       const sessions = cachedData.sessions || [];
-      if (sessions.length === 0) {
+      const now = Date.now();
+
+      // On active screen: only show ACTIVE or REVOKED sessions.
+      // Offline, closed, or stale sessions must not show up.
+      const visibleSessions = sessions.filter(s => {
+        if (s.status === "revoked") return true;
+        if (s.status === "closed" || s.status === "deregistered") return false;
+        const lastActiveMs = s.last_active_at ? new Date(s.last_active_at).getTime() : 0;
+        const diffSec = Math.floor((now - lastActiveMs) / 1000);
+        return s.status === "active" && diffSec <= 15;
+      });
+
+      if (visibleSessions.length === 0) {
         container.innerHTML = `
           <div class="col-span-full glass-card rounded-2xl p-12 text-center text-slate-400 space-y-3">
             <span class="text-4xl">🛰️</span>
-            <h3 class="text-sm font-bold text-white">No Agent Workload Harnesses Connected</h3>
+            <h3 class="text-sm font-bold text-white">No Active Workloads Running</h3>
             <p class="text-xs text-slate-500 max-w-md mx-auto">
-              Start Claude Code with BAP governance enabled (run_claude_bap.bat) or register an agent to see live telemetry.
+              Start Claude Code with BAP governance enabled (<code>run_claude_ollama.bat</code> or <code>run_claude_bap.bat</code>). Revoked workloads will appear here for administrative restoration.
             </p>
           </div>
         `;
         return;
       }
 
-      const now = Date.now();
       container.innerHTML = "";
 
-      sessions.forEach(s => {
+      visibleSessions.forEach(s => {
         const lastActiveMs = s.last_active_at ? new Date(s.last_active_at).getTime() : 0;
         const diffSec = Math.floor((now - lastActiveMs) / 1000);
 
@@ -810,17 +848,10 @@
           statusType = "revoked";
           cardBorder = "border-rose-500/40";
           statusBadge = `<span class="px-2.5 py-1 rounded-lg text-[10px] font-mono font-bold bg-rose-500/20 text-rose-400 border border-rose-500/40 flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-rose-500"></span> QUARANTINED</span>`;
-        } else if (s.status === "closed") {
-          statusType = "closed";
-          statusBadge = `<span class="px-2.5 py-1 rounded-lg text-[10px] font-mono font-bold bg-slate-800 text-slate-400 border border-slate-700 flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-slate-500"></span> OFFLINE</span>`;
-        } else if (diffSec <= 6) {
+        } else {
           statusType = "active";
           cardBorder = "border-emerald-500/30";
           statusBadge = `<span class="px-2.5 py-1 rounded-lg text-[10px] font-mono font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-emerald-400 pulse-ring"></span> LIVE ACTIVE</span>`;
-        } else {
-          statusType = "stale";
-          cardBorder = "border-amber-500/30";
-          statusBadge = `<span class="px-2.5 py-1 rounded-lg text-[10px] font-mono font-bold bg-amber-500/10 text-amber-400 border border-amber-500/30 flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-amber-400"></span> STALE (${diffSec}s)</span>`;
         }
 
         const developerName = s.user_id || s.user_email || s.instance_id || "governed-developer";
@@ -843,10 +874,16 @@
             ${statusBadge}
           </div>
 
-          <!-- SPIFFE Identity -->
-          <div class="bg-slate-950/80 rounded-xl p-2.5 border border-slate-800/80 text-[10px] font-mono text-slate-400 break-all">
-            <span class="text-slate-600 block text-[9px] uppercase tracking-wider mb-0.5">SPIFFE Workload ID</span>
-            ${escapeHtml(s.spiffe_id || `spiffe://bap.internal/app/${appName}/instance/${s.session_id}`)}
+          <!-- Session & SPIFFE Identity -->
+          <div class="bg-slate-950/80 rounded-xl p-2.5 border border-slate-800/80 text-[10px] font-mono text-slate-400 break-all space-y-1">
+            <div class="flex items-center justify-between">
+              <span class="text-slate-500 uppercase tracking-wider text-[9px]">Session ID</span>
+              <span class="text-cyan-300 font-bold">${escapeHtml(s.session_id)}</span>
+            </div>
+            <div>
+              <span class="text-slate-600 block text-[9px] uppercase tracking-wider mb-0.5">SPIFFE Workload ID</span>
+              ${escapeHtml(s.spiffe_id || `spiffe://bap.internal/app/${appName}/instance/${s.session_id}`)}
+            </div>
           </div>
 
           <!-- Metrics Row -->
@@ -879,11 +916,11 @@
               ${isSovereignAdmin ? (
                 statusType === "revoked" ? `
                   <button class="btn-card-restore px-3 py-1 rounded-xl bg-emerald-950/80 hover:bg-emerald-700 text-emerald-300 hover:text-white border border-emerald-500/40 text-xs font-bold transition cursor-pointer" data-target="${escapeHtml(s.session_id)}">
-                    ⚡ Restore Authority
+                    Restore Access
                   </button>
                 ` : `
-                  <button class="btn-card-revoke px-3 py-1 rounded-xl bg-rose-950/80 hover:bg-rose-700 text-rose-300 hover:text-white border border-rose-500/40 text-xs font-bold transition cursor-pointer" data-target="${escapeHtml(s.session_id)}" data-name="${escapeHtml(developerName)} (PID: ${clientPID})">
-                    🚨 Revoke & Kill
+                  <button class="btn-card-revoke px-3 py-1 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-600 text-xs font-bold transition cursor-pointer" data-target="${escapeHtml(s.session_id)}" data-name="${escapeHtml(developerName)} (PID: ${clientPID})">
+                    Stop / Revoke
                   </button>
                 `
               ) : `
@@ -1022,7 +1059,7 @@
       document.getElementById("modal-confirm-revoke").classList.remove("hidden");
     }
 
-    async function executeRevocation(targetObj) {
+    async function executeAccessAction(targetObj, action) {
       try {
         const resp = await fetch(`${serverBaseURL}/api/v1/control/agent/kill`, {
           method: "POST",
@@ -1030,17 +1067,21 @@
             "Content-Type": "application/json",
             "Authorization": `Bearer ${adminToken}`
           },
-          body: JSON.stringify({ target: targetObj.targetId, action: "revoke" })
+          body: JSON.stringify({ target: targetObj.targetId, action: action })
         });
         if (resp.ok) {
-          showToast("🚨 SURGICAL KILL ENGAGED", `Session ${targetObj.targetId} authority burned & rogue process terminated.`, "deny");
+          if (action === "stop") {
+            showToast("🛑 SESSION STOPPED", `Session ${targetObj.targetId} terminated. Future sessions permitted.`, "info");
+          } else {
+            showToast("🚨 ACCESS REVOKED", `Access revoked for ${targetObj.targetName || targetObj.targetId}. All sessions terminated.`, "deny");
+          }
           await pollTelemetry();
         } else {
-          showToast("❌ ACTION FAILED", "Unable to revoke session. Verify admin token.", "deny");
+          showToast("❌ ACTION FAILED", `Unable to ${action} session. Verify admin token.`, "deny");
         }
       } catch (e) {
         console.error(e);
-        showToast("❌ ERROR", "Network error during revocation call.", "deny");
+        showToast("❌ ERROR", `Network error during ${action} call.`, "deny");
       }
     }
 
@@ -1055,8 +1096,10 @@
           body: JSON.stringify({ target: targetId, action: "restore" })
         });
         if (resp.ok) {
-          showToast("⚡ AUTHORITY RESTORED", `Session ${targetId} authority restored by CISO.`, "info");
+          showToast("✅ ACCESS RESTORED", `Access restored for ${targetId}. User can now launch sessions.`, "info");
           await pollTelemetry();
+        } else {
+          showToast("❌ ACTION FAILED", `Unable to restore session. Verify admin token.`, "deny");
         }
       } catch (e) {
         console.error(e);

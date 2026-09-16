@@ -51,17 +51,19 @@ type SessionStartRequest struct {
 
 // Store manages sessions in memory with thread safety and optional SQLite durability.
 type Store struct {
-	mu       sync.RWMutex
-	sessions map[string]*Session
-	order    []string // chronological order of session IDs
-	db       *sql.DB  // persistent SQLite storage
+	mu           sync.RWMutex
+	sessions     map[string]*Session
+	order        []string // chronological order of session IDs
+	revokedUsers map[string]bool
+	db           *sql.DB // persistent SQLite storage
 }
 
 // NewStore creates an in-memory Store (for tests or backward compatibility).
 func NewStore() *Store {
 	return &Store{
-		sessions: make(map[string]*Session),
-		order:    make([]string, 0),
+		sessions:     make(map[string]*Session),
+		order:        make([]string, 0),
+		revokedUsers: make(map[string]bool),
 	}
 }
 
@@ -97,6 +99,11 @@ func NewStoreWithDB(dbPath string) (*Store, error) {
 		allowed_count INTEGER DEFAULT 0,
 		denied_count INTEGER DEFAULT 0,
 		close_reason TEXT
+	);
+	CREATE TABLE IF NOT EXISTS revoked_users (
+		username TEXT PRIMARY KEY,
+		revoked_at TEXT NOT NULL,
+		reason TEXT
 	);`
 	if _, err := db.Exec(createTableSQL); err != nil {
 		_ = db.Close()
@@ -104,9 +111,10 @@ func NewStoreWithDB(dbPath string) (*Store, error) {
 	}
 
 	store := &Store{
-		sessions: make(map[string]*Session),
-		order:    make([]string, 0),
-		db:       db,
+		sessions:     make(map[string]*Session),
+		order:        make([]string, 0),
+		revokedUsers: make(map[string]bool),
+		db:           db,
 	}
 
 	if err := store.loadFromDB(); err != nil {
@@ -291,6 +299,75 @@ func (s *Store) IsRevoked(sessionID string) bool {
 	return false
 }
 
+// IsUserRevoked checks if a username is in the revoked users list.
+func (s *Store) IsUserRevoked(username string) bool {
+	if username == "" || username == "NA" {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.revokedUsers[strings.ToLower(strings.TrimSpace(username))]
+}
+
+// RevokeUser places a user identity into revoked status, persisting it and revoking any active sessions.
+func (s *Store) RevokeUser(username, reason string) {
+	if username == "" || username == "NA" {
+		return
+	}
+	u := strings.ToLower(strings.TrimSpace(username))
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.revokedUsers[u] = true
+	if s.db != nil {
+		_, _ = s.db.Exec(`INSERT INTO revoked_users (username, revoked_at, reason) VALUES (?, ?, ?) ON CONFLICT(username) DO UPDATE SET revoked_at=excluded.revoked_at, reason=excluded.reason`, u, time.Now().UTC().Format(time.RFC3339), reason)
+	}
+	now := time.Now().UTC()
+	for _, sess := range s.sessions {
+		if strings.EqualFold(sess.UserID, username) || strings.EqualFold(sess.UserEmail, username) {
+			sess.Status = "revoked"
+			sess.CloseReason = reason
+			sess.LastActiveAt = now
+			s.saveSessionToDB(sess)
+		}
+	}
+}
+
+// RestoreUser restores a user identity and clears revocation on their sessions.
+func (s *Store) RestoreUser(username string) {
+	if username == "" || username == "NA" {
+		return
+	}
+	u := strings.ToLower(strings.TrimSpace(username))
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.revokedUsers, u)
+	if s.db != nil {
+		_, _ = s.db.Exec(`DELETE FROM revoked_users WHERE username = ?`, u)
+	}
+	now := time.Now().UTC()
+	for _, sess := range s.sessions {
+		if strings.EqualFold(sess.UserID, username) || strings.EqualFold(sess.UserEmail, username) {
+			if sess.Status == "revoked" {
+				sess.Status = "closed"
+				sess.CloseReason = "Restored by administrator"
+				sess.LastActiveAt = now
+				s.saveSessionToDB(sess)
+			}
+		}
+	}
+}
+
+// ListRevokedUsers returns a slice of all currently revoked usernames.
+func (s *Store) ListRevokedUsers() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	users := make([]string, 0, len(s.revokedUsers))
+	for u := range s.revokedUsers {
+		users = append(users, u)
+	}
+	return users
+}
+
 // RevokeTarget finds an active session matching target (by session_id, instance_id, user_id, or user_email) and marks it revoked.
 func (s *Store) RevokeTarget(target string, reason string) (*Session, error) {
 	s.mu.Lock()
@@ -313,7 +390,7 @@ func (s *Store) RevokeTarget(target string, reason string) (*Session, error) {
 	return nil, fmt.Errorf("no session found matching %q", target)
 }
 
-// RestoreTarget restores a previously revoked session back to active.
+// RestoreTarget restores a previously revoked session back to active (or closed if process already terminated).
 func (s *Store) RestoreTarget(target string) (*Session, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -416,6 +493,34 @@ func (s *Store) List(limit int) []*Session {
 			// Return shallow copy without embedding all raw events to keep payloads light
 			cp := *sess
 			cp.Events = nil // summary only
+			result = append(result, &cp)
+		}
+	}
+	return result
+}
+
+// ListVisible returns sessions in reverse chronological order, pruning non-revoked sessions older than maxAge.
+// Revoked sessions and sessions belonging to revoked users are NEVER pruned so administrators can inspect and restore them.
+func (s *Store) ListVisible(limit int, maxAge time.Duration) []*Session {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	now := time.Now().UTC()
+	total := len(s.order)
+	if limit <= 0 {
+		limit = total
+	}
+
+	result := make([]*Session, 0, limit)
+	for i := total - 1; i >= 0 && len(result) < limit; i-- {
+		id := s.order[i]
+		if sess, found := s.sessions[id]; found {
+			isRevoked := sess.Status == "revoked" || s.revokedUsers[strings.ToLower(sess.UserID)] || s.revokedUsers[strings.ToLower(sess.UserEmail)]
+			if !isRevoked && maxAge > 0 && now.Sub(sess.LastActiveAt) > maxAge {
+				continue
+			}
+			cp := *sess
+			cp.Events = nil
 			result = append(result, &cp)
 		}
 	}
@@ -571,6 +676,18 @@ func (s *Store) loadFromDB() error {
 		s.sessions[sess.SessionID] = sess
 		s.order = append(s.order, sess.SessionID)
 	}
+
+	uRows, err := s.db.Query(`SELECT username FROM revoked_users`)
+	if err == nil {
+		defer uRows.Close()
+		for uRows.Next() {
+			var u string
+			if uRows.Scan(&u) == nil && u != "" {
+				s.revokedUsers[strings.ToLower(u)] = true
+			}
+		}
+	}
+
 	return nil
 }
 

@@ -90,6 +90,16 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error running watcher: %v\n", err)
 			os.Exit(1)
 		}
+	case "session-start":
+		if err := cmd.RunSessionStart(args); err != nil {
+			fmt.Fprintf(os.Stderr, "Error starting session: %v\n", err)
+			os.Exit(1)
+		}
+	case "session-end":
+		if err := cmd.RunSessionEnd(args); err != nil {
+			fmt.Fprintf(os.Stderr, "Error ending session: %v\n", err)
+			os.Exit(1)
+		}
 	case "verify-log":
 		if err := cmd.RunVerifyLog(args); err != nil {
 			os.Exit(1)
