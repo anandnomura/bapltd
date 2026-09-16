@@ -1,60 +1,3 @@
-@echo off
-setlocal EnableExtensions
-
-rem ==============================================================================
-rem BAP Claude Code Transactional Zero-Trust Launcher
-rem SELF-CONTAINED BAT PACKAGE
-rem
-rem Features:
-rem   - stale-session recovery
-rem   - transactional settings swap/restore
-rem   - detached session guard/watchdog
-rem   - Ctrl-C / terminal-close recovery
-rem   - SHA-256 restoration verification
-rem   - workspace mutex
-rem   - ConfigChange protection
-rem   - PreToolUse coverage for all tools
-rem
-rem The robust guard implementation is embedded below as PowerShell. Nothing
-rem else needs to be installed/copied besides this BAT (PowerShell is required).
-rem
-rem Usage:
-rem   bap-claude-session-guard.bat
-rem   bap-claude-session-guard.bat --server http://localhost:8080
-rem   bap-claude-session-guard.bat --model sonnet
-rem ==============================================================================
-
-set "BAP_SELF=%~f0"
-set "BAP_WRAPPER_HOME=%~dp0"
-set "BAP_EXTRACT=%TEMP%\bap-claude-session-guard-%RANDOM%-%RANDOM%.ps1"
-
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$src=$env:BAP_SELF; $dst=$env:BAP_EXTRACT; " ^
-  "$lines=[System.IO.File]::ReadAllLines($src); " ^
-  "$marker='#__BAP_POWERSHELL__'; " ^
-  "$idx=[Array]::IndexOf($lines,$marker); " ^
-  "if($idx -lt 0){ Write-Error 'Embedded BAP PowerShell payload marker not found.'; exit 2 }; " ^
-  "$payload=$lines[($idx+1)..($lines.Length-1)]; " ^
-  "[System.IO.File]::WriteAllLines($dst,$payload,[System.Text.UTF8Encoding]::new($false));"
-
-if errorlevel 1 (
-    echo [-] Failed to extract embedded BAP session guard.
-    if exist "%BAP_EXTRACT%" del /f /q "%BAP_EXTRACT%" >nul 2>&1
-    endlocal
-    exit /b 2
-)
-
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%BAP_EXTRACT%" %*
-set "BAP_RC=%ERRORLEVEL%"
-
-rem On normal completion the PowerShell launcher has already restored the user's
-rem Claude settings. If the console is killed before this line, the extracted
-rem payload is harmless in %%TEMP%% and the detached BAP watchdog owns recovery.
-if exist "%BAP_EXTRACT%" del /f /q "%BAP_EXTRACT%" >nul 2>&1
-
-endlocal & exit /b %BAP_RC%
-
-#__BAP_POWERSHELL__
 # BAP Claude Code Transactional Zero-Trust Launcher
 # ------------------------------------------------
 # Features:
@@ -165,16 +108,7 @@ if ([string]::IsNullOrWhiteSpace($ScriptPath)) {
     throw 'Unable to determine this script path.'
 }
 $ScriptPath = [System.IO.Path]::GetFullPath($ScriptPath)
-
-# When packaged inside the self-extracting BAT, the embedded PowerShell runs
-# from %TEMP%. Keep BAP binary/config discovery rooted at the BAT's directory.
-if (-not [string]::IsNullOrWhiteSpace($env:BAP_WRAPPER_HOME)) {
-    $BapHome = [System.IO.Path]::GetFullPath($env:BAP_WRAPPER_HOME)
-}
-else {
-    $BapHome = Split-Path -Parent $ScriptPath
-}
-
+$BapHome = Split-Path -Parent $ScriptPath
 $Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 
 # -----------------------------------------------------------------------------
