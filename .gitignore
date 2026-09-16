@@ -136,3 +136,4 @@ dashboard/playwright-report/
 .DS_Store
 Thumbs.db
 desktop.ini
+"dist/" 
