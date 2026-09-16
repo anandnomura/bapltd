@@ -31,7 +31,7 @@ func TestAuditLogWritesValidJSONLines(t *testing.T) {
 		Source:      "copilot",
 		ClientPID:   5678,
 		Executable:  "curl",
-		FullCommand: "curl https://evil.com",
+		FullCommand: "curl https://untrusted-test.internal",
 		Decision:    "deny",
 		Reason:      "policy1 forbid egress",
 		DurationMs:  10,

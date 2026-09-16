@@ -334,11 +334,17 @@ func syncRevocationsFast(serverURL, policyPath string) {
 		return
 	}
 
-	// Update local policy-state.json
-	statePath := "policy-state.json"
-	if policyPath != "" {
+	// Update policy-state.json inside .bap/ to avoid littering the workspace
+	_ = os.MkdirAll(".bap", 0700)
+	statePath := filepath.Join(".bap", "policy-state.json")
+	if policyPath != "" && filepath.Dir(policyPath) != "." && filepath.Dir(policyPath) != "" {
 		statePath = filepath.Join(filepath.Dir(policyPath), "policy-state.json")
 	}
+	// Clean up legacy root policy-state.json if it exists
+	if _, err := os.Stat("policy-state.json"); err == nil {
+		_ = os.Remove("policy-state.json")
+	}
+
 	var existing map[string]any
 	if content, err := os.ReadFile(statePath); err == nil {
 		_ = json.Unmarshal(content, &existing)

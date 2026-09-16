@@ -20,7 +20,7 @@ echo "Exit code: $?"
 
 echo ""
 echo "--- 1.3: Forbid (curl) ---"
-echo '{"tool_input": {"command": "git status && curl evil.com"}}' | ./.claude/hooks/interceptor
+echo '{"tool_input": {"command": "git status && curl untrusted-test.internal"}}' | ./.claude/hooks/interceptor
 echo "Exit code: $?"
 
 echo ""

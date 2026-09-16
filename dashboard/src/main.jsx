@@ -106,9 +106,51 @@ function App() {
   const sessions = sensitive?.sessions || data?.sessions || [];
   const events = sensitive?.central_events || data?.central_events || [];
   const serverNow = data?.server_time && lastRefresh ? Date.parse(data.server_time) + now - lastRefresh : now;
-  const rows = agents.map(agent => ({ ...agent, presence: presence(agent, serverNow) }));
+
+  function targetFor(agent) {
+    return sessions.find(session => (session.session_id === agent.instance_id || session.instance_id === agent.instance_id || (session.app_id === agent.app_id && agent.agent_id.includes(session.session_id))) && session.status !== 'closed')?.session_id || agent.agent_id;
+  }
+
+  // 1. Map registered agents
+  const registeredRows = agents.map(agent => ({ ...agent, presence: presence(agent, serverNow) }));
+
+  // 2. Map dynamic sessions (Claude Code / Python SDK) not already matched in registeredRows
+  const sessionRows = [];
+  for (const s of sessions) {
+    const isMatched = registeredRows.some(r => r.instance_id === s.session_id || r.instance_id === s.instance_id || targetFor(r) === s.session_id);
+    if (!isMatched) {
+      const lastActiveMs = Date.parse(s.last_active_at || s.started_at);
+      const age = Number.isFinite(lastActiveMs) ? Math.max(0, serverNow - lastActiveMs) : Infinity;
+      let pStatus = s.status;
+      let visible = true;
+      if (s.status === 'revoked') {
+        pStatus = 'revoked'; visible = true;
+      } else if (['closed', 'deregistered'].includes(s.status) || age >= 15000) {
+        pStatus = 'offline'; visible = false;
+      } else if (s.status === 'active' && age >= 15000) {
+        pStatus = 'stale'; visible = false;
+      }
+      sessionRows.push({
+        agent_id: s.session_id,
+        app_id: s.app_id,
+        agent_name: s.app_id,
+        instance_id: s.instance_id || s.session_id,
+        spiffe_id: s.spiffe_id || `spiffe://bap.internal/app/${s.app_id}/instance/${s.session_id}`,
+        owner_email: s.user_email || s.user_id || 'governed-developer',
+        user_id: s.user_id,
+        hostname: s.hostname,
+        status: s.status,
+        presence: { status: pStatus, age, visible },
+        client_pid: s.client_pid,
+        session_id: s.session_id,
+        user_prompt: s.user_prompt
+      });
+    }
+  }
+
+  const rows = [...registeredRows, ...sessionRows];
   const counts = rows.reduce((acc, agent) => { const status = agent.presence.status; if (agent.presence.visible) acc[status] = (acc[status] || 0) + 1; return acc; }, {});
-  const filtered = rows.filter(agent => (view === 'history' || agent.presence.visible) && [agent.agent_id, agent.app_id, agent.instance_id, agent.owner_email, agent.hostname].some(value => String(value || '').toLowerCase().includes(search.toLowerCase())));
+  const filtered = rows.filter(agent => (view === 'history' || agent.presence.visible) && [agent.agent_id, agent.app_id, agent.instance_id, agent.owner_email, agent.hostname, agent.session_id].some(value => String(value || '').toLowerCase().includes(search.toLowerCase())));
   const displayedRows = filtered;
   const shownEvents = events.filter(event => (!selectedAgent || event.session_id === selectedAgent.sessionID || event.source === selectedAgent.appID && event.spiffe_id === selectedAgent.spiffeID) && (decisionFilter === 'all' || event.decision === decisionFilter)).slice().reverse();
   function promptFor(event) {
@@ -116,9 +158,6 @@ function App() {
     const captured = event.user_prompt || sensitive.central_events?.find(item => item.event_id && item.event_id === event.event_id)?.user_prompt;
     const fromSession = sensitive.sessions?.find(item => item.session_id === event.session_id)?.user_prompt;
     return captured && captured !== protectedText ? captured : fromSession && fromSession !== protectedText ? fromSession : 'Not captured';
-  }
-  function targetFor(agent) {
-    return sessions.find(session => (session.session_id === agent.instance_id || session.instance_id === agent.instance_id || (session.app_id === agent.app_id && agent.agent_id.includes(session.session_id))) && session.status !== 'closed')?.session_id || agent.agent_id;
   }
   const activeAdminState = data?.kill_switch;
   return <>

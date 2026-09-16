@@ -135,7 +135,7 @@ Evaluates the command string using `github.com/cedar-policy/cedar-go` against `p
 
 # Blocked malicious intent (denied by Cedar, exits 1)
 ./ltd-agent exec "cat .env"
-./ltd-agent exec "curl https://evil.com"
+./ltd-agent exec "curl https://untrusted-test.internal"
 ```
 
 ### 3. The `attest` Client Command

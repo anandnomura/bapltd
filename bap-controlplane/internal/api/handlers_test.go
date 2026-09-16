@@ -312,7 +312,7 @@ func TestAPIFullLifecycle(t *testing.T) {
 			"timestamp":    time.Now().UTC().Format(time.RFC3339),
 			"source":       "claude-code",
 			"executable":   "curl",
-			"full_command": "curl evil.com",
+			"full_command": "curl untrusted-test.internal",
 			"decision":     "deny",
 			"exit_code":    1,
 		},

@@ -119,7 +119,12 @@ func resolveServerURL() string {
 	if s := os.Getenv("BAP_SERVER_URL"); s != "" {
 		return strings.TrimRight(s, "/")
 	}
-	cfgCandidates := []string{"bap-config.json", "../bap-config.json"}
+	cfgCandidates := []string{
+		filepath.Join(".bap", "bap-config.json"),
+		filepath.Join(".bap", "config.json"),
+		"bap-config.json",
+		"../bap-config.json",
+	}
 	if exePath, err := os.Executable(); err == nil {
 		cfgCandidates = append(cfgCandidates, filepath.Join(filepath.Dir(exePath), "bap-config.json"))
 	}
@@ -139,6 +144,10 @@ func resolveServerURL() string {
 	return "http://localhost:8080"
 }
 
+func sessionMarkerPathForPID(pid int) string {
+	return filepath.Join(".bap", "sessions", fmt.Sprintf("pid-%d.json", pid))
+}
+
 func resolveSessionID(payload HookPayload) string {
 	if sessionID := os.Getenv("BAP_SESSION_ID"); sessionID != "" {
 		return sessionID
@@ -149,6 +158,21 @@ func resolveSessionID(payload HookPayload) string {
 	if payload.SessionID != "" {
 		return payload.SessionID
 	}
+
+	// 1. Check PID-specific session marker for concurrent Claude session isolation
+	ppid := os.Getppid()
+	for _, cand := range []string{sessionMarkerPathForPID(ppid), filepath.Join("..", sessionMarkerPathForPID(ppid))} {
+		if data, err := os.ReadFile(cand); err == nil {
+			var info struct {
+				SessionID string `json:"session_id"`
+			}
+			if json.Unmarshal(data, &info) == nil && info.SessionID != "" {
+				return info.SessionID
+			}
+		}
+	}
+
+	// 2. Check legacy workspace marker files
 	for _, loc := range []string{".bap-session.json", "../.bap-session.json", "cchook/.bap-session.json"} {
 		if data, err := os.ReadFile(loc); err == nil {
 			var info struct {
@@ -238,7 +262,7 @@ func isStartupBlocked() (bool, string) {
 		}
 	}
 	// Check policy-state.json
-	for _, cand := range []string{"policy-state.json", "../policy-state.json"} {
+	for _, cand := range []string{filepath.Join(".bap", "policy-state.json"), filepath.Join("..", ".bap", "policy-state.json"), "policy-state.json", "../policy-state.json"} {
 		if data, err := os.ReadFile(cand); err == nil {
 			var st struct {
 				KillSwitch bool `json:"kill_switch"`
@@ -264,6 +288,12 @@ func handleSessionStartHook(payload HookPayload) {
 	// supplies its own hook session ID; preferring that value created a second
 	// session and a second watcher for the same process.
 	sessionID := os.Getenv("BAP_SESSION_ID")
+	if sessionID == "" {
+		// Check PID-specific marker already written by launcher or bapedge session-start
+		if existingID := resolveSessionID(HookPayload{}); existingID != "" {
+			sessionID = existingID
+		}
+	}
 	launcherOwnsWatcher := sessionID != ""
 	if sessionID == "" {
 		sessionID = payload.SessionID
@@ -274,7 +304,7 @@ func handleSessionStartHook(payload HookPayload) {
 
 	serverURL := resolveServerURL()
 
-	// 2. Notify control plane of session start
+	// 2. Notify control plane of session start (only if not already registered by launcher)
 	hostname, _ := os.Hostname()
 	username := os.Getenv("USERNAME")
 	if username == "" {
@@ -287,15 +317,17 @@ func handleSessionStartHook(payload HookPayload) {
 		"hostname":   hostname,
 		"client_pid": ppid,
 	}
-	if body, err := json.Marshal(startPayload); err == nil {
-		client := getHTTPClient()
-		resp, err := client.Post(serverURL+"/api/v1/sessions/start", "application/json", bytes.NewReader(body))
-		if err == nil && resp != nil {
-			defer resp.Body.Close()
-			if resp.StatusCode == http.StatusForbidden {
-				_ = os.Remove(".bap-session.json")
-				fmt.Fprintln(os.Stderr, "[BAP ZERO-TRUST] 🚨 New Claude Code session BLOCKED by enterprise security policy (kill-switch or app revocation active).")
-				os.Exit(2)
+	if !launcherOwnsWatcher {
+		if body, err := json.Marshal(startPayload); err == nil {
+			client := getHTTPClient()
+			resp, err := client.Post(serverURL+"/api/v1/sessions/start", "application/json", bytes.NewReader(body))
+			if err == nil && resp != nil {
+				defer resp.Body.Close()
+				if resp.StatusCode == http.StatusForbidden {
+					_ = os.Remove(".bap-session.json")
+					fmt.Fprintln(os.Stderr, "[BAP ZERO-TRUST] 🚨 New Claude Code session BLOCKED by enterprise security policy (kill-switch or app revocation active).")
+					os.Exit(2)
+				}
 			}
 		}
 	}
@@ -308,10 +340,14 @@ func handleSessionStartHook(payload HookPayload) {
 		"started_at": time.Now().UTC(),
 	}
 	if data, err := json.MarshalIndent(marker, "", "  "); err == nil {
-		_ = os.WriteFile(".bap-session.json", data, 0600)
+		pMarker := sessionMarkerPathForPID(ppid)
+		_ = os.MkdirAll(filepath.Dir(pMarker), 0700)
+		_ = os.WriteFile(pMarker, data, 0600)
+		_ = os.WriteFile(filepath.Join(".bap", "session.json"), data, 0600)
+		_ = os.Remove(".bap-session.json")
 	}
 
-	// Launch detached bapedge watch thread
+	// Launch detached bapedge watch thread if not already managed by launcher
 	ltdBin := findBinary("bapedge.exe")
 	if ltdBin == "" {
 		ltdBin = findBinary("bapedge")
@@ -355,7 +391,7 @@ func isSessionRevoked(serverURL, sessionID string) (bool, string) {
 	}
 
 	// 2. Check local policy-state.json (0ms)
-	for _, cand := range []string{"policy-state.json", "../policy-state.json", "bap-edge/policy-state.json"} {
+	for _, cand := range []string{filepath.Join(".bap", "policy-state.json"), filepath.Join("..", ".bap", "policy-state.json"), "policy-state.json", "../policy-state.json", "bap-edge/policy-state.json"} {
 		if data, err := os.ReadFile(cand); err == nil {
 			var st struct {
 				KillSwitch      bool     `json:"kill_switch"`
@@ -564,7 +600,12 @@ func main() {
 		ppid := os.Getppid()
 		sessionID = fmt.Sprintf("sess-claude-pid-%d", ppid)
 		serverURL := "http://localhost:8080"
-		cfgCandidates := []string{"bap-config.json", "../bap-config.json"}
+		cfgCandidates := []string{
+			filepath.Join(".bap", "bap-config.json"),
+			filepath.Join(".bap", "config.json"),
+			"bap-config.json",
+			"../bap-config.json",
+		}
 		if exePath, err := os.Executable(); err == nil {
 			cfgCandidates = append(cfgCandidates, filepath.Join(filepath.Dir(exePath), "bap-config.json"))
 		}
@@ -582,7 +623,12 @@ func main() {
 				}
 			}
 		}
-		_ = os.WriteFile(".bap-session.json", []byte(fmt.Sprintf(`{"session_id":"%s","server_url":"%s","pid":%d}`, sessionID, serverURL, ppid)), 0600)
+		sessionBytes := []byte(fmt.Sprintf(`{"session_id":"%s","server_url":"%s","pid":%d}`, sessionID, serverURL, ppid))
+		pMarker := sessionMarkerPathForPID(ppid)
+		_ = os.MkdirAll(filepath.Dir(pMarker), 0700)
+		_ = os.WriteFile(pMarker, sessionBytes, 0600)
+		_ = os.WriteFile(filepath.Join(".bap", "session.json"), sessionBytes, 0600)
+		_ = os.Remove(".bap-session.json")
 		ltdBin := findBinary("bapedge.exe")
 		if ltdBin == "" {
 			ltdBin = findBinary("bapedge")

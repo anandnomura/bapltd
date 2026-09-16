@@ -27,13 +27,20 @@ func NewAuthorizer(policyPath string) (*Authorizer, error) {
 
 	// Check if kill-switch is active in policy-state.json
 	policyDir := filepath.Dir(resolvedPolicyPath)
-	statePath := filepath.Join(policyDir, "policy-state.json")
-	if stateData, stateErr := os.ReadFile(statePath); stateErr == nil {
-		var state struct {
-			KillSwitch bool `json:"kill_switch"`
-		}
-		if json.Unmarshal(stateData, &state) == nil && state.KillSwitch {
-			return nil, fmt.Errorf("emergency kill-switch is active; all executions are blocked")
+	candidates := []string{
+		filepath.Join(policyDir, ".bap", "policy-state.json"),
+		filepath.Join(policyDir, "policy-state.json"),
+		filepath.Join(".bap", "policy-state.json"),
+		"policy-state.json",
+	}
+	for _, statePath := range candidates {
+		if stateData, stateErr := os.ReadFile(statePath); stateErr == nil {
+			var state struct {
+				KillSwitch bool `json:"kill_switch"`
+			}
+			if json.Unmarshal(stateData, &state) == nil && state.KillSwitch {
+				return nil, fmt.Errorf("emergency kill-switch is active; all executions are blocked")
+			}
 		}
 	}
 
@@ -181,35 +188,44 @@ func CheckSessionRevocation(policyPath, sessionID string) error {
 		resolvedPolicyPath = "policy.cedar"
 	}
 	policyDir := filepath.Dir(resolvedPolicyPath)
-	statePath := filepath.Join(policyDir, "policy-state.json")
-	stateData, err := os.ReadFile(statePath)
-	if err != nil {
-		return nil
+	candidates := []string{
+		filepath.Join(policyDir, ".bap", "policy-state.json"),
+		filepath.Join(policyDir, "policy-state.json"),
+		filepath.Join(".bap", "policy-state.json"),
+		"policy-state.json",
 	}
 
-	var state struct {
-		KillSwitch      bool     `json:"kill_switch"`
-		RevokedSessions []string `json:"revoked_sessions"`
-	}
-	if err := json.Unmarshal(stateData, &state); err != nil {
-		return nil
-	}
+	for _, statePath := range candidates {
+		stateData, err := os.ReadFile(statePath)
+		if err != nil {
+			continue
+		}
 
-	if state.KillSwitch {
-		return fmt.Errorf("emergency kill-switch is active; all executions are blocked")
-	}
+		var state struct {
+			KillSwitch      bool     `json:"kill_switch"`
+			RevokedSessions []string `json:"revoked_sessions"`
+		}
+		if err := json.Unmarshal(stateData, &state); err != nil {
+			continue
+		}
 
-	if sessionID != "" {
-		sessLower := strings.ToLower(sessionID)
-		for _, rev := range state.RevokedSessions {
-			revLower := strings.ToLower(strings.TrimSpace(rev))
-			if revLower == "" {
-				continue
-			}
-			if strings.Contains(sessLower, revLower) || strings.Contains(revLower, sessLower) {
-				return fmt.Errorf("session %q has been revoked by CISO administrator; execution blocked", sessionID)
+		if state.KillSwitch {
+			return fmt.Errorf("emergency kill-switch is active; all executions are blocked")
+		}
+
+		if sessionID != "" {
+			sessLower := strings.ToLower(sessionID)
+			for _, rev := range state.RevokedSessions {
+				revLower := strings.ToLower(strings.TrimSpace(rev))
+				if revLower == "" {
+					continue
+				}
+				if strings.Contains(sessLower, revLower) || strings.Contains(revLower, sessLower) {
+					return fmt.Errorf("session %q has been revoked by CISO administrator; execution blocked", sessionID)
+				}
 			}
 		}
 	}
+
 	return nil
 }

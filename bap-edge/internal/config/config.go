@@ -111,6 +111,8 @@ func getCandidateConfigFilePaths() []string {
 	if err == nil {
 		curr := cwd
 		for i := 0; i < 4; i++ {
+			candidates = append(candidates, filepath.Join(curr, ".bap", "bap-config.json"))
+			candidates = append(candidates, filepath.Join(curr, ".bap", "config.json"))
 			candidates = append(candidates, filepath.Join(curr, "bap-config.json"))
 			parent := filepath.Dir(curr)
 			if parent == curr {
@@ -178,10 +180,14 @@ func loadServerURLFromCredentials() string {
 	return ""
 }
 
-// SaveConfig writes the configuration to the specified path or defaults to ./bap-config.json.
+// SaveConfig writes the configuration to the specified path or defaults to .bap/bap-config.json or ./bap-config.json.
 func SaveConfig(cfg EndpointsConfig, targetPath string) error {
 	if targetPath == "" {
-		targetPath = "bap-config.json"
+		if fi, err := os.Stat(".bap"); err == nil && fi.IsDir() {
+			targetPath = filepath.Join(".bap", "bap-config.json")
+		} else {
+			targetPath = "bap-config.json"
+		}
 	}
 	if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil && filepath.Dir(targetPath) != "." {
 		return err

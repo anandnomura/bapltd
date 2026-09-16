@@ -1,0 +1,33 @@
+# Archived and legacy documentation
+archive/
+
+# Dependency and tool caches
+**/node_modules/
+**/.pytest_cache/
+**/__pycache__/
+**/.cache/
+
+# Build and coverage outputs
+dist/
+build/
+coverage/
+**/coverage/
+*.exe
+*.old
+*.pyc
+
+# Runtime state, logs, and local secrets
+.bap/
+*.db
+*.db-shm
+*.db-wal
+*.jsonl
+.bap-admin-token
+*.key
+*.pem
+
+# Generated dashboard assets and visual test artifacts
+bap-controlplane/internal/dashboardui/web/assets/
+dashboard/test-results/
+dashboard/playwright-report/
+dashboard/*.png

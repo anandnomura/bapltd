@@ -10,7 +10,7 @@ This document is the master architectural reference and executive overview for t
 ### 1.1 The Vulnerability of Modern AI Coding Agents
 Autonomous AI agents are given shell access, filesystem inspection tools, and developer credentials. Traditional security controls fail to protect modern engineering environments because:
 1. **Static, Standing Credentials**: Developer machines and CI nodes typically store long-lived tokens in environment variables (`AWS_ACCESS_KEY_ID`, `GITHUB_TOKEN`, `.env` files). A prompt-injected or compromised agent can immediately dump and exfiltrate these secrets.
-2. **Over-Privileged Shell Execution**: Standard toolkits execute shell commands with the full privileges of the logged-in developer. There is no sub-process boundary preventing an agent from running `curl https://evil.com`, `rm -rf /`, or renaming sensitive files to bypass crude regex filters.
+2. **Over-Privileged Shell Execution**: Standard toolkits execute shell commands with the full privileges of the logged-in developer. There is no sub-process boundary preventing an agent from running `curl https://untrusted-test.internal`, `rm -rf /`, or renaming sensitive files to bypass crude regex filters.
 3. **Lack of Cryptographic Identity**: Autonomous agents often run as anonymous local scripts without verifiable workload identities (SPIFFE) or cryptographic attestation of the executing binary.
 4. **Latency Bottlenecks in Centralized Proxies**: Routing every shell keystroke through a remote cloud proxy introduces 200–500ms latency, degrading the developer experience and breaking offline workflows.
 
@@ -393,7 +393,7 @@ graph TD
 | Threat ID | Threat Vector | Malicious Agent Action | BAP Defense-in-Depth Mitigation |
 | :--- | :--- | :--- | :--- |
 | **E1** | **Secret Content Dumping** | Agent runs `cat .env` or `type .env`. | Cedar forbid rule inspects `*.env*`. Intercepted in $1\text{ms}$; process never spawns. |
-| **E2** | **Casing Evasion Attack** | Agent runs `CURL https://evil.com` or `CAT .env`. | `bapedge` normalizes all tokens to lowercase before Cedar evaluation. Strictly blocked. |
+| **E2** | **Casing Evasion Attack** | Agent runs `CURL https://untrusted-test.internal` or `CAT .env`. | `bapedge` normalizes all tokens to lowercase before Cedar evaluation. Strictly blocked. |
 | **E3** | **Evasive File Renaming** | Agent runs `ren .env backup.txt` or `Move-Item .env`. | Cedar forbid rules inspect wildcard renames and moves. Execution denied. |
 | **E4** | **Output Redirection Leak** | Agent runs `ls -la .env > leak.txt`. | Arguments containing `.env` and redirection operators are matched by Cedar forbid rules. |
 | **E5** | **Network Data Exfiltration** | Agent runs `curl`, `wget`, `nc`, `ncat`, `socat`. | Egress binaries are forbidden at Cedar layer; Landlock sandbox disables network sockets entirely. |
@@ -470,7 +470,7 @@ Modern AI developer tools (Claude Desktop, Claude Code, GitHub Copilot Chat, Cur
 |                    Embedded AWS Cedar Policy Engine                     |
 |  - Evaluates executable and full command against strict forbid rules   |
 |  - Permits local dev tools (git, python, go, ollama localhost:11434)    |
-|  - Blocks exfiltration (evil.com), secret theft (.env), reverse shells  |
+|  - Blocks exfiltration (untrusted-test.internal), secret theft (.env), reverse shells  |
 +-------------------------------------------------------------------------+
                     |                                  |
                 [ALLOWED]                          [DENIED]

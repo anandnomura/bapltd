@@ -172,7 +172,11 @@ class BAPSession:
         self.user_email = user_email or os.getenv("BAP_USER_EMAIL") or os.getenv("USER_EMAIL") or f"{self.user_id}@enterprise.internal"
         self.spiffe_id = f"spiffe://bap.internal/app/{self.app_id}/instance/{self.instance_id}"
         self.is_active = False
+        self.is_revoked = False
         self.server_registered = False
+        self._heartbeat_thread = None
+        self._heartbeat_stop_event = None
+        self._heartbeat_interval = 3.0
 
     def _find_bapedge(self) -> str:
         """Locates bapedge binary across workspace root and system PATH."""
@@ -190,6 +194,31 @@ class BAPSession:
             if path and os.path.isfile(path) and os.access(path, os.X_OK if os.name != 'nt' else os.R_OK):
                 return os.path.abspath(path)
         return "bapedge.exe"
+
+    def heartbeat(self) -> dict:
+        """Sends a heartbeat pulse to BAP Control Plane to maintain active presence."""
+        if not self.is_active:
+            return {}
+        payload = {
+            "session_id": self.session_id,
+            "agent_id": self.instance_id,
+            "app_id": self.app_id,
+        }
+        url = f"{self.server_url}/api/v1/sessions/heartbeat"
+        try:
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"}
+            )
+            with _urlopen(req, timeout=3) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                if data.get("status") == "revoked" or data.get("action") == "terminate":
+                    self.is_active = False
+                    self.is_revoked = True
+                return data
+        except Exception as e:
+            return {"error": str(e)}
 
     def start(self) -> "BAPSession":
         """Registers the session with the BAP Control Plane (if reachable) and activates local session."""
@@ -219,17 +248,37 @@ class BAPSession:
                 data=json.dumps(payload).encode("utf-8"),
                 headers={"Content-Type": "application/json"}
             )
-            with _urlopen(req, timeout=1) as resp:
+            with _urlopen(req, timeout=3) as resp:
                 if resp.status in (200, 201):
                     self.server_registered = True
         except Exception:
             # Session registration soft-fails when offline to preserve local broker autonomy
             self.server_registered = False
 
+        # Start automated background heartbeat to maintain live presence on dashboard / inspector
+        import threading
+        self._heartbeat_stop_event = threading.Event()
+        def _heartbeat_worker():
+            while self._heartbeat_stop_event and not self._heartbeat_stop_event.wait(self._heartbeat_interval):
+                if not self.is_active:
+                    break
+                try:
+                    self.heartbeat()
+                except Exception:
+                    pass
+        self._heartbeat_thread = threading.Thread(
+            target=_heartbeat_worker,
+            daemon=True,
+            name=f"bap-hb-{self.session_id}"
+        )
+        self._heartbeat_thread.start()
+
         return self
 
     def end(self, reason: str = "completed") -> None:
         """Closes the session and notifies the BAP Control Plane to deregister."""
+        if self._heartbeat_stop_event:
+            self._heartbeat_stop_event.set()
         if not self.is_active:
             return
         payload = {
@@ -243,7 +292,7 @@ class BAPSession:
                 data=json.dumps(payload).encode("utf-8"),
                 headers={"Content-Type": "application/json"}
             )
-            with _urlopen(req, timeout=2) as resp:
+            with _urlopen(req, timeout=3) as resp:
                 pass
         except Exception:
             pass

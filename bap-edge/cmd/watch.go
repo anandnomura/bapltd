@@ -3,12 +3,14 @@ package cmd
 import (
 	"bap-edge/internal/httptransport"
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -125,19 +127,7 @@ func RunSessionStart(args []string) error {
 	}
 
 	// 3. Persist workspace session marker with PID
-	marker := map[string]any{
-		"session_id":  sessionID,
-		"server_url":  serverURL,
-		"pid":         watchPID,
-		"app_id":      *appFlag,
-		"user":        username,
-		"hostname":    hostname,
-		"user_prompt": initialPrompt,
-		"started_at":  time.Now().UTC(),
-	}
-	if data, err := json.MarshalIndent(marker, "", "  "); err == nil {
-		_ = os.WriteFile(".bap-session.json", data, 0600)
-	}
+	writeSessionMarker(sessionID, serverURL, *appFlag, username, hostname, initialPrompt, watchPID)
 
 	// 4. Start continuous background heartbeat watcher
 	exe, err := os.Executable()
@@ -205,8 +195,7 @@ func RunSessionEnd(args []string) error {
 		_ = postJSONQuick(serverURL+"/api/v1/sessions/end", endPayload)
 	}
 
-	_ = os.Remove(".bap-session.json")
-	_ = os.Remove("../.bap-session.json")
+	cleanupSessionMarker(sessionID, 0)
 	_ = os.Remove(".bap-prompt.txt")
 	_ = os.Remove("../.bap-prompt.txt")
 	return nil
@@ -285,30 +274,81 @@ func RunWatch(args []string) error {
 	return nil
 }
 
+func sessionMarkerPath(sessionID string) string {
+	sum := sha256.Sum256([]byte(sessionID))
+	return filepath.Join(".bap", "sessions", fmt.Sprintf("%x.json", sum[:]))
+}
+
+func sessionPIDMarkerPath(pid int) string {
+	return filepath.Join(".bap", "sessions", fmt.Sprintf("pid-%d.json", pid))
+}
+
+func writeSessionMarker(sessionID, serverURL, appID, username, hostname, initialPrompt string, watchPID int) {
+	marker := map[string]any{
+		"session_id":  sessionID,
+		"server_url":  serverURL,
+		"pid":         watchPID,
+		"app_id":      appID,
+		"user":        username,
+		"hostname":    hostname,
+		"user_prompt": initialPrompt,
+		"started_at":  time.Now().UTC(),
+	}
+	if data, err := json.MarshalIndent(marker, "", "  "); err == nil {
+		// 1. Write per-session isolated marker
+		p := sessionMarkerPath(sessionID)
+		_ = os.MkdirAll(filepath.Dir(p), 0700)
+		_ = os.WriteFile(p, data, 0600)
+
+		// 2. Write per-PID marker
+		if watchPID > 0 {
+			_ = os.WriteFile(sessionPIDMarkerPath(watchPID), data, 0600)
+		}
+
+		// 3. Write workspace session fallback inside .bap/
+		_ = os.WriteFile(filepath.Join(".bap", "session.json"), data, 0600)
+		// Clean up any stray root marker
+		_ = os.Remove(".bap-session.json")
+	}
+}
+
+func cleanupSessionMarker(sessionID string, watchPID int) {
+	if sessionID != "" {
+		_ = os.Remove(sessionMarkerPath(sessionID))
+	}
+	if watchPID > 0 {
+		_ = os.Remove(sessionPIDMarkerPath(watchPID))
+	}
+	_ = os.Remove(filepath.Join(".bap", "session.json"))
+
+	// Clean up legacy .bap-session.json if present
+	for _, cand := range []string{".bap-session.json", "../.bap-session.json"} {
+		if data, err := os.ReadFile(cand); err == nil {
+			var sInfo struct {
+				SessionID string `json:"session_id"`
+			}
+			if json.Unmarshal(data, &sInfo) == nil {
+				if sInfo.SessionID == "" || sInfo.SessionID == sessionID {
+					_ = os.Remove(cand)
+				}
+			}
+		}
+	}
+}
+
 func runWatchLoop(watchPID int, serverURL, sessionID, appID string) {
 	initialPrompt := strings.TrimSpace(os.Getenv("BAP_USER_PROMPT"))
 
-	// 1. Ensure local workspace marker exists
-	if _, err := os.Stat(".bap-session.json"); os.IsNotExist(err) {
-		marker := map[string]any{
-			"session_id":  sessionID,
-			"server_url":  serverURL,
-			"pid":         watchPID,
-			"app_id":      appID,
-			"user_prompt": initialPrompt,
-			"started_at":  time.Now().UTC(),
-		}
-		if data, err := json.MarshalIndent(marker, "", "  "); err == nil {
-			_ = os.WriteFile(".bap-session.json", data, 0600)
-		}
-	}
-
-	// 2. Enroll session into central control plane (idempotent)
-	hostname, _ := os.Hostname()
 	username := os.Getenv("USERNAME")
 	if username == "" {
 		username = os.Getenv("USER")
 	}
+	hostname, _ := os.Hostname()
+
+	// 1. Ensure isolated per-session marker exists
+	writeSessionMarker(sessionID, serverURL, appID, username, hostname, initialPrompt, watchPID)
+
+	// 2. Enroll session into central control plane (idempotent)
 	startPayload := map[string]any{
 		"session_id":  sessionID,
 		"app_id":      appID,
@@ -324,22 +364,29 @@ func runWatchLoop(watchPID int, serverURL, sessionID, appID string) {
 	defer ticker.Stop()
 
 	deadCheckCount := 0
-	for range ticker.C {
-		// If session marker was removed locally (e.g. session-end called), workload finished
-		if _, err := os.Stat(".bap-session.json"); os.IsNotExist(err) {
-			return
-		}
+	sessionFile := sessionMarkerPath(sessionID)
 
+	for range ticker.C {
 		// If watchPID was not specified at launch, look for it in local session marker
 		if watchPID <= 0 {
-			for _, loc := range []string{".bap-session.json", "../.bap-session.json"} {
-				if data, err := os.ReadFile(loc); err == nil {
-					var sInfo struct {
-						PID int `json:"pid"`
-					}
-					if json.Unmarshal(data, &sInfo) == nil && sInfo.PID > 0 {
-						watchPID = sInfo.PID
-						break
+			if data, err := os.ReadFile(sessionFile); err == nil {
+				var sInfo struct {
+					PID int `json:"pid"`
+				}
+				if json.Unmarshal(data, &sInfo) == nil && sInfo.PID > 0 {
+					watchPID = sInfo.PID
+				}
+			}
+			if watchPID <= 0 {
+				for _, loc := range []string{".bap-session.json", "../.bap-session.json"} {
+					if data, err := os.ReadFile(loc); err == nil {
+						var sInfo struct {
+							PID int `json:"pid"`
+						}
+						if json.Unmarshal(data, &sInfo) == nil && sInfo.PID > 0 {
+							watchPID = sInfo.PID
+							break
+						}
 					}
 				}
 			}
@@ -356,11 +403,18 @@ func runWatchLoop(watchPID int, serverURL, sessionID, appID string) {
 						"reason":     "Workload process exited cleanly",
 					}
 					_ = postJSONQuick(serverURL+"/api/v1/sessions/end", endPayload)
-					_ = os.Remove(".bap-session.json")
+					cleanupSessionMarker(sessionID, watchPID)
 					return
 				}
 			} else {
 				deadCheckCount = 0
+			}
+		} else {
+			// Fallback: If no target PID, exit only if this specific session's marker was deleted
+			if _, err := os.Stat(sessionFile); os.IsNotExist(err) {
+				if _, err2 := os.Stat(".bap-session.json"); os.IsNotExist(err2) {
+					return
+				}
 			}
 		}
 
@@ -371,7 +425,7 @@ func runWatchLoop(watchPID int, serverURL, sessionID, appID string) {
 				fmt.Fprintf(os.Stderr, "[bapedge watch] 🛑 Session %s STOPPED: Terminating workload (PID: %d)...\n", sessionID, watchPID)
 				killProcessPID(watchPID)
 			}
-			_ = os.Remove(".bap-session.json")
+			cleanupSessionMarker(sessionID, watchPID)
 			return
 		}
 		syncRevocationsFast(serverURL, "policy.cedar")
@@ -388,7 +442,7 @@ func runWatchLoop(watchPID int, serverURL, sessionID, appID string) {
 				fmt.Fprintf(os.Stderr, "[bapedge watch] ⚡ Terminating revoked agent workload (PID: %d)...\n", watchPID)
 				killProcessPID(watchPID)
 			}
-			_ = os.Remove(".bap-session.json")
+			cleanupSessionMarker(sessionID, watchPID)
 			return
 		}
 	}
@@ -426,7 +480,17 @@ func writeLocalRevoked(sessionID, reason string) {
 }
 
 func isSessionRevokedInState(sessionID string) bool {
-	data, err := os.ReadFile("policy-state.json")
+	var data []byte
+	var err error
+	for _, cand := range []string{filepath.Join(".bap", "policy-state.json"), "policy-state.json", filepath.Join("..", ".bap", "policy-state.json"), filepath.Join("..", "policy-state.json")} {
+		if d, e := os.ReadFile(cand); e == nil {
+			data = d
+			err = nil
+			break
+		} else {
+			err = e
+		}
+	}
 	if err != nil {
 		return false
 	}

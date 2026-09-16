@@ -3,36 +3,30 @@ setlocal EnableExtensions
 
 rem ==============================================================================
 rem BAP Claude Code Transactional Zero-Trust Launcher
-rem SELF-CONTAINED BAT PACKAGE
-rem
-rem Features:
-rem   - stale-session recovery
-rem   - transactional settings swap/restore
-rem   - detached session guard/watchdog
-rem   - Ctrl-C / terminal-close recovery
-rem   - SHA-256 restoration verification
-rem   - workspace mutex
-rem   - ConfigChange protection
-rem   - PreToolUse coverage for all tools
-rem
-rem The robust guard implementation is embedded below as PowerShell. Nothing
-rem else needs to be installed/copied besides this BAT (PowerShell is required).
+rem SELF-CONTAINED BAT PACKAGE (Supports Multi-Instance Claude Concurrency)
 rem
 rem Usage:
-rem   bap-claude-session-guard.bat
-rem   bap-claude-session-guard.bat --server http://localhost:8080
-rem   bap-claude-session-guard.bat --model sonnet
+rem   run_claude_bap.bat
+rem   run_claude_bap.bat --server https://localhost:8443
+rem   run_claude_bap.bat --model sonnet
 rem ==============================================================================
 
+set "SCRIPT_DIR=%~dp0"
+set "BAP_ORIGINAL_DIR=%SCRIPT_DIR%"
+set "PS1_FILE=%SCRIPT_DIR%run_claude_bap.ps1"
+
+if exist "%PS1_FILE%" (
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%PS1_FILE%" %*
+    exit /b %ERRORLEVEL%
+)
+
 set "BAP_SELF=%~f0"
-set "BAP_WRAPPER_HOME=%~dp0"
 set "BAP_EXTRACT=%TEMP%\bap-claude-session-guard-%RANDOM%-%RANDOM%.ps1"
 
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ^
   "$src=$env:BAP_SELF; $dst=$env:BAP_EXTRACT; " ^
   "$lines=[System.IO.File]::ReadAllLines($src); " ^
-  "$marker='#__BAP_POWERSHELL__'; " ^
-  "$idx=[Array]::IndexOf($lines,$marker); " ^
+  "$idx=-1; for($i=0; $i -lt $lines.Length; $i++) { if ($lines[$i] -match '^rem __BAP_POWERSHELL__') { $idx=$i; break } }; " ^
   "if($idx -lt 0){ Write-Error 'Embedded BAP PowerShell payload marker not found.'; exit 2 }; " ^
   "$payload=$lines[($idx+1)..($lines.Length-1)]; " ^
   "[System.IO.File]::WriteAllLines($dst,$payload,[System.Text.UTF8Encoding]::new($false));"
@@ -47,14 +41,11 @@ if errorlevel 1 (
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%BAP_EXTRACT%" %*
 set "BAP_RC=%ERRORLEVEL%"
 
-rem On normal completion the PowerShell launcher has already restored the user's
-rem Claude settings. If the console is killed before this line, the extracted
-rem payload is harmless in %%TEMP%% and the detached BAP watchdog owns recovery.
 if exist "%BAP_EXTRACT%" del /f /q "%BAP_EXTRACT%" >nul 2>&1
 
 endlocal & exit /b %BAP_RC%
 
-#__BAP_POWERSHELL__
+rem __BAP_POWERSHELL__
 # BAP Claude Code Transactional Zero-Trust Launcher
 # ------------------------------------------------
 # Features:
@@ -162,19 +153,23 @@ if ($Mode -eq 'ConfigGuard') {
 
 $ScriptPath = $PSCommandPath
 if ([string]::IsNullOrWhiteSpace($ScriptPath)) {
-    throw 'Unable to determine this script path.'
+    if (-not [string]::IsNullOrWhiteSpace($MyInvocation.MyCommand.Path)) {
+        $ScriptPath = $MyInvocation.MyCommand.Path
+    } else {
+        throw 'Unable to determine this script path.'
+    }
 }
 $ScriptPath = [System.IO.Path]::GetFullPath($ScriptPath)
 
-# When packaged inside the self-extracting BAT, the embedded PowerShell runs
-# from %TEMP%. Keep BAP binary/config discovery rooted at the BAT's directory.
-if (-not [string]::IsNullOrWhiteSpace($env:BAP_WRAPPER_HOME)) {
-    $BapHome = [System.IO.Path]::GetFullPath($env:BAP_WRAPPER_HOME)
+if (-not [string]::IsNullOrWhiteSpace($env:BAP_HOME) -and (Test-Path -LiteralPath $env:BAP_HOME)) {
+    $BapHome = [System.IO.Path]::GetFullPath($env:BAP_HOME)
+}
+elseif (-not [string]::IsNullOrWhiteSpace($env:BAP_ORIGINAL_DIR) -and (Test-Path -LiteralPath $env:BAP_ORIGINAL_DIR)) {
+    $BapHome = [System.IO.Path]::GetFullPath($env:BAP_ORIGINAL_DIR)
 }
 else {
     $BapHome = Split-Path -Parent $ScriptPath
 }
-
 $Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 
 # -----------------------------------------------------------------------------
@@ -494,11 +489,23 @@ function Restore-TrackedFile {
         if (Test-Path -LiteralPath $backup -PathType Leaf) {
             # Backup is authoritative. Remove BAP/current file and atomically
             # rename the original back into its exact path.
-            if (Test-Path -LiteralPath $path) {
-                Remove-Item -LiteralPath $path -Force
+            $retries = 10
+            while ($retries -gt 0) {
+                try {
+                    if (Test-Path -LiteralPath $path) {
+                        Remove-Item -LiteralPath $path -Force -ErrorAction Stop
+                    }
+                    Move-Item -LiteralPath $backup -Destination $path -Force -ErrorAction Stop
+                    break
+                }
+                catch {
+                    $retries--
+                    if ($retries -le 0) {
+                        throw
+                    }
+                    Start-Sleep -Milliseconds 150
+                }
             }
-
-            Move-Item -LiteralPath $backup -Destination $path -Force
 
             if (-not [string]::IsNullOrWhiteSpace($originalHash)) {
                 $restoredHash = Get-FileSha256 -Path $path
@@ -717,11 +724,20 @@ function Get-ConfigServerUrl {
         [Parameter(Mandatory = $true)][string]$BapHome
     )
 
-    $candidates = @(
-        (Join-Path (Get-Location).Path 'bap-config.json'),
-        (Join-Path $BapHome 'bap-config.json'),
-        (Join-Path $env:USERPROFILE 'bin\bap-config.json')
-    )
+    $candidateHomes = @(
+        (Get-Location).Path,
+        $BapHome,
+        $env:BAP_HOME,
+        (Join-Path $env:USERPROFILE 'pyprj\bapltd'),
+        (Join-Path $env:USERPROFILE '.bap'),
+        (Join-Path $env:USERPROFILE 'bin')
+    ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) -and (Test-Path -LiteralPath $_) }
+
+    $candidates = @()
+    foreach ($h in $candidateHomes) {
+        $candidates += (Join-Path $h '.bap\bap-config.json')
+        $candidates += (Join-Path $h 'bap-config.json')
+    }
 
     foreach ($cfg in $candidates) {
         if (-not (Test-Path -LiteralPath $cfg -PathType Leaf)) {
@@ -821,26 +837,58 @@ if ($Mode -eq 'Watchdog') {
     if ([string]::IsNullOrWhiteSpace($MutexArg)) { exit 92 }
     if ($ParentPidArg -le 0) { exit 93 }
 
-    # Guard the active settings while the launcher process identity remains the
-    # same. If project/local settings are changed externally, put BAP's active
-    # configuration back into place.
-    while (Test-ProcessIdentity -ProcessId $ParentPidArg -StartTicks $ParentStartTicksArg) {
+    # Guard the active settings while ANY active launcher session is alive
+    while ($true) {
+        $r = $null
         try {
             $r = Read-RecoveryRecord -ManifestPath $ManifestArg
-            if ($null -ne $r) {
-                Repair-BapGuardedSettings -Record $r
-            }
         }
         catch {
-            # Recovery metadata may be in the middle of an atomic replacement.
-            # The mirror will normally cover this; retry on the next pass.
+        }
+
+        if ($null -eq $r) {
+            break
+        }
+
+        if ($r.PSObject.Properties.Name -contains 'state') {
+            $st = [string]$r.state
+            if ($st -eq 'Cleaning' -or $st -eq 'Complete') {
+                break
+            }
+        }
+
+        $anyAlive = $false
+        if ($r.PSObject.Properties.Name -contains 'active_sessions' -and $null -ne $r.active_sessions) {
+            foreach ($s in $r.active_sessions) {
+                $sessPid = [int]($s.launcher_pid)
+                if ($sessPid -gt 0) {
+                    $proc = Get-Process -Id $sessPid -ErrorAction SilentlyContinue
+                    if ($null -ne $proc -and -not $proc.HasExited) {
+                        $anyAlive = $true
+                        break
+                    }
+                }
+            }
+        }
+        elseif (Test-ProcessIdentity -ProcessId $ParentPidArg -StartTicks $ParentStartTicksArg) {
+            $anyAlive = $true
+        }
+
+        if (-not $anyAlive) {
+            break
+        }
+
+        try {
+            Repair-BapGuardedSettings -Record $r
+        }
+        catch {
         }
 
         Start-Sleep -Milliseconds 750
     }
 
     # Give a graceful parent teardown a moment to finish its own restoration.
-    Start-Sleep -Milliseconds 250
+    Start-Sleep -Milliseconds 500
 
     $wdMutex = Acquire-BapMutex -Name $MutexArg -TimeoutMs 15000
     if ($null -eq $wdMutex) {
@@ -851,13 +899,29 @@ if ($Mode -eq 'Watchdog') {
         if ((Test-Path -LiteralPath $ManifestArg) -or
             (Test-Path -LiteralPath (Get-RecoveryMirrorPath -ManifestPath $ManifestArg))) {
 
-            [void](Restore-BapState `
-                -ManifestPath $ManifestArg `
-                -Reason 'launcher terminated unexpectedly')
+            $r = Read-RecoveryRecord -ManifestPath $ManifestArg
+            $stillAlive = $false
+            if ($null -ne $r -and $r.PSObject.Properties.Name -contains 'active_sessions' -and $null -ne $r.active_sessions) {
+                foreach ($s in $r.active_sessions) {
+                    $sessPid = [int]($s.launcher_pid)
+                    if ($sessPid -gt 0) {
+                        $proc = Get-Process -Id $sessPid -ErrorAction SilentlyContinue
+                        if ($null -ne $proc -and -not $proc.HasExited) {
+                            $stillAlive = $true
+                            break
+                        }
+                    }
+                }
+            }
+
+            if (-not $stillAlive) {
+                [void](Restore-BapState `
+                    -ManifestPath $ManifestArg `
+                    -Reason 'all launchers terminated')
+            }
         }
     }
     catch {
-        # Leave recovery metadata in place. The next BAP launch will retry.
         exit 95
     }
     finally {
@@ -876,11 +940,17 @@ $ClaudeDir = Join-Path $Workspace '.claude'
 $ManifestPath = Join-Path $ClaudeDir '.bap-recovery.json'
 $MirrorPath = Get-RecoveryMirrorPath -ManifestPath $ManifestPath
 $MutexName = Get-WorkspaceMutexName -Workspace $Workspace
+$SessionId = "sess-claude-$([Guid]::NewGuid().ToString('N'))"
+$parentProcess = Get-Process -Id $PID
+$ParentStartTicks = $parentProcess.StartTime.ToUniversalTime().Ticks
+$PowerShellExe = $parentProcess.Path
 
-$MainMutex = $null
 $RecoveryRecord = $null
 $TransactionPrepared = $false
 $ExitCode = 0
+$isSecondarySession = $false
+$BapEdgeBin = $null
+$InterceptorBin = $null
 
 $hadSimpleEnv = Test-Path Env:\CLAUDE_CODE_SIMPLE
 $oldSimpleEnv = $env:CLAUDE_CODE_SIMPLE
@@ -905,39 +975,82 @@ try {
     Write-Host ''
 
     # -------------------------------------------------------------------------
-    # 1. Acquire exclusive workspace ownership.
+    # 1. Acquire transient workspace lock to coordinate multi-session custody.
     # -------------------------------------------------------------------------
 
-    $MainMutex = Acquire-BapMutex -Name $MutexName -TimeoutMs 0
-    if ($null -eq $MainMutex) {
-        throw 'Another BAP-governed Claude launcher or recovery process already owns this workspace.'
+    $coordMutex = Acquire-BapMutex -Name $MutexName -TimeoutMs 5000
+    if ($null -eq $coordMutex) {
+        throw 'Could not acquire workspace coordination lock within 5 seconds.'
     }
 
-    # -------------------------------------------------------------------------
-    # 2. Recover any prior interrupted transaction BEFORE starting a new one.
-    # -------------------------------------------------------------------------
+    try {
+        if ((Test-Path -LiteralPath $ManifestPath) -or (Test-Path -LiteralPath $MirrorPath)) {
+            $existingRecord = Read-RecoveryRecord -ManifestPath $ManifestPath
+            if ($null -ne $existingRecord) {
+                $aliveSessions = @()
+                if ($existingRecord.PSObject.Properties.Name -contains 'active_sessions' -and $null -ne $existingRecord.active_sessions) {
+                    foreach ($s in $existingRecord.active_sessions) {
+                        $sessPid = [int]($s.launcher_pid)
+                        if ($sessPid -gt 0) {
+                            $pProc = Get-Process -Id $sessPid -ErrorAction SilentlyContinue
+                            if ($null -ne $pProc -and -not $pProc.HasExited) {
+                                $aliveSessions += $s
+                            }
+                        }
+                    }
+                }
+                elseif ($existingRecord.PSObject.Properties.Name -contains 'launcher_pid' -and $existingRecord.launcher_pid -gt 0) {
+                    $legacyPid = [int]($existingRecord.launcher_pid)
+                    $pProc = Get-Process -Id $legacyPid -ErrorAction SilentlyContinue
+                    if ($null -ne $pProc -and -not $pProc.HasExited) {
+                        $aliveSessions += [ordered]@{
+                            launcher_pid         = $legacyPid
+                            launcher_start_ticks = [int64]($existingRecord.launcher_start_ticks)
+                            session_id           = [string]($existingRecord.session_id)
+                        }
+                    }
+                }
 
-    if ((Test-Path -LiteralPath $ManifestPath) -or (Test-Path -LiteralPath $MirrorPath)) {
-        Write-Host '[!] Previous BAP transaction detected. Running recovery first...' -ForegroundColor Yellow
+                if ($aliveSessions.Count -gt 0) {
+                    # Join existing active BAP-governed workspace!
+                    $isSecondarySession = $true
+                    $existingRecord.active_sessions = @($aliveSessions) + @([ordered]@{
+                        launcher_pid         = [int]$PID
+                        launcher_start_ticks = [int64]$ParentStartTicks
+                        session_id           = [string]$SessionId
+                    })
+                    $existingRecord.state = 'Active'
+                    Write-RecoveryRecord -Record $existingRecord -ManifestPath $ManifestPath
+                    $RecoveryRecord = $existingRecord
+                    $TransactionPrepared = $true
+                    Write-Host "[+] Joined active BAP-governed workspace ($($existingRecord.active_sessions.Count) active Claude sessions)." -ForegroundColor Green
+                }
+                else {
+                    Write-Host '[!] Previous BAP transaction detected with no surviving processes. Running recovery...' -ForegroundColor Yellow
+                    $recovered = Restore-BapState `
+                        -ManifestPath $ManifestPath `
+                        -Reason 'stale session detected at next launch'
 
-        $recovered = Restore-BapState `
-            -ManifestPath $ManifestPath `
-            -Reason 'stale session detected at next launch'
+                    if (-not $recovered) {
+                        throw 'Stale BAP session could not be safely restored. Refusing to start a new governed session.'
+                    }
+                }
+            }
+        }
 
-        if (-not $recovered) {
-            throw 'Stale BAP session could not be safely restored. Refusing to start a new governed session.'
+        # Refuse to guess if backup files exist with no recovery metadata.
+        if (-not $isSecondarySession -and (Test-Path -LiteralPath $ClaudeDir -PathType Container)) {
+            $orphans = @(Get-ChildItem -LiteralPath $ClaudeDir -Force -File -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -like '*.bap-backup-*' })
+
+            if ($orphans.Count -gt 0) {
+                $names = $orphans.FullName -join "`n  "
+                throw "Orphaned BAP backup file(s) exist without recovery metadata. Refusing to guess which copy is authoritative:`n  $names"
+            }
         }
     }
-
-    # Refuse to guess if backup files exist with no recovery metadata.
-    if (Test-Path -LiteralPath $ClaudeDir -PathType Container) {
-        $orphans = @(Get-ChildItem -LiteralPath $ClaudeDir -Force -File -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -like '*.bap-backup-*' })
-
-        if ($orphans.Count -gt 0) {
-            $names = $orphans.FullName -join "`n  "
-            throw "Orphaned BAP backup file(s) exist without recovery metadata. Refusing to guess which copy is authoritative:`n  $names"
-        }
+    finally {
+        Release-BapMutex -Mutex $coordMutex
     }
 
     # -------------------------------------------------------------------------
@@ -968,12 +1081,17 @@ try {
     }
 
     if ([string]::IsNullOrWhiteSpace($ServerUrl)) {
-        $ServerUrl = 'http://localhost:8080'
+        $ServerUrl = 'https://localhost:8443'
     }
 
     $ServerUrl = $ServerUrl.TrimEnd('/')
 
-    if (-not $ServerWasExplicit) {
+    $canPrompt = (-not $ServerWasExplicit) -and `
+                 ($ClaudeArgs.Count -eq 0) -and `
+                 [Environment]::UserInteractive -and `
+                 (-not [Console]::IsInputRedirected)
+
+    if ($canPrompt) {
         Write-Host "Current Target Server: $ServerUrl"
         $entered = Read-Host "Linux Server URL [ENTER = $ServerUrl]"
         if (-not [string]::IsNullOrWhiteSpace($entered)) {
@@ -992,16 +1110,40 @@ try {
 
     $isLocalHost = @('localhost', '127.0.0.1', '::1') -contains $serverUri.Host
 
+    $candidateHomes = @(
+        $BapHome,
+        $env:BAP_HOME,
+        (Join-Path $env:USERPROFILE 'pyprj\bapltd'),
+        (Join-Path $env:USERPROFILE '.bap'),
+        (Join-Path $env:USERPROFILE 'bin')
+    ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) -and (Test-Path -LiteralPath $_) }
+
+    $cpPaths = @()
+    $edgePaths = @()
+    $interceptorPaths = @()
+    foreach ($h in $candidateHomes) {
+        $cpPaths += (Join-Path $h 'dist\windows-amd64\controlplane\bapcontrolplane.exe')
+        $cpPaths += (Join-Path $h 'dist\windows-amd64\bapcontrolplane.exe')
+        $cpPaths += (Join-Path $h 'bap-controlplane\bapcontrolplane.exe')
+
+        $edgePaths += (Join-Path $h 'dist\windows-amd64\claude-client\bapedge.exe')
+        $edgePaths += (Join-Path $h 'dist\windows-amd64\bapedge.exe')
+        $edgePaths += (Join-Path $h 'bapedge.exe')
+        $edgePaths += (Join-Path $h 'bin\bapedge.exe')
+
+        $interceptorPaths += (Join-Path $h 'dist\windows-amd64\claude-client\cchook\interceptor.exe')
+        $interceptorPaths += (Join-Path $h 'dist\windows-amd64\cchook-interceptor.exe')
+        $interceptorPaths += (Join-Path $h 'interceptor.exe')
+        $interceptorPaths += (Join-Path $h 'bin\interceptor.exe')
+        $interceptorPaths += (Join-Path $h 'cchook\interceptor.exe')
+    }
+
     if ($isLocalHost) {
         $listening = Test-TcpPort -HostName $serverUri.Host -Port $serverUri.Port
 
         if (-not $listening) {
             $controlPlane = Resolve-Binary `
-                -Paths @(
-                    (Join-Path $BapHome 'dist\windows-amd64\controlplane\bapcontrolplane.exe'),
-                    (Join-Path $BapHome 'dist\windows-amd64\bapcontrolplane.exe'),
-                    (Join-Path $BapHome 'bap-controlplane\bapcontrolplane.exe')
-                ) `
+                -Paths $cpPaths `
                 -Commands @('bapcontrolplane.exe')
 
             if (-not [string]::IsNullOrWhiteSpace($controlPlane)) {
@@ -1043,22 +1185,11 @@ try {
     # -------------------------------------------------------------------------
 
     $BapEdgeBin = Resolve-Binary `
-        -Paths @(
-            (Join-Path $BapHome 'dist\windows-amd64\claude-client\bapedge.exe'),
-            (Join-Path $BapHome 'dist\windows-amd64\bapedge.exe'),
-            (Join-Path $BapHome 'bapedge.exe'),
-            (Join-Path $env:USERPROFILE 'bin\bapedge.exe')
-        ) `
+        -Paths $edgePaths `
         -Commands @('bapedge.exe')
 
     $InterceptorBin = Resolve-Binary `
-        -Paths @(
-            (Join-Path $BapHome 'dist\windows-amd64\claude-client\cchook\interceptor.exe'),
-            (Join-Path $BapHome 'dist\windows-amd64\cchook-interceptor.exe'),
-            (Join-Path $BapHome 'interceptor.exe'),
-            (Join-Path $env:USERPROFILE 'bin\interceptor.exe'),
-            (Join-Path $BapHome 'cchook\interceptor.exe')
-        ) `
+        -Paths $interceptorPaths `
         -Commands @('interceptor.exe')
 
     if ([string]::IsNullOrWhiteSpace($InterceptorBin)) {
@@ -1084,179 +1215,182 @@ try {
     Remove-Item Env:\CLAUDE_CODE_SIMPLE -ErrorAction SilentlyContinue
     Remove-Item Env:\CLAUDE_CODE_SAFE_MODE -ErrorAction SilentlyContinue
 
-    # -------------------------------------------------------------------------
-    # 7. Prepare transactional settings custody.
-    # -------------------------------------------------------------------------
+    if (-not $isSecondarySession) {
+        # -------------------------------------------------------------------------
+        # 7. Prepare transactional settings custody (primary session).
+        # -------------------------------------------------------------------------
 
-    $ClaudeDirExisted = Test-Path -LiteralPath $ClaudeDir -PathType Container
-    if (-not $ClaudeDirExisted) {
-        New-Item -ItemType Directory -Path $ClaudeDir -Force | Out-Null
-    }
-
-    $SessionId = "sess-claude-$([Guid]::NewGuid().ToString('N'))"
-
-    $ProjectSettings = Join-Path $ClaudeDir 'settings.json'
-    $LocalSettings = Join-Path $ClaudeDir 'settings.local.json'
-
-    $ProjectBackup = "$ProjectSettings.bap-backup-$SessionId"
-    $LocalBackup = "$LocalSettings.bap-backup-$SessionId"
-
-    $ProjectExisted = Test-Path -LiteralPath $ProjectSettings -PathType Leaf
-    $LocalExisted = Test-Path -LiteralPath $LocalSettings -PathType Leaf
-
-    $ProjectOriginalHash = if ($ProjectExisted) { Get-FileSha256 -Path $ProjectSettings } else { $null }
-    $LocalOriginalHash = if ($LocalExisted) { Get-FileSha256 -Path $LocalSettings } else { $null }
-
-    $parentProcess = Get-Process -Id $PID
-    $ParentStartTicks = $parentProcess.StartTime.ToUniversalTime().Ticks
-    $PowerShellExe = $parentProcess.Path
-
-    $RecoveryRecord = [ordered]@{
-        version               = 2
-        session_id            = $SessionId
-        state                 = 'Prepared'
-        workspace             = $Workspace
-        claude_dir            = $ClaudeDir
-        claude_dir_existed    = [bool]$ClaudeDirExisted
-        launcher_pid          = [int]$PID
-        launcher_start_ticks  = [int64]$ParentStartTicks
-        watchdog_pid          = 0
-        server_url            = $ServerUrl
-        bapedge_bin           = $BapEdgeBin
-        interceptor_bin       = $InterceptorBin
-        session_active        = $false
-        swap_started          = $false
-        swap_complete         = $false
-        bap_settings_sha256   = $null
-        bap_settings_b64      = $null
-        created_utc           = [DateTime]::UtcNow.ToString('o')
-
-        project_settings = [ordered]@{
-            path            = $ProjectSettings
-            existed         = [bool]$ProjectExisted
-            backup          = $ProjectBackup
-            original_sha256 = $ProjectOriginalHash
+        $ClaudeDirExisted = Test-Path -LiteralPath $ClaudeDir -PathType Container
+        if (-not $ClaudeDirExisted) {
+            New-Item -ItemType Directory -Path $ClaudeDir -Force | Out-Null
         }
 
-        local_settings = [ordered]@{
-            path            = $LocalSettings
-            existed         = [bool]$LocalExisted
-            backup          = $LocalBackup
-            original_sha256 = $LocalOriginalHash
+        $ProjectSettings = Join-Path $ClaudeDir 'settings.json'
+        $LocalSettings = Join-Path $ClaudeDir 'settings.local.json'
+
+        $ProjectBackup = "$ProjectSettings.bap-backup-$SessionId"
+        $LocalBackup = "$LocalSettings.bap-backup-$SessionId"
+
+        $ProjectExisted = Test-Path -LiteralPath $ProjectSettings -PathType Leaf
+        $LocalExisted = Test-Path -LiteralPath $LocalSettings -PathType Leaf
+
+        $ProjectOriginalHash = if ($ProjectExisted) { Get-FileSha256 -Path $ProjectSettings } else { $null }
+        $LocalOriginalHash = if ($LocalExisted) { Get-FileSha256 -Path $LocalSettings } else { $null }
+
+        $RecoveryRecord = [ordered]@{
+            version               = 2
+            session_id            = $SessionId
+            state                 = 'Prepared'
+            workspace             = $Workspace
+            claude_dir            = $ClaudeDir
+            claude_dir_existed    = [bool]$ClaudeDirExisted
+            launcher_pid          = [int]$PID
+            launcher_start_ticks  = [int64]$ParentStartTicks
+            watchdog_pid          = 0
+            server_url            = $ServerUrl
+            bapedge_bin           = $BapEdgeBin
+            interceptor_bin       = $InterceptorBin
+            session_active        = $false
+            swap_started          = $false
+            swap_complete         = $false
+            bap_settings_sha256   = $null
+            bap_settings_b64      = $null
+            created_utc           = [DateTime]::UtcNow.ToString('o')
+            active_sessions       = @(
+                [ordered]@{
+                    launcher_pid         = [int]$PID
+                    launcher_start_ticks = [int64]$ParentStartTicks
+                    session_id           = [string]$SessionId
+                }
+            )
+
+            project_settings = [ordered]@{
+                path            = $ProjectSettings
+                existed         = [bool]$ProjectExisted
+                backup          = $ProjectBackup
+                original_sha256 = $ProjectOriginalHash
+            }
+
+            local_settings = [ordered]@{
+                path            = $LocalSettings
+                existed         = [bool]$LocalExisted
+                backup          = $LocalBackup
+                original_sha256 = $LocalOriginalHash
+            }
         }
-    }
 
-    # Manifest exists BEFORE the first rename. Any interruption from this point
-    # forward is recoverable.
-    Write-RecoveryRecord -Record $RecoveryRecord -ManifestPath $ManifestPath
-    $TransactionPrepared = $true
+        # Manifest exists BEFORE the first rename. Any interruption from this point
+        # forward is recoverable.
+        Write-RecoveryRecord -Record $RecoveryRecord -ManifestPath $ManifestPath
+        $TransactionPrepared = $true
 
-    $RecoveryRecord.swap_started = $true
-    $RecoveryRecord.state = 'Swapping'
-    Write-RecoveryRecord -Record $RecoveryRecord -ManifestPath $ManifestPath
+        $RecoveryRecord.swap_started = $true
+        $RecoveryRecord.state = 'Swapping'
+        Write-RecoveryRecord -Record $RecoveryRecord -ManifestPath $ManifestPath
 
-    if ($ProjectExisted) {
-        Move-Item -LiteralPath $ProjectSettings -Destination $ProjectBackup
-    }
+        if ($ProjectExisted) {
+            Move-Item -LiteralPath $ProjectSettings -Destination $ProjectBackup
+        }
 
-    if ($LocalExisted) {
-        Move-Item -LiteralPath $LocalSettings -Destination $LocalBackup
-    }
+        if ($LocalExisted) {
+            Move-Item -LiteralPath $LocalSettings -Destination $LocalBackup
+        }
 
-    # -------------------------------------------------------------------------
-    # 8. Install BAP-only project settings.
-    #
-    # Exec-form hooks are used so interceptor.exe is spawned directly with no
-    # shell quoting ambiguity.
-    # -------------------------------------------------------------------------
+        # -------------------------------------------------------------------------
+        # 8. Install BAP-only project settings.
+        #
+        # Exec-form hooks are used so interceptor.exe is spawned directly with no
+        # shell quoting ambiguity.
+        # -------------------------------------------------------------------------
 
-    $InterceptorHook = [ordered]@{
-        type    = 'command'
-        command = $InterceptorBin
-        args    = @()
-    }
+        $InterceptorHook = [ordered]@{
+            type    = 'command'
+            command = $InterceptorBin
+            args    = @()
+        }
 
-    $ConfigGuardHook = [ordered]@{
-        type    = 'command'
-        command = $PowerShellExe
-        args    = @(
-            '-NoProfile',
-            '-ExecutionPolicy', 'Bypass',
-            '-File', $ScriptPath,
-            '--bap-config-guard'
-        )
-    }
-
-    $BapClaudeSettings = [ordered]@{
-        disableAllHooks = $false
-
-        hooks = [ordered]@{
-            SessionStart = @(
-                [ordered]@{
-                    hooks = @($InterceptorHook)
-                }
-            )
-
-            UserPromptSubmit = @(
-                [ordered]@{
-                    hooks = @($InterceptorHook)
-                }
-            )
-
-            PreToolUse = @(
-                [ordered]@{
-                    matcher = '*'
-                    hooks   = @($InterceptorHook)
-                }
-            )
-
-            ConfigChange = @(
-                [ordered]@{
-                    matcher = 'project_settings|local_settings'
-                    hooks   = @($ConfigGuardHook)
-                }
+        $ConfigGuardHook = [ordered]@{
+            type    = 'command'
+            command = $PowerShellExe
+            args    = @(
+                '-NoProfile',
+                '-ExecutionPolicy', 'Bypass',
+                '-File', $ScriptPath,
+                '--bap-config-guard'
             )
         }
+
+        $BapClaudeSettings = [ordered]@{
+            disableAllHooks = $false
+
+            hooks = [ordered]@{
+                SessionStart = @(
+                    [ordered]@{
+                        hooks = @($InterceptorHook)
+                    }
+                )
+
+                UserPromptSubmit = @(
+                    [ordered]@{
+                        hooks = @($InterceptorHook)
+                    }
+                )
+
+                PreToolUse = @(
+                    [ordered]@{
+                        matcher = '*'
+                        hooks   = @($InterceptorHook)
+                    }
+                )
+
+                ConfigChange = @(
+                    [ordered]@{
+                        matcher = 'project_settings|local_settings'
+                        hooks   = @($ConfigGuardHook)
+                    }
+                )
+            }
+        }
+
+        $BapSettingsJson = $BapClaudeSettings | ConvertTo-Json -Depth 20
+        Write-AtomicText -Path $ProjectSettings -Text $BapSettingsJson
+
+        # Validate the exact file Claude will read.
+        [void](Get-Content -LiteralPath $ProjectSettings -Raw -Encoding UTF8 | ConvertFrom-Json)
+
+        $BapSettingsBytes = [System.IO.File]::ReadAllBytes($ProjectSettings)
+        $BapSettingsHash = Get-FileSha256 -Path $ProjectSettings
+
+        $RecoveryRecord.bap_settings_sha256 = $BapSettingsHash
+        $RecoveryRecord.bap_settings_b64 = [Convert]::ToBase64String($BapSettingsBytes)
+        $RecoveryRecord.swap_complete = $true
+        $RecoveryRecord.state = 'Swapped'
+        Write-RecoveryRecord -Record $RecoveryRecord -ManifestPath $ManifestPath
+
+        Write-Host '[+] BAP now owns Claude project settings for this session.' -ForegroundColor Green
+        if ($ProjectExisted) {
+            Write-Host "[*] Original project settings: $ProjectBackup"
+        }
+        if ($LocalExisted) {
+            Write-Host "[*] Original local settings  : $LocalBackup"
+        }
+
+        # -------------------------------------------------------------------------
+        # 9. Start detached session guard BEFORE enrollment/Claude.
+        # -------------------------------------------------------------------------
+
+        $watchdog = Start-BapWatchdog `
+            -ManifestPath $ManifestPath `
+            -MutexName $MutexName `
+            -ParentPid $PID `
+            -ParentStartTicks $ParentStartTicks
+
+        $RecoveryRecord.watchdog_pid = [int]$watchdog.Id
+        $RecoveryRecord.state = 'Guarded'
+        Write-RecoveryRecord -Record $RecoveryRecord -ManifestPath $ManifestPath
+
+        Write-Host "[+] Session guard active (PID $($watchdog.Id))." -ForegroundColor Green
     }
-
-    $BapSettingsJson = $BapClaudeSettings | ConvertTo-Json -Depth 20
-    Write-AtomicText -Path $ProjectSettings -Text $BapSettingsJson
-
-    # Validate the exact file Claude will read.
-    [void](Get-Content -LiteralPath $ProjectSettings -Raw -Encoding UTF8 | ConvertFrom-Json)
-
-    $BapSettingsBytes = [System.IO.File]::ReadAllBytes($ProjectSettings)
-    $BapSettingsHash = Get-FileSha256 -Path $ProjectSettings
-
-    $RecoveryRecord.bap_settings_sha256 = $BapSettingsHash
-    $RecoveryRecord.bap_settings_b64 = [Convert]::ToBase64String($BapSettingsBytes)
-    $RecoveryRecord.swap_complete = $true
-    $RecoveryRecord.state = 'Swapped'
-    Write-RecoveryRecord -Record $RecoveryRecord -ManifestPath $ManifestPath
-
-    Write-Host '[+] BAP now owns Claude project settings for this session.' -ForegroundColor Green
-    if ($ProjectExisted) {
-        Write-Host "[*] Original project settings: $ProjectBackup"
-    }
-    if ($LocalExisted) {
-        Write-Host "[*] Original local settings  : $LocalBackup"
-    }
-
-    # -------------------------------------------------------------------------
-    # 9. Start detached session guard BEFORE enrollment/Claude.
-    # -------------------------------------------------------------------------
-
-    $watchdog = Start-BapWatchdog `
-        -ManifestPath $ManifestPath `
-        -MutexName $MutexName `
-        -ParentPid $PID `
-        -ParentStartTicks $ParentStartTicks
-
-    $RecoveryRecord.watchdog_pid = [int]$watchdog.Id
-    $RecoveryRecord.state = 'Guarded'
-    Write-RecoveryRecord -Record $RecoveryRecord -ManifestPath $ManifestPath
-
-    Write-Host "[+] Session guard active (PID $($watchdog.Id))." -ForegroundColor Green
 
     # -------------------------------------------------------------------------
     # 10. BAP session preflight.
@@ -1362,36 +1496,73 @@ catch {
     Write-Host "[-] $($_.Exception.Message)" -ForegroundColor Red
 }
 finally {
-    # Tell the watchdog to stop repairing the active BAP settings while this
-    # launcher performs the authoritative restoration.
-    if ($TransactionPrepared -and
-        ((Test-Path -LiteralPath $ManifestPath) -or (Test-Path -LiteralPath $MirrorPath))) {
+    # Gracefully notify the BAP control plane that this session has ended
+    if (-not [string]::IsNullOrWhiteSpace($BapEdgeBin) -and -not [string]::IsNullOrWhiteSpace($ServerUrl) -and -not [string]::IsNullOrWhiteSpace($SessionId)) {
+        & $BapEdgeBin session-end --server $ServerUrl --session-id $SessionId 2>$null
+    }
 
-        try {
+    # Acquire transient lock for multi-session reference-counted teardown
+    $teardownMutex = Acquire-BapMutex -Name $MutexName -TimeoutMs 5000
+    try {
+        if ($TransactionPrepared -and
+            ((Test-Path -LiteralPath $ManifestPath) -or (Test-Path -LiteralPath $MirrorPath))) {
+
             $cleanupRecord = Read-RecoveryRecord -ManifestPath $ManifestPath
             if ($null -ne $cleanupRecord) {
-                $cleanupRecord.state = 'Cleaning'
-                Write-RecoveryRecord -Record $cleanupRecord -ManifestPath $ManifestPath
-            }
-        }
-        catch {
-            Write-Warning 'Could not mark recovery record as Cleaning; continuing restoration attempt.'
-        }
+                $survivingSessions = @()
+                if ($cleanupRecord.PSObject.Properties.Name -contains 'active_sessions' -and $null -ne $cleanupRecord.active_sessions) {
+                    foreach ($s in $cleanupRecord.active_sessions) {
+                        $sessPid = [int]($s.launcher_pid)
+                        if ($sessPid -ne $PID -and $sessPid -gt 0) {
+                            $pProc = Get-Process -Id $sessPid -ErrorAction SilentlyContinue
+                            if ($null -ne $pProc -and -not $pProc.HasExited) {
+                                $survivingSessions += $s
+                            }
+                        }
+                    }
+                }
 
-        try {
-            $restored = Restore-BapState `
-                -ManifestPath $ManifestPath `
-                -Reason 'normal launcher teardown'
+                if ($survivingSessions.Count -eq 0) {
+                    # Terminate the watchdog process first so it does not compete for settings.json
+                    if ($cleanupRecord.PSObject.Properties.Name -contains 'watchdog_pid' -and $cleanupRecord.watchdog_pid -gt 0) {
+                        $wdPid = [int]($cleanupRecord.watchdog_pid)
+                        $wdProc = Get-Process -Id $wdPid -ErrorAction SilentlyContinue
+                        if ($null -ne $wdProc -and -not $wdProc.HasExited) {
+                            Stop-Process -Id $wdPid -Force -ErrorAction SilentlyContinue
+                        }
+                    }
 
-            if (-not $restored -and $ExitCode -eq 0) {
-                $ExitCode = 20
+                    # No other active sessions in this workspace; authoritative restoration
+                    $cleanupRecord.state = 'Cleaning'
+                    Write-RecoveryRecord -Record $cleanupRecord -ManifestPath $ManifestPath
+
+                    try {
+                        $restored = Restore-BapState `
+                            -ManifestPath $ManifestPath `
+                            -Reason 'normal launcher teardown'
+
+                        if (-not $restored -and $ExitCode -eq 0) {
+                            $ExitCode = 20
+                        }
+                    }
+                    catch {
+                        Write-Warning "BAP restoration failed: $($_.Exception.Message)"
+                        if ($ExitCode -eq 0) {
+                            $ExitCode = 20
+                        }
+                    }
+                }
+                else {
+                    $cleanupRecord.active_sessions = @($survivingSessions)
+                    Write-RecoveryRecord -Record $cleanupRecord -ManifestPath $ManifestPath
+                    Write-Host "[*] Claude session closed. Other BAP sessions ($($survivingSessions.Count)) remain active in this workspace." -ForegroundColor Cyan
+                }
             }
         }
-        catch {
-            Write-Warning "BAP restoration failed: $($_.Exception.Message)"
-            if ($ExitCode -eq 0) {
-                $ExitCode = 20
-            }
+    }
+    finally {
+        if ($null -ne $teardownMutex) {
+            Release-BapMutex -Mutex $teardownMutex
         }
     }
 
@@ -1422,8 +1593,6 @@ finally {
     else {
         Remove-Item Env:\CLAUDE_CODE_SAFE_MODE -ErrorAction SilentlyContinue
     }
-
-    Release-BapMutex -Mutex $MainMutex
 }
 
 if ($ExitCode -eq 0) {

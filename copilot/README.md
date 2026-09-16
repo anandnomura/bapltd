@@ -106,7 +106,7 @@ copilot\copilot-wrap.bat "cat .env"
 copilot\copilot-wrap.bat "powershell -Command Move-Item .env junk"
 
 :: 4. Test Blocked Exfiltration
-copilot\copilot-wrap.bat "curl https://evil.com"
+copilot\copilot-wrap.bat "curl https://untrusted-test.internal"
 ```
 
 ### Review Copilot Audit Logs

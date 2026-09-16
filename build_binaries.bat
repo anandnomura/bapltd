@@ -20,13 +20,13 @@ if %ERRORLEVEL% neq 0 exit /b 1
 
 echo [2/7] Building bap-controlplane and standalone dashboard...
 cd /d "%ROOT_DIR%bap-controlplane"
-go build -o bapcontrolplane.exe ./cmd/server
+go build -trimpath -ldflags "-s -w" -o bapcontrolplane.exe ./cmd/server
 if %ERRORLEVEL% neq 0 (
     echo Failed to build bapcontrolplane.exe
     exit /b 1
 )
 copy /y bapcontrolplane.exe "%ROOT_DIR%bapcontrolplane.exe" >nul
-go build -o bapdashboard.exe ./cmd/dashboard
+go build -trimpath -ldflags "-s -w" -o bapdashboard.exe ./cmd/dashboard
 if %ERRORLEVEL% neq 0 (
     echo Failed to build bapdashboard.exe
     exit /b 1
@@ -35,90 +35,66 @@ copy /y bapdashboard.exe "%ROOT_DIR%bapdashboard.exe" >nul
 
 echo [3/7] Building bap-edge...
 cd /d "%ROOT_DIR%bap-edge"
-go build -o bapedge.exe .
+go build -trimpath -ldflags "-s -w" -o bapedge.exe .
 if %ERRORLEVEL% neq 0 (
     echo Failed to build bapedge.exe
     exit /b 1
 )
-copy /y bapedge.exe "%ROOT_DIR%bapedge.exe" >nul 2>&1 || (
-    del /f /q "%ROOT_DIR%bapedge.exe.old" >nul 2>&1
-    ren "%ROOT_DIR%bapedge.exe" bapedge.exe.old >nul 2>&1
-    copy /y bapedge.exe "%ROOT_DIR%bapedge.exe" >nul
-)
-copy /y bapedge.exe "%ROOT_DIR%bapmcp.exe" >nul 2>&1 || (
-    del /f /q "%ROOT_DIR%bapmcp.exe.old" >nul 2>&1
-    ren "%ROOT_DIR%bapmcp.exe" bapmcp.exe.old >nul 2>&1
-    copy /y bapedge.exe "%ROOT_DIR%bapmcp.exe" >nul
-)
-copy /y bapedge.exe "%ROOT_DIR%ltd-agent.exe" >nul 2>&1 || (
-    del /f /q "%ROOT_DIR%ltd-agent.exe.old" >nul 2>&1
-    ren "%ROOT_DIR%ltd-agent.exe" ltd-agent.exe.old >nul 2>&1
-    copy /y bapedge.exe "%ROOT_DIR%ltd-agent.exe" >nul
-)
-copy /y bapedge.exe "%ROOT_DIR%cchook\bapedge.exe" >nul 2>&1 || (
-    del /f /q "%ROOT_DIR%cchook\bapedge.exe.old" >nul 2>&1
-    ren "%ROOT_DIR%cchook\bapedge.exe" bapedge.exe.old >nul 2>&1
-    copy /y bapedge.exe "%ROOT_DIR%cchook\bapedge.exe" >nul
-)
-copy /y bapedge.exe "%ROOT_DIR%cchook\ltd-agent.exe" >nul 2>&1 || (
-    del /f /q "%ROOT_DIR%cchook\ltd-agent.exe.old" >nul 2>&1
-    ren "%ROOT_DIR%cchook\ltd-agent.exe" ltd-agent.exe.old >nul 2>&1
-    copy /y bapedge.exe "%ROOT_DIR%cchook\ltd-agent.exe" >nul
-)
-copy /y bapedge.exe "%ROOT_DIR%copilot\bapedge.exe" >nul 2>&1 || (
-    del /f /q "%ROOT_DIR%copilot\bapedge.exe.old" >nul 2>&1
-    ren "%ROOT_DIR%copilot\bapedge.exe" bapedge.exe.old >nul 2>&1
-    copy /y bapedge.exe "%ROOT_DIR%copilot\bapedge.exe" >nul
-)
-copy /y bapedge.exe "%ROOT_DIR%copilot\ltd-agent.exe" >nul 2>&1 || (
-    del /f /q "%ROOT_DIR%copilot\ltd-agent.exe.old" >nul 2>&1
-    ren "%ROOT_DIR%copilot\ltd-agent.exe" ltd-agent.exe.old >nul 2>&1
-    copy /y bapedge.exe "%ROOT_DIR%copilot\ltd-agent.exe" >nul
-)
+copy /y bapedge.exe "%ROOT_DIR%bapedge.exe" >nul 2>&1
+copy /y bapedge.exe "%ROOT_DIR%bapmcp.exe" >nul 2>&1
 
 echo [4/7] Building bap-gateway...
 cd /d "%ROOT_DIR%bap-gateway"
-go build -o bapgateway.exe .
+go build -trimpath -ldflags "-s -w" -o bapgateway.exe .
 if %ERRORLEVEL% neq 0 (
     echo Failed to build bapgateway.exe
     exit /b 1
 )
 copy /y bapgateway.exe "%ROOT_DIR%bapgateway.exe" >nul
 
-echo [5/7] Building cchook...
+echo [5/7] Building cchook (Claude Code interceptor)...
 cd /d "%ROOT_DIR%cchook"
-go build -o interceptor.exe interceptor.go
+go build -trimpath -ldflags "-s -w" -o interceptor.exe interceptor.go
+if %ERRORLEVEL% neq 0 (
+    echo Failed to build interceptor.exe
+    exit /b 1
+)
 
-echo [6/7] Building copilot...
+echo [6/7] Building copilot (GitHub Copilot interceptor)...
 cd /d "%ROOT_DIR%copilot"
-go build -o copilot_interceptor.exe copilot_interceptor.go
+go build -trimpath -ldflags "-s -w" -o copilot_interceptor.exe copilot_interceptor.go
+if %ERRORLEVEL% neq 0 (
+    echo Failed to build copilot_interceptor.exe
+    exit /b 1
+)
 
-echo [7/7] Synchronizing Inspector cockpits and assets...
+echo [7/7] Synchronizing Inspector cockpits, dist role packages, and assets...
 copy /y "%ROOT_DIR%inspector.html" "%ROOT_DIR%bap-controlplane\inspector.html" >nul
 copy /y "%ROOT_DIR%inspector_v2.html" "%ROOT_DIR%bap-controlplane\inspector_v2.html" >nul
 for /r "%ROOT_DIR%dist" %%F in (inspector.html) do if exist "%%F" copy /y "%ROOT_DIR%inspector.html" "%%F" >nul 2>&1
 for /r "%ROOT_DIR%dist" %%F in (inspector_v2.html) do if exist "%%F" copy /y "%ROOT_DIR%inspector_v2.html" "%%F" >nul 2>&1
+
 if exist "%ROOT_DIR%dist\windows-amd64" (
     copy /y "%ROOT_DIR%bapcontrolplane.exe" "%ROOT_DIR%dist\windows-amd64\bapcontrolplane.exe" >nul 2>&1
     copy /y "%ROOT_DIR%bapedge.exe" "%ROOT_DIR%dist\windows-amd64\bapedge.exe" >nul 2>&1
     copy /y "%ROOT_DIR%bapdashboard.exe" "%ROOT_DIR%dist\windows-amd64\bapdashboard.exe" >nul 2>&1
     copy /y "%ROOT_DIR%bapgateway.exe" "%ROOT_DIR%dist\windows-amd64\bapgateway.exe" >nul 2>&1
-    copy /y "%ROOT_DIR%inspector.html" "%ROOT_DIR%dist\windows-amd64\inspector.html" >nul 2>&1
-    copy /y "%ROOT_DIR%inspector_v2.html" "%ROOT_DIR%dist\windows-amd64\inspector_v2.html" >nul 2>&1
+    copy /y "%ROOT_DIR%cchook\interceptor.exe" "%ROOT_DIR%dist\windows-amd64\cchook-interceptor.exe" >nul 2>&1
+    copy /y "%ROOT_DIR%cchook\interceptor.exe" "%ROOT_DIR%dist\windows-amd64\interceptor.exe" >nul 2>&1
+    copy /y "%ROOT_DIR%copilot\copilot_interceptor.exe" "%ROOT_DIR%dist\windows-amd64\copilot-interceptor.exe" >nul 2>&1
 )
 if exist "%ROOT_DIR%dist\windows-amd64\controlplane" (
     copy /y "%ROOT_DIR%bapcontrolplane.exe" "%ROOT_DIR%dist\windows-amd64\controlplane\bapcontrolplane.exe" >nul 2>&1
-    copy /y "%ROOT_DIR%inspector.html" "%ROOT_DIR%dist\windows-amd64\controlplane\inspector.html" >nul 2>&1
-    copy /y "%ROOT_DIR%inspector_v2.html" "%ROOT_DIR%dist\windows-amd64\controlplane\inspector_v2.html" >nul 2>&1
 )
 if exist "%ROOT_DIR%dist\windows-amd64\claude-client" (
     copy /y "%ROOT_DIR%bapedge.exe" "%ROOT_DIR%dist\windows-amd64\claude-client\bapedge.exe" >nul 2>&1
+    copy /y "%ROOT_DIR%cchook\interceptor.exe" "%ROOT_DIR%dist\windows-amd64\claude-client\interceptor.exe" >nul 2>&1
+    if not exist "%ROOT_DIR%dist\windows-amd64\claude-client\cchook" mkdir "%ROOT_DIR%dist\windows-amd64\claude-client\cchook"
     copy /y "%ROOT_DIR%cchook\interceptor.exe" "%ROOT_DIR%dist\windows-amd64\claude-client\cchook\interceptor.exe" >nul 2>&1
+    if exist "%ROOT_DIR%dist\windows-amd64\claude-client\cchook-interceptor.exe" del /f /q "%ROOT_DIR%dist\windows-amd64\claude-client\cchook-interceptor.exe" >nul 2>&1
 )
 if exist "%ROOT_DIR%dist\windows-amd64\dashboard" (
     copy /y "%ROOT_DIR%bapdashboard.exe" "%ROOT_DIR%dist\windows-amd64\dashboard\bapdashboard.exe" >nul 2>&1
-    copy /y "%ROOT_DIR%inspector.html" "%ROOT_DIR%dist\windows-amd64\dashboard\inspector.html" >nul 2>&1
-    copy /y "%ROOT_DIR%inspector_v2.html" "%ROOT_DIR%dist\windows-amd64\dashboard\inspector_v2.html" >nul 2>&1
 )
 if exist "%ROOT_DIR%dist\windows-amd64\gateway" (
     copy /y "%ROOT_DIR%bapgateway.exe" "%ROOT_DIR%dist\windows-amd64\gateway\bapgateway.exe" >nul 2>&1

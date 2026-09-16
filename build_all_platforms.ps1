@@ -13,6 +13,17 @@ $ErrorActionPreference = "Stop"
 $rootDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $rootDir
 
+function Safe-CopyItem {
+    param($Source, $Destination)
+    try {
+        Microsoft.PowerShell.Management\Copy-Item -LiteralPath $Source -Destination $Destination -Force
+    }
+    catch [System.IO.IOException] {
+        Write-Warning "File in use ($Destination); skipping overwrite."
+    }
+}
+
+
 # Ensure BAP Root CA & TLS Certificates are provisioned and synchronized into client embed paths
 Write-Host ">>> Ensuring BAP Root CA and TLS credentials (Domain: $Domain)..." -ForegroundColor Cyan
 & (Join-Path $rootDir "scripts\ensure_certs.ps1") -ForceRegen:$ForceRegenCerts -AdditionalSAN $Domain -InstallToStore:$false
@@ -93,18 +104,18 @@ foreach ($p in $platforms) {
     }
 
     # Root files for platform
-    Copy-Item (Join-Path $rootDir "bap-config.json") (Join-Path $platformDir "bap-config.json") -Force
+    Safe-CopyItem (Join-Path $rootDir "bap-config.json") (Join-Path $platformDir "bap-config.json") -Force
     if (Test-Path (Join-Path $rootDir "policy.cedar")) {
-        Copy-Item (Join-Path $rootDir "policy.cedar") (Join-Path $platformDir "policy.cedar") -Force
+        Safe-CopyItem (Join-Path $rootDir "policy.cedar") (Join-Path $platformDir "policy.cedar") -Force
     }
     if (Test-Path (Join-Path $rootDir "schema.json")) {
-        Copy-Item (Join-Path $rootDir "schema.json") (Join-Path $platformDir "schema.json") -Force
+        Safe-CopyItem (Join-Path $rootDir "schema.json") (Join-Path $platformDir "schema.json") -Force
     }
     if (Test-Path (Join-Path $rootDir "inspector.html")) {
-        Copy-Item (Join-Path $rootDir "inspector.html") (Join-Path $platformDir "inspector.html") -Force
+        Safe-CopyItem (Join-Path $rootDir "inspector.html") (Join-Path $platformDir "inspector.html") -Force
     }
     if (Test-Path (Join-Path $rootDir "inspector_v2.html")) {
-        Copy-Item (Join-Path $rootDir "inspector_v2.html") (Join-Path $platformDir "inspector_v2.html") -Force
+        Safe-CopyItem (Join-Path $rootDir "inspector_v2.html") (Join-Path $platformDir "inspector_v2.html") -Force
     }
 
     # =========================================================================
@@ -112,15 +123,15 @@ foreach ($p in $platforms) {
     # =========================================================================
     $cpDir = Join-Path $platformDir "controlplane"
     if (!(Test-Path $cpDir)) { New-Item -ItemType Directory -Path $cpDir -Force | Out-Null }
-    Copy-Item (Join-Path $platformDir "bapcontrolplane$($p.Ext)") (Join-Path $cpDir "bapcontrolplane$($p.Ext)") -Force
-    if (Test-Path (Join-Path $rootDir "policy.cedar")) { Copy-Item (Join-Path $rootDir "policy.cedar") (Join-Path $cpDir "policy.cedar") -Force }
-    if (Test-Path (Join-Path $rootDir "schema.json")) { Copy-Item (Join-Path $rootDir "schema.json") (Join-Path $cpDir "schema.json") -Force }
-    if (Test-Path (Join-Path $rootDir "inspector.html")) { Copy-Item (Join-Path $rootDir "inspector.html") (Join-Path $cpDir "inspector.html") -Force }
-    if (Test-Path (Join-Path $rootDir "inspector_v2.html")) { Copy-Item (Join-Path $rootDir "inspector_v2.html") (Join-Path $cpDir "inspector_v2.html") -Force }
-    Copy-Item (Join-Path $rootDir "bap-config.json") (Join-Path $cpDir "bap-config.json") -Force
-    if (Test-Path (Join-Path $rootDir "controlplane-cert.pem")) { Copy-Item (Join-Path $rootDir "controlplane-cert.pem") (Join-Path $cpDir "controlplane-cert.pem") -Force }
-    if (Test-Path (Join-Path $rootDir "controlplane-key.pem")) { Copy-Item (Join-Path $rootDir "controlplane-key.pem") (Join-Path $cpDir "controlplane-key.pem") -Force }
-    if (Test-Path (Join-Path $rootDir "bap-root-ca.crt")) { Copy-Item (Join-Path $rootDir "bap-root-ca.crt") (Join-Path $cpDir "bap-root-ca.crt") -Force }
+    Safe-CopyItem (Join-Path $platformDir "bapcontrolplane$($p.Ext)") (Join-Path $cpDir "bapcontrolplane$($p.Ext)") -Force
+    if (Test-Path (Join-Path $rootDir "policy.cedar")) { Safe-CopyItem (Join-Path $rootDir "policy.cedar") (Join-Path $cpDir "policy.cedar") -Force }
+    if (Test-Path (Join-Path $rootDir "schema.json")) { Safe-CopyItem (Join-Path $rootDir "schema.json") (Join-Path $cpDir "schema.json") -Force }
+    if (Test-Path (Join-Path $rootDir "inspector.html")) { Safe-CopyItem (Join-Path $rootDir "inspector.html") (Join-Path $cpDir "inspector.html") -Force }
+    if (Test-Path (Join-Path $rootDir "inspector_v2.html")) { Safe-CopyItem (Join-Path $rootDir "inspector_v2.html") (Join-Path $cpDir "inspector_v2.html") -Force }
+    Safe-CopyItem (Join-Path $rootDir "bap-config.json") (Join-Path $cpDir "bap-config.json") -Force
+    if (Test-Path (Join-Path $rootDir "controlplane-cert.pem")) { Safe-CopyItem (Join-Path $rootDir "controlplane-cert.pem") (Join-Path $cpDir "controlplane-cert.pem") -Force }
+    if (Test-Path (Join-Path $rootDir "controlplane-key.pem")) { Safe-CopyItem (Join-Path $rootDir "controlplane-key.pem") (Join-Path $cpDir "controlplane-key.pem") -Force }
+    if (Test-Path (Join-Path $rootDir "bap-root-ca.crt")) { Safe-CopyItem (Join-Path $rootDir "bap-root-ca.crt") (Join-Path $cpDir "bap-root-ca.crt") -Force }
 
     if ($p.OS -eq "windows") {
         $cpBat = @"
@@ -177,12 +188,12 @@ Persistence:
     # =========================================================================
     $dashDir = Join-Path $platformDir "dashboard"
     if (!(Test-Path $dashDir)) { New-Item -ItemType Directory -Path $dashDir -Force | Out-Null }
-    Copy-Item (Join-Path $platformDir "bapdashboard$($p.Ext)") (Join-Path $dashDir "bapdashboard$($p.Ext)") -Force
-    if (Test-Path (Join-Path $rootDir "inspector.html")) { Copy-Item (Join-Path $rootDir "inspector.html") (Join-Path $dashDir "inspector.html") -Force }
-    if (Test-Path (Join-Path $rootDir "inspector_v2.html")) { Copy-Item (Join-Path $rootDir "inspector_v2.html") (Join-Path $dashDir "inspector_v2.html") -Force }
-    if (Test-Path (Join-Path $rootDir "controlplane-cert.pem")) { Copy-Item (Join-Path $rootDir "controlplane-cert.pem") (Join-Path $dashDir "controlplane-cert.pem") -Force }
-    if (Test-Path (Join-Path $rootDir "controlplane-key.pem")) { Copy-Item (Join-Path $rootDir "controlplane-key.pem") (Join-Path $dashDir "controlplane-key.pem") -Force }
-    if (Test-Path (Join-Path $rootDir "bap-root-ca.crt")) { Copy-Item (Join-Path $rootDir "bap-root-ca.crt") (Join-Path $dashDir "bap-root-ca.crt") -Force }
+    Safe-CopyItem (Join-Path $platformDir "bapdashboard$($p.Ext)") (Join-Path $dashDir "bapdashboard$($p.Ext)") -Force
+    if (Test-Path (Join-Path $rootDir "inspector.html")) { Safe-CopyItem (Join-Path $rootDir "inspector.html") (Join-Path $dashDir "inspector.html") -Force }
+    if (Test-Path (Join-Path $rootDir "inspector_v2.html")) { Safe-CopyItem (Join-Path $rootDir "inspector_v2.html") (Join-Path $dashDir "inspector_v2.html") -Force }
+    if (Test-Path (Join-Path $rootDir "controlplane-cert.pem")) { Safe-CopyItem (Join-Path $rootDir "controlplane-cert.pem") (Join-Path $dashDir "controlplane-cert.pem") -Force }
+    if (Test-Path (Join-Path $rootDir "controlplane-key.pem")) { Safe-CopyItem (Join-Path $rootDir "controlplane-key.pem") (Join-Path $dashDir "controlplane-key.pem") -Force }
+    if (Test-Path (Join-Path $rootDir "bap-root-ca.crt")) { Safe-CopyItem (Join-Path $rootDir "bap-root-ca.crt") (Join-Path $dashDir "bap-root-ca.crt") -Force }
     if ($p.OS -eq "windows") {
         Set-Content -Path (Join-Path $dashDir "start_dashboard.bat") -Encoding ASCII -Value '@echo off
 cd /d "%~dp0"
@@ -211,15 +222,17 @@ requires mutual TLS, also supply -client-cert and -client-key.
     # =========================================================================
     $clientDir = Join-Path $platformDir "claude-client"
     if (!(Test-Path $clientDir)) { New-Item -ItemType Directory -Path $clientDir -Force | Out-Null }
-    Copy-Item (Join-Path $platformDir "bapedge$($p.Ext)") (Join-Path $clientDir "bapedge$($p.Ext)") -Force
-    if (Test-Path (Join-Path $rootDir "policy.cedar")) { Copy-Item (Join-Path $rootDir "policy.cedar") (Join-Path $clientDir "policy.cedar") -Force }
-    if (Test-Path (Join-Path $rootDir "schema.json")) { Copy-Item (Join-Path $rootDir "schema.json") (Join-Path $clientDir "schema.json") -Force }
-    Copy-Item (Join-Path $rootDir "bap-config.json") (Join-Path $clientDir "bap-config.json") -Force
+    Safe-CopyItem (Join-Path $platformDir "bapedge$($p.Ext)") (Join-Path $clientDir "bapedge$($p.Ext)") -Force
+    if (Test-Path (Join-Path $rootDir "policy.cedar")) { Safe-CopyItem (Join-Path $rootDir "policy.cedar") (Join-Path $clientDir "policy.cedar") -Force }
+    if (Test-Path (Join-Path $rootDir "schema.json")) { Safe-CopyItem (Join-Path $rootDir "schema.json") (Join-Path $clientDir "schema.json") -Force }
+    Safe-CopyItem (Join-Path $rootDir "bap-config.json") (Join-Path $clientDir "bap-config.json") -Force
 
-    # cchook subfolder
+    # Place interceptor at root of claude-client and in cchook subfolder for full compatibility
+    Safe-CopyItem (Join-Path $platformDir "cchook-interceptor$($p.Ext)") (Join-Path $clientDir "interceptor$($p.Ext)")
     $ccHookDir = Join-Path $clientDir "cchook"
     if (!(Test-Path $ccHookDir)) { New-Item -ItemType Directory -Path $ccHookDir -Force | Out-Null }
-    Copy-Item (Join-Path $platformDir "cchook-interceptor$($p.Ext)") (Join-Path $ccHookDir "interceptor$($p.Ext)") -Force
+    Safe-CopyItem (Join-Path $platformDir "cchook-interceptor$($p.Ext)") (Join-Path $ccHookDir "interceptor$($p.Ext)")
+    Remove-Item (Join-Path $clientDir "cchook-interceptor$($p.Ext)") -Force -ErrorAction SilentlyContinue
 
     # .claude hook settings
     $claudeSettingsDir = Join-Path $clientDir ".claude"
@@ -266,7 +279,10 @@ requires mutual TLS, also supply -client-cert and -client-key.
 
     if ($p.OS -eq "windows") {
         if (Test-Path (Join-Path $rootDir "run_claude_bap.bat")) {
-            Copy-Item (Join-Path $rootDir "run_claude_bap.bat") (Join-Path $clientDir "run_claude_bap.bat") -Force
+            Safe-CopyItem (Join-Path $rootDir "run_claude_bap.bat") (Join-Path $clientDir "run_claude_bap.bat") -Force
+        }
+        if (Test-Path (Join-Path $rootDir "run_claude_bap.ps1")) {
+            Safe-CopyItem (Join-Path $rootDir "run_claude_bap.ps1") (Join-Path $clientDir "run_claude_bap.ps1") -Force
         }
     } else {
         $clientSh = @"
@@ -332,8 +348,8 @@ Features:
     # =========================================================================
     $gwDir = Join-Path $platformDir "gateway"
     if (!(Test-Path $gwDir)) { New-Item -ItemType Directory -Path $gwDir -Force | Out-Null }
-    Copy-Item (Join-Path $platformDir "bapgateway$($p.Ext)") (Join-Path $gwDir "bapgateway$($p.Ext)") -Force
-    Copy-Item (Join-Path $rootDir "bap-config.json") (Join-Path $gwDir "bap-config.json") -Force
+    Safe-CopyItem (Join-Path $platformDir "bapgateway$($p.Ext)") (Join-Path $gwDir "bapgateway$($p.Ext)") -Force
+    Safe-CopyItem (Join-Path $rootDir "bap-config.json") (Join-Path $gwDir "bap-config.json") -Force
 
     # Package zip/tar.gz archives (everything is packaged strictly from dist)
     if ($Archive) {

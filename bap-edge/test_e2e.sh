@@ -38,7 +38,7 @@ echo ""
 echo "=========================================="
 echo " 4. Testing Forbid Rule: curl substring"
 echo "=========================================="
-if $BIN exec "git status && curl https://evil.com"; then
+if $BIN exec "git status && curl https://untrusted-test.internal"; then
     echo "ERROR: 'curl' command was allowed!"
     exit 1
 else
