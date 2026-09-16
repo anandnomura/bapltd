@@ -261,6 +261,59 @@ stateDiagram-v2
 
 ---
 
+### 5.1. Watchdogs, Fault Recovery, & Process Supervision
+
+A common area of operational confusion is distinguishing between the **Client Workspace Session Guard Watchdog** and **Control Plane Service Supervision**:
+
+```
++-------------------------------------------------------------------------------------------------------+
+|                                    BAP FAULT RECOVERY DOMAINS                                         |
++-------------------------------------------------------------------------------------------------------+
+|  DOMAIN 1: Client Session Guard Watchdog             |  DOMAIN 2: Control Plane Service Lifecycle     |
++------------------------------------------------------+------------------------------------------------+
+|  Target  : Claude Code CLI (claude.exe) & workspace   |  Target  : bapcontrolplane.exe                  |
+|  Trigger : Agent crashes, terminal killed, TaskMgr   |  Trigger : Admin kills backend server          |
+|  Scope   : Local repo .claude/settings.json          |  Scope   : Central REST API & telemetry        |
+|  Action  : Restores original developer settings &    |  Action  : Offline-First Zero-Trust continues; |
+|            registers session teardown on CP.         |            Auto-resurrects on next agent launch|
+|            Does NOT manage backend daemons.          |            (or auto-restarts via Supervisor)  |
++-------------------------------------------------------------------------------------------------------+
+```
+
+#### 1. Client Session Guard Watchdog (`run_claude_bap.ps1 --bap-watchdog`)
+When a developer launches Claude Code through `run_claude_bap.bat`, BAP starts a detached background watchdog process (`Start-BapWatchdog`).
+- **What it monitors**: The active Claude Code session processes (the launcher PID and `claude.exe`) recorded in `.claude/.bap-recovery.json`.
+- **What it protects**: While Claude is running, BAP modifies `.claude/settings.json` to route command execution through `interceptor.exe`.
+- **Crash Recovery Action**: If Claude Code crashes, the developer abruptly closes their terminal window, or `claude.exe` is killed in Task Manager:
+  1. The watchdog detects that zero active sessions remain alive.
+  2. It immediately restores the original developer `.claude/settings.json` from the backup mirror.
+  3. It cleans up the workspace recovery manifest and notifies the Control Plane of session termination.
+  4. The developer's environment is cleanly restored so un-governed Claude or other tools are not broken.
+- **Important**: The Session Watchdog is strictly a **client workspace integrity guard**. It does not monitor or manage backend server executables like `bapcontrolplane.exe`.
+
+#### 2. Control Plane Process Lifecycle & Offline-First Resilience
+`bapcontrolplane.exe` is an independent backend server daemon (listening on port 8443 or 8080).
+- **When killed in Task Manager**:
+  In local development mode, `bapcontrolplane.exe` runs as a standalone detached background process. Like any standard OS process, if terminated via Task Manager, the OS does not automatically revive it unless an external supervisor or service manager is running.
+- **Why execution does not break (Offline-First Zero-Trust)**:
+  Killing `bapcontrolplane.exe` **does not stop Claude Code or compromise security**. `bapedge` continues enforcing all Zero-Trust Cedar policies locally using cached `policy.cedar` and `schema.json`. Forbidden commands remain blocked, allowed commands continue executing, and telemetry is buffered locally until the server returns.
+- **Next-Launch Auto-Recovery**:
+  The launcher (`run_claude_bap.bat`) performs a pre-flight TCP probe on port 8443 before starting Claude. If it discovers that `bapcontrolplane` is down or was killed, it **automatically relaunches** `bapcontrolplane.exe` in the background before attaching the session.
+
+#### 3. High-Availability Control Plane Supervisor (`start_controlplane_supervisor.bat`)
+For continuous development, automated integration test rigs, or long-running environments where operators want `bapcontrolplane.exe` to automatically restart within 1 second if killed:
+```batch
+# Launch BAP Control Plane under continuous process supervisor:
+start_controlplane_supervisor.bat
+```
+The supervisor (`scripts/supervise_controlplane.ps1`):
+1. Spawns `bapcontrolplane.exe` with configured TLS and port arguments.
+2. Continuously monitors the process handle.
+3. If the process is terminated in Task Manager or crashes, it logs `[!] WARNING: bapcontrolplane exited! Respawning in 1 second...` and automatically revives the service.
+4. Cleanly handles `Ctrl+C` to terminate both supervisor and server on demand.
+
+---
+
 ## 6. SPIFFE Workload Identity, Multi-Instance Fleets & TLS Transport Security
 
 ### 6.1. SPIFFE Workload Identity Model

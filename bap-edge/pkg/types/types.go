@@ -11,4 +11,6 @@ type ExecResponse struct {
 	Output     string `json:"output,omitempty"`
 	Reason     string `json:"reason,omitempty"`
 	Suggestion string `json:"suggestion,omitempty"`
+	Warning    string `json:"warning,omitempty"`
+	Mode       string `json:"mode,omitempty"`
 }

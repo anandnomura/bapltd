@@ -3,6 +3,7 @@ package cmd
 import (
 	"flag"
 	"os"
+	"strings"
 
 	"bap-edge/internal/config"
 	"bap-edge/internal/mcp"
@@ -22,6 +23,7 @@ func RunMCP(args []string) error {
 
 	epCfg := config.ResolveEndpoints()
 	serverFlag := fs.String("server", epCfg.ControlPlaneURL, "Central control plane URL for telemetry streaming")
+	modeFlag := fs.String("mode", epCfg.EnforcementMode, "Enforcement mode: 'enforce' (default) or 'audit'/'shadow'")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -32,6 +34,7 @@ func RunMCP(args []string) error {
 		ServerURL:        *serverFlag,
 		SessionID:        *sessionFlag,
 		AuditLogPath:     *auditLogFlag,
+		EnforcementMode:  strings.ToLower(strings.TrimSpace(*modeFlag)),
 		IdentityResolver: resolveLocalIdentity,
 	}
 

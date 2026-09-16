@@ -77,6 +77,7 @@ type ServerConfig struct {
 	ServerURL        string
 	SessionID        string
 	AuditLogPath     string
+	EnforcementMode  string
 	IdentityResolver func() (userID, userEmail, spiffeID string)
 }
 
@@ -258,9 +259,16 @@ func executeCommand(fullCommand string, authorizer *authz.Authorizer, cfg Server
 		sessionID = fmt.Sprintf("sess-mcp-%d", os.Getpid())
 	}
 
+	isAudit := strings.EqualFold(cfg.EnforcementMode, "audit") || strings.EqualFold(cfg.EnforcementMode, "shadow")
+
 	if !allowed {
 		suggestion := GenerateSuggestion(cleaned, executable, reason)
 		durationMs := time.Since(startTime).Milliseconds()
+
+		decision := "deny"
+		if isAudit {
+			decision = "shadow_deny"
+		}
 
 		auditEntry := audit.AuditEntry{
 			SessionID:   sessionID,
@@ -273,27 +281,37 @@ func executeCommand(fullCommand string, authorizer *authz.Authorizer, cfg Server
 			Executable:  executable,
 			Arguments:   cmdArguments,
 			FullCommand: cleaned,
-			Decision:    "deny",
+			Decision:    decision,
 			Reason:      reason,
 			DurationMs:  durationMs,
 			ExitCode:    1,
 		}
+		if isAudit {
+			auditEntry.ExitCode = 0
+			auditEntry.Reason = fmt.Sprintf("[AUDIT MODE VIOLATION] %s", reason)
+		}
 		_ = audit.Log(&auditEntry, cfg.AuditLogPath)
 		_, _, _ = audit.Transmit(auditEntry, cfg.ServerURL, cfg.AuditLogPath)
 
-		denialText := fmt.Sprintf("[DENIED] %s\n[SUGGESTION] %s", reason, suggestion)
-		return CallToolResult{
-			Content: []ContentBlock{{
-				Type: "text",
-				Text: denialText,
-			}},
-			IsError: true,
+		if !isAudit {
+			denialText := fmt.Sprintf("[DENIED] %s\n[SUGGESTION] %s", reason, suggestion)
+			return CallToolResult{
+				Content: []ContentBlock{{
+					Type: "text",
+					Text: denialText,
+				}},
+				IsError: true,
+			}
 		}
 	}
 
 	// Execute inside sandbox
 	output, execErr := sandbox.RunSandboxedCommand(cleaned)
 	durationMs := time.Since(startTime).Milliseconds()
+
+	if isAudit && !allowed {
+		output = fmt.Sprintf("[BAP AUDIT MODE] Policy violation detected: %s. Execution permitted in audit mode.\n\n%s", reason, output)
+	}
 
 	exitCode := 0
 	if execErr != nil {
@@ -394,6 +412,7 @@ func getStatus(cfg ServerConfig) CallToolResult {
 		"governance": map[string]interface{}{
 			"model":                 "Dual-PEP (Client Edge + Network Perimeter)",
 			"engine":                "Cedar Policy Engine (AWS Cedar)",
+			"enforcement_mode":      cfg.EnforcementMode,
 			"identity_injection":    "Active (CORP_OBO_TOKEN)",
 			"audit_tamper_evidence": "Active (SHA-256 Hash Chained)",
 		},
@@ -441,7 +460,8 @@ func GenerateSuggestion(fullCmd, execName, reason string) string {
 		return "Opening raw network sockets directly on the host is prohibited on edge agents. Egress must be governed through the BAP Gateway PEP."
 	}
 
-	if strings.Contains(lower, "set-mppreference") || strings.Contains(lower, "disablerealtimemonitoring") {
+	if strings.Contains(lower, "set-mppreference") || strings.Contains(lower, "disablerealtimemonitoring") ||
+		(strings.Contains(lower, "set-service") && strings.Contains(lower, "disabled")) || strings.Contains(lower, "stop-service") {
 		return "Disabling or altering host security controls and antivirus preferences is strictly prohibited."
 	}
 
@@ -449,7 +469,8 @@ func GenerateSuggestion(fullCmd, execName, reason string) string {
 		return "Mass recursive deletion targeting system paths is blocked to protect workspace integrity."
 	}
 
-	if strings.Contains(lower, "comsvcs") || strings.Contains(lower, "minidump") || strings.Contains(lower, "sekurlsa") {
+	if strings.Contains(lower, "comsvcs") || strings.Contains(lower, "minidump") || strings.Contains(lower, "sekurlsa") ||
+		strings.Contains(lower, "invoke-privesc") || strings.Contains(lower, "dumpcredentials") {
 		return "Process memory dumping and credential harvesting techniques are blocked by zero-trust invariant."
 	}
 

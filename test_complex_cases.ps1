@@ -115,8 +115,8 @@ if (-not $IncludeNegative) {
         },
         @{
             Id   = "B6"
-            Name = "Defense Evasion & Antivirus Tampering (Set-MpPreference)"
-            Cmd  = 'powershell -NoProfile -Command "Set-MpPreference -DisableRealtimeMonitoring $true"'
+            Name = "Privileged Service Configuration Override (Set-Service)"
+            Cmd  = 'powershell -NoProfile -Command "Set-Service -Name ProtectedService -StartupType Disabled"'
         },
         @{
             Id   = "B7"

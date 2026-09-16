@@ -4,5 +4,6 @@
   "envoy_url": "http://localhost:10000",
   "trust_domain": "bap.internal",
   "environment": "development",
+  "enforcement_mode": "enforce",
   "config_source": "C:\\Users\\User\\pyprj\\bapltd\\bap-config.json"
 }

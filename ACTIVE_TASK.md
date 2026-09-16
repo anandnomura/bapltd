@@ -98,3 +98,72 @@ Standardize and reorganize all BAP executables so there is a single canonical se
   - `build_binaries.bat`: Passed with Exit Code 0 in ~15s (exact 1:1 binary sizes verified).
   - `scripts/test_claude_concurrency.ps1`: Passed with Exit Code 0 (same & different directory concurrency).
   - Stale asset audit: 72/72 fleet distribution assets confirmed in exact sync.
+
+---
+
+# Active Sprint: MVP Enterprise Readiness Pack
+
+## Goals
+Implement the top 3 high-impact enterprise MVP capabilities:
+1. **1-Click Developer Onboarding (`install_bap_client.bat`)**: Single-script deployment to `%USERPROFILE%\bin` with automatic User `PATH` configuration.
+2. **Pre-Flight Diagnostic Health Check (`bap_doctor.bat`)**: Instant 5-point environment and hook health diagnosis.
+3. **Enterprise Rollout Mode: Audit/Shadow vs Enforce (`bap-config.json` & `bapedge`)**: Support silent policy monitoring (`audit` mode) with telemetry tagging alongside zero-trust hard blocking (`enforce` mode).
+
+## Completed Tasks
+- [x] **Task 1: 1-Click Developer Installer (`install_bap_client.bat` & `scripts/install_client.ps1`)**
+  - Copies canonical binaries from `dist/windows-amd64/claude-client/` to `%USERPROFILE%\bin`.
+  - Idempotently adds `%USERPROFILE%\bin` to User `PATH` via PowerShell environment API.
+  - Updates current session environment so `run_claude_bap` works immediately.
+  - Verified: 7 files deployed, PATH configured, 0 errors.
+- [x] **Task 2: Pre-Flight Diagnostic Health Check (`bap_doctor.bat` & `scripts/bap_doctor.ps1`)**
+  - Tests Core BAP binaries & client tools in `%USERPROFILE%\bin` or repo.
+  - Tests Claude Code CLI executable resolution and version (`v2.1.273`).
+  - Tests Control Plane reachability & TLS handshake latency.
+  - Tests Cedar policy engine compilation, rule validity, and sub-millisecond evaluation latency.
+  - Tests Workspace `.bap/` directory isolation and active transaction lockouts.
+  - Verified: `bap_doctor.bat` reports 8/9 operational checks passed (offline-safe when CP is idle).
+- [x] **Task 3: Enterprise Audit/Shadow Mode vs Enforce Mode**
+  - Added `"enforcement_mode": "enforce"` | `"audit"` support in `bap-config.json`, CLI flag `--mode`, and `BAP_ENFORCEMENT_MODE` env var.
+  - Updated `bap-edge`: when in `audit` mode, logs violations as `shadow_deny` in audit telemetry with policy details, prints `[BAP AUDIT MODE] Policy violation detected: ... Execution permitted in audit mode.`, and permits command execution.
+  - When in `enforce` mode (default), maintains strict Zero-Trust hard blocking.
+  - Updated `copilot_interceptor.go` and MCP server to support audit warning reflection.
+  - Verified: Automated tests confirm enforce mode blocks credential access (`exit 1`) while audit mode allows execution (`exit 0`) with structured warnings and `shadow_deny` audit events.
+- [x] **Task 4: Full Suite & Concurrency Verification**
+  - Verified `build_binaries.bat`: 7/7 stages passed (exit 0).
+  - Verified `run_all_tests.bat`: 31/31 stages passed (exit 0).
+  - Verified `scripts/test_claude_concurrency.ps1`: 100% passed (both same-directory and multi-directory concurrency).
+  - Preserved Cedar security rules (`*comsvcs*`, `*minidump*`, `*sekurlsa*`, `*set-mppreference*`, `*disablerealtimemonitoring*`).
+  - Audited all `.bat` and `.ps1` scripts to ensure zero escalated or EDR heuristic commands exist.
+
+---
+
+# Active Sprint: Linux Background Supervision & Headless Resiliency Testing
+
+## Goals
+1. **Linux Background Auto-Restart Supervisor**: Provide production-grade background daemon supervision (`start`, `stop`, `status`, `restart`) with automatic restart on process death, plus a standard systemd service unit.
+2. **Negative Test Isolation Policy**: Isolate all adversarial simulation tests strictly into `run_negative_testcases.bat` (never invoked by automated suites); ignore from indexing via `.cursorignore`.
+3. **Automated Headless Resiliency, Scaling, & Integrity Suite**: Verify that the new system withstands process crashes, restarts, scaling bursts, and total server outages without breaking zero-trust integrity.
+
+## Completed Tasks
+- [x] **Task 1: Linux Background Auto-Restart Supervisor & Systemd Daemon Service**
+  - Created `scripts/supervise_controlplane.sh` (supports `start`, `stop`, `status`, `restart`, and `foreground`).
+  - Automatically respawns `bapcontrolplane` within 1 second if killed (`kill -9`, SIGTERM, crash).
+  - Created `start_controlplane_supervisor.sh` root wrapper.
+  - Created `dist/systemd/bapcontrolplane.service` for systemd integration (`Restart=always`, `RestartSec=2s`).
+- [x] **Task 2: .cursorignore & Negative Test Policy Enforcement**
+  - Updated `.cursorignore` to ignore `run_negative_testcases.bat`.
+  - Confirmed `run_all_tests.bat`, regression suites, and resiliency tests never invoke negative/flagged simulation tests.
+- [x] **Task 3: Automated Headless Resiliency, Scaling, & Failover Test Suite**
+  - Created `scripts/test_resiliency_headless.ps1` and `run_resiliency_test.bat`.
+  - Verified 10/10 automated assertions passing (100% system integrity):
+    1. Supervisor initialization & process health (PID logged, port 8443 online).
+    2. Dead process auto-respawn: killed PID automatically revived with new PID in ~1.1s.
+    3. Port 8443 HTTPS listener fully restored post-kill.
+    4. Concurrency scaling: 20 concurrent workers evaluated policy decisions in 1057 ms (~52.8 ms/decision).
+    5. Simulated total control plane outage: confirmed port 8443 closed.
+    6. Safe commands permitted offline in < 200 ms (Offline-First Zero-Trust).
+    7. Workspace boundary containment strictly enforced offline (`ExitCode: 1`, fail-secure).
+    8. Enterprise Audit/Shadow mode operable offline (permitted with shadow warning, `ExitCode: 0`).
+    9. Service reconnection and telemetry resumption verified.
+    10. JSON telemetry output mode (`-Json`) fully operational for headless CI/CD.
+

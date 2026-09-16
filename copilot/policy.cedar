@@ -85,6 +85,7 @@ forbid (
     context.full_command like "*sekurlsa*" ||
     context.full_command like "*set-mppreference*" ||
     context.full_command like "*disablerealtimemonitoring*" ||
+    context.full_command like "*set-service*disabled*" ||
     context.full_command like "*remove-item* -recurse*" ||
     context.full_command like "*remove-item*-recurse*" ||
     context.full_command like "*rmdir /s*" ||

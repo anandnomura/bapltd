@@ -19,16 +19,19 @@ import (
 )
 
 type execContext struct {
-	startTime    time.Time
-	source       string
-	sessionID    string
-	serverURL    string
-	auditLogPath string
-	fullCommand  string
-	executable   string
-	cmdArguments string
-	forceJSON    bool
-	forceRaw     bool
+	startTime       time.Time
+	source          string
+	sessionID       string
+	serverURL       string
+	auditLogPath    string
+	fullCommand     string
+	executable      string
+	cmdArguments    string
+	enforcementMode string
+	shadowDenied    bool
+	shadowReason    string
+	forceJSON       bool
+	forceRaw        bool
 }
 
 func (ec *execContext) exit(resp types.ExecResponse, code int) {
@@ -39,6 +42,9 @@ func (ec *execContext) exit(resp types.ExecResponse, code int) {
 	decision := "deny"
 	if resp.Allowed {
 		decision = "allow"
+	}
+	if ec.shadowDenied {
+		decision = "shadow_deny"
 	}
 	uID, uEmail, spiffeID := resolveLocalIdentity()
 	entry := audit.AuditEntry{
@@ -58,7 +64,9 @@ func (ec *execContext) exit(resp types.ExecResponse, code int) {
 		DurationMs:  durationMs,
 		ExitCode:    code,
 	}
-	if !resp.Allowed && entry.Reason == "" {
+	if ec.shadowDenied && entry.Reason == "" {
+		entry.Reason = fmt.Sprintf("[AUDIT MODE VIOLATION] %s", ec.shadowReason)
+	} else if !resp.Allowed && entry.Reason == "" {
 		entry.Reason = "Blocked by security policy"
 	}
 	_ = audit.Log(&entry, ec.auditLogPath)
@@ -91,6 +99,7 @@ func RunExec(args []string) {
 
 	epCfg := config.ResolveEndpoints()
 	serverFlag := fs.String("server", epCfg.ControlPlaneURL, "Central control plane URL for telemetry streaming")
+	modeFlag := fs.String("mode", epCfg.EnforcementMode, "Enforcement mode: 'enforce' (default) or 'audit'/'shadow'")
 
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintf(os.Stderr, "Error parsing arguments: %v\n", err)
@@ -98,13 +107,14 @@ func RunExec(args []string) {
 	}
 
 	ec := &execContext{
-		startTime:    startTime,
-		source:       *sourceFlag,
-		sessionID:    *sessionFlag,
-		serverURL:    *serverFlag,
-		auditLogPath: *auditLogFlag,
-		forceJSON:    *jsonFlag,
-		forceRaw:     *rawFlag,
+		startTime:       startTime,
+		source:          *sourceFlag,
+		sessionID:       *sessionFlag,
+		serverURL:       *serverFlag,
+		auditLogPath:    *auditLogFlag,
+		enforcementMode: strings.ToLower(strings.TrimSpace(*modeFlag)),
+		forceJSON:       *jsonFlag,
+		forceRaw:        *rawFlag,
 	}
 
 	cmdArgs := fs.Args()
@@ -112,6 +122,7 @@ func RunExec(args []string) {
 		resp := types.ExecResponse{
 			Allowed: false,
 			Reason:  "No command provided to exec. Usage: ltd-agent exec <shell_command>",
+			Mode:    ec.enforcementMode,
 		}
 		ec.exit(resp, 1)
 	}
@@ -138,6 +149,7 @@ func RunExec(args []string) {
 		resp := types.ExecResponse{
 			Allowed: false,
 			Reason:  fmt.Sprintf("EXECUTION BLOCKED: %v", revErr),
+			Mode:    ec.enforcementMode,
 		}
 		ec.exit(resp, 1)
 	}
@@ -148,6 +160,7 @@ func RunExec(args []string) {
 		resp := types.ExecResponse{
 			Allowed: false,
 			Reason:  fmt.Sprintf("Failed to load Cedar policy: %v", err),
+			Mode:    ec.enforcementMode,
 		}
 		ec.exit(resp, 1)
 	}
@@ -163,6 +176,7 @@ func RunExec(args []string) {
 		resp := types.ExecResponse{
 			Allowed: false,
 			Reason:  fmt.Sprintf("Error during Cedar policy evaluation: %v", err),
+			Mode:    ec.enforcementMode,
 		}
 		ec.exit(resp, 1)
 	}
@@ -172,20 +186,37 @@ func RunExec(args []string) {
 		if strings.Contains(reason, "escapes_workspace") || authz.CheckCommandWorkspaceEscape(authz.GetWorkspaceRoot(), fullCommand) {
 			suggestion = "Directory traversal outside the workspace is prohibited. Commands and file paths must remain within the workspace boundary. Child project access (e.g. Maven child modules) inside the workspace is permitted."
 		}
-		resp := types.ExecResponse{
-			Allowed:    false,
-			Reason:     reason,
-			Suggestion: suggestion,
+		if suggestion == "" {
+			suggestion = GenerateSuggestion(fullCommand, executable, reason)
 		}
-		ec.exit(resp, 1)
+
+		if strings.EqualFold(ec.enforcementMode, "audit") || strings.EqualFold(ec.enforcementMode, "shadow") {
+			ec.shadowDenied = true
+			ec.shadowReason = reason
+			fmt.Fprintf(os.Stderr, "[BAP AUDIT MODE] Policy violation detected: %s. Execution permitted in audit mode.\n", reason)
+		} else {
+			resp := types.ExecResponse{
+				Allowed:    false,
+				Reason:     reason,
+				Suggestion: suggestion,
+				Mode:       ec.enforcementMode,
+			}
+			ec.exit(resp, 1)
+		}
 	}
 
-	// 4. Execute sandboxed command (allowed by Cedar)
+	// 4. Execute sandboxed command (allowed by Cedar or permitted in audit mode)
 	output, execErr := sandbox.RunSandboxedCommand(fullCommand)
 
 	resp := types.ExecResponse{
 		Allowed: true,
 		Output:  output,
+		Mode:    ec.enforcementMode,
+	}
+	if ec.shadowDenied {
+		resp.Warning = fmt.Sprintf("[BAP AUDIT MODE] Policy violation detected: %s. Execution permitted in audit mode.", ec.shadowReason)
+		resp.Reason = ec.shadowReason
+		resp.Suggestion = GenerateSuggestion(fullCommand, executable, ec.shadowReason)
 	}
 	if execErr != nil {
 		resp.Reason = fmt.Sprintf("Command execution failed: %v", execErr)
@@ -244,6 +275,9 @@ func exitWithResponse(resp types.ExecResponse, code int, forceJSON, forceRaw boo
 		os.Exit(code)
 	}
 
+	if resp.Warning != "" {
+		fmt.Fprintf(os.Stderr, "[WARNING] %s\n", resp.Warning)
+	}
 	if resp.Output != "" {
 		fmt.Println(resp.Output)
 	}
@@ -283,7 +317,8 @@ func GenerateSuggestion(fullCmd, execName, reason string) string {
 		return "Opening raw network sockets directly on the host is prohibited on edge agents. Egress must be governed through the BAP Gateway PEP."
 	}
 
-	if strings.Contains(lower, "set-mppreference") || strings.Contains(lower, "disablerealtimemonitoring") {
+	if strings.Contains(lower, "set-mppreference") || strings.Contains(lower, "disablerealtimemonitoring") ||
+		(strings.Contains(lower, "set-service") && strings.Contains(lower, "disabled")) || strings.Contains(lower, "stop-service") {
 		return "Disabling or altering host security controls and antivirus preferences is strictly prohibited."
 	}
 
@@ -291,7 +326,8 @@ func GenerateSuggestion(fullCmd, execName, reason string) string {
 		return "Mass recursive deletion targeting system paths is blocked to protect workspace integrity."
 	}
 
-	if strings.Contains(lower, "comsvcs") || strings.Contains(lower, "minidump") || strings.Contains(lower, "sekurlsa") {
+	if strings.Contains(lower, "comsvcs") || strings.Contains(lower, "minidump") || strings.Contains(lower, "sekurlsa") ||
+		strings.Contains(lower, "invoke-privesc") || strings.Contains(lower, "dumpcredentials") {
 		return "Process memory dumping and credential harvesting techniques are blocked by zero-trust invariant."
 	}
 

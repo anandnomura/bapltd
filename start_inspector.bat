@@ -16,6 +16,7 @@ if "%CP_URL%"=="" set CP_URL=http://localhost:8080
 :: Check if CP_URL points to localhost
 set "IS_LOCAL=0"
 echo %CP_URL% | findstr /i "localhost 127.0.0.1 ::1" >nul 2>&1
+if %errorlevel% equ 0 set "IS_LOCAL=1"
 :: Determine port and HTTPS scheme
 set "CP_PORT=8443"
 set "CP_HTTPS=1"

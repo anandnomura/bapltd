@@ -15,6 +15,7 @@ type EndpointsConfig struct {
 	EnvoyURL        string `json:"envoy_url"`
 	TrustDomain     string `json:"trust_domain"`
 	Environment     string `json:"environment,omitempty"`
+	EnforcementMode string `json:"enforcement_mode,omitempty"`
 	ConfigSource    string `json:"config_source,omitempty"`
 }
 
@@ -38,6 +39,7 @@ func ResolveEndpoints() EndpointsConfig {
 		EnvoyURL:        DefaultEnvoyURL,
 		TrustDomain:     DefaultTrustDomain,
 		Environment:     "development",
+		EnforcementMode: "enforce",
 		ConfigSource:    "default_fallback",
 	}
 
@@ -59,6 +61,9 @@ func ResolveEndpoints() EndpointsConfig {
 			}
 			if fileCfg.Environment != "" {
 				cfg.Environment = fileCfg.Environment
+			}
+			if fileCfg.EnforcementMode != "" {
+				cfg.EnforcementMode = strings.ToLower(strings.TrimSpace(fileCfg.EnforcementMode))
 			}
 			cfg.ConfigSource = path
 			break
@@ -89,6 +94,12 @@ func ResolveEndpoints() EndpointsConfig {
 	}
 	if envEnv := getFirstEnv("BAP_ENV"); envEnv != "" {
 		cfg.Environment = envEnv
+	}
+	if envMode := getFirstEnv("BAP_ENFORCEMENT_MODE", "BAP_MODE"); envMode != "" {
+		cfg.EnforcementMode = strings.ToLower(strings.TrimSpace(envMode))
+	}
+	if cfg.EnforcementMode == "" {
+		cfg.EnforcementMode = "enforce"
 	}
 
 	return cfg
