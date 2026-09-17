@@ -44,10 +44,12 @@ graph TD
         DASH["bapdashboard (React Web UI)"]
         CHAIN["Tamper-Evident SHA-256 Audit Chain"]
         CEDAR_MASTER["Authoritative Policy Store"]
+        SPIFFE_REG["SPIFFE Workload Registry & Attestation"]
         
         CP --- DASH
         CP --- CHAIN
         CP --- CEDAR_MASTER
+        CP --- SPIFFE_REG
     end
 
     subgraph Developer_Seat ["Developer Seat (Local Workstation)"]
@@ -55,40 +57,51 @@ graph TD
             CLAUDE["Claude Code CLI"]
             COPILOT["GitHub Copilot CLI"]
             MCP_IDE["IDE (Cursor / VSCode via MCP)"]
+            PY_AGENT["Python SDK Autonomous Agents"]
         end
 
         subgraph Interceptors ["PEP Interceptors"]
             HOOK["interceptor (PreToolUse)"]
             COPSHIM["copilot-interceptor"]
+            MCP_SRV["bapmcp (Model Context Protocol)"]
         end
 
         subgraph BAP_Edge ["bapedge - Local Trusted Daemon"]
             ENGINE["In-Process Cedar Engine (Sub-2ms)"]
             CACHE["Local Policy Cache (policy.cedar)"]
+            SPIFFE_RESOLVE["5-Stage SPIFFE / User Identity Resolver"]
+            SANDBOX["OS Process Sandbox (Job Objects / Namespaces)"]
             LOCAL_AUDIT[".bap/ & ltd-audit.jsonl"]
         end
 
         CLAUDE -->|PreToolUse JSON| HOOK
         COPILOT -->|CLI Intercept| COPSHIM
-        MCP_IDE -->|JSON-RPC stdio| BAP_Edge
+        MCP_IDE -->|JSON-RPC stdio| MCP_SRV
+        PY_AGENT -->|SDK Client / REST| BAP_Edge
 
         HOOK --> BAP_Edge
         COPSHIM --> BAP_Edge
+        MCP_SRV --> BAP_Edge
+        BAP_Edge --> SPIFFE_RESOLVE
         BAP_Edge --> ENGINE
         ENGINE --> CACHE
+        BAP_Edge --> SANDBOX
         BAP_Edge --> LOCAL_AUDIT
     end
 
     BAP_Edge -.->|Async Telemetry Stream| CP
     BAP_Edge -.->|Remote Policy Sync & Kill-Switch| CP
+    BAP_Edge -.->|Binary Attestation & SVID Minting| CP
 ```
 
 ### Core Components
-- **`bapedge`**: The local trusted gatekeeper. Powered by an embedded pure-Go AWS Cedar evaluation engine, it evaluates rules in memory in sub-2ms.
+- **`bapedge`**: The local trusted gatekeeper. Powered by an embedded pure-Go AWS Cedar evaluation engine, it resolves operator & SPIFFE identities, isolates executions in OS sandboxes, and evaluates rules in memory in sub-2ms.
 - **`interceptor`**: Seamlessly integrates with Claude Code's native `PreToolUse` lifecycle hook without changing a single line of Claude's source code.
-- **`copilot-interceptor`**: Wraps GitHub Copilot CLI executions to prevent defense evasion and credential access.
-- **`bapcontrolplane`**: Central API server managing agent registration, binary attestation, dynamic Cedar policy distribution, and fleet-wide emergency kill-switches.
-- **`bapdashboard`**: Real-time visual activity radar (`inspector_v2.html` on 8443 and React UI on 8444) rendering agent actions, allow/deny ratios, and tamper-evident logs.
+- **`copilot-interceptor`**: Wraps GitHub Copilot CLI executions to prevent defense evasion, shell escaping, and unauthorized credential access.
+- **`bapmcp`**: First-class Model Context Protocol (MCP) server enabling Cursor, VS Code, and IDE agents to govern LLM tool invocations natively via JSON-RPC stdio.
+- **`python-agent` (`bap_sdk`)**: Production-ready Python SDK client for programmatic governance of autonomous agent workflows, workers, and pipelines.
+- **`bapcontrolplane`**: Central server managing the SPIFFE Workload Registry, binary attestation (SHA-256), One-Time Code (OTC) enrollment, ephemeral On-Behalf-Of (OBO) JWT grants, dynamic Cedar policy distribution, and fleet-wide emergency kill-switches.
+- **`bapdashboard`**: Real-time visual observability cockpits (`inspector_v2.html` on 8443 and React UI on 8444) rendering live agent presence radars, allow/deny ratios, SPIFFE identity registries, and tamper-evident audit streams.
 
 ---
 
@@ -96,15 +109,21 @@ graph TD
 
 | Capability | How It Protects You |
 |---|---|
+| **SPIFFE Workload Identity** | Issues cryptographic, standard-compliant SVIDs (`spiffe://bap.internal/app/{app_id}/instance/{instance_id}`) binding every agent action to a provable workload identity. |
+| **Binary Image Attestation** | Validates SHA-256 checksums of agent runtime binaries against signed baselines before issuing credentials or granting execution rights. |
+| **Ephemeral Scoped OBO JWTs** | Mints short-lived (5-minute) On-Behalf-Of tokens with strict audience and role constraints. Agents never hold persistent cloud API keys or master credentials. |
 | **AWS Cedar Policy Kernel** | Author human-readable, mathematically verifiable policies (e.g., allow `git` and `npm`, forbid access to `~/.aws`, `.env`, and raw sockets). |
 | **Workspace Sandboxing** | Confines agent file operations strictly to the project directory. Directory traversals (`dir ..`, path escapes) are blocked automatically. |
+| **OS-Level Process Isolation** | Sandboxes execution via Windows Job Objects and Linux namespaces/cgroups with execution timeouts and ANSI output sanitization. |
+| **Native Model Context Protocol (MCP)** | Integrates directly with Cursor, Windsurf, and VS Code through standard MCP tools (`exec`, `read_file`, `list_directory`). |
 | **Sub-2ms Decision Latency** | Evaluates policies in-process. Developers never feel lag or input stalls while pairing with AI. |
-| **Offline-First Zero-Trust** | Network down? Airplane mode? `bapedge` enforces local cached policies without skipping a beat. |
+| **Offline-First Zero-Trust** | Network down? Airplane mode? `bapedge` enforces local cached policies without skipping a beat — failing secure by default. |
 | **Progressive Enterprise Rollout** | Start in **Audit/Shadow Mode** to observe and baseline agent actions with zero disruption, then flip to **Enforce Mode** for strict Zero-Trust hard blocking. |
 | **Multi-Instance Concurrency** | Run multiple Claude Code terminals across different repos simultaneously with zero lockouts or variable collisions. |
 | **Self-Healing Session Guard** | A detached watchdog monitors Claude Code PIDs; if your terminal abruptly closes or crashes, your original environment settings are restored instantly. |
 | **Tamper-Evident SHA-256 Audits** | Telemetry logs are cryptographically chained ($H_n = \text{SHA256}(H_{n-1} \parallel \text{Event})$). Any retrospective log tampering is immediately detected. |
-| **Emergency Kill-Switch** | Revoke a compromised agent session or lock down the entire fleet with a single API call from security operations. |
+| **Emergency Fleet Kill-Switch** | Instantly revoke a compromised session or isolate the entire fleet by SPIFFE ID or session token with a single API call from security operations. |
+| **Zero-Dependency Portability** | Static Go binaries compiled with `CGO_ENABLED=0` for Windows, Linux (amd64/arm64), and macOS (Intel/Apple Silicon). |
 
 ---
 
@@ -178,6 +197,39 @@ When an agent attempts a forbidden action (like reading `.env`), BAP halts execu
 [DENIED] Denial triggered by: policy policy2
 [SUGGESTION] Direct access or tampering with .env credential files is strictly prohibited. Access required configuration via sandboxed environment variables or the corporate Secret Store.
 ```
+
+---
+
+## 🆔 Cryptographic Workload Identity & Attestation (SPIFFE)
+
+Autonomous AI agents cannot be governed by traditional static API keys or network IPs alone. When multiple agents run locally or across distributed build nodes, security teams need to know **which exact agent binary executed which command, on behalf of which human developer.**
+
+BAP implements the industry-standard **SPIFFE (Secure Production Identity Framework for Everyone)** architecture natively:
+
+### 1. Attested SPIFFE Workload IDs
+Every governed AI agent receives a verifiable SPIFFE ID conforming to the corporate trust domain:
+```text
+spiffe://bap.internal/app/{app_id}/instance/{instance_id}
+```
+*Example:* `spiffe://bap.internal/app/claude-code/instance/seat-eng-42`
+
+### 2. Binary Image Attestation (SHA-256)
+Before issuing credentials or authorizing high-privilege tool calls, BAP verifies the cryptographic integrity of the agent runtime:
+- Computes the SHA-256 binary digest of the executable (e.g., `claude.exe`, `copilot.exe`).
+- Validates the digest against authoritative corporate attestation baselines.
+- Thwarts trojanized agent wrappers, modified binaries, and malicious prompt-injected shims.
+
+### 3. Dual-Identity Binding (Operator + Workload)
+BAP's 5-stage identity resolution engine binds every single tool execution to two distinct cryptographic entities:
+1. **Operator Identity**: Authenticated human developer (`alice@corp.internal`) resolved via SSO tokens, OIDC, or `apiKeyHelper`.
+2. **Workload Identity**: Attested AI agent instance (`spiffe://bap.internal/app/claude-code/instance/01J8K...`).
+
+This guarantees **unforgeable non-repudiation**: audit logs prove not only that Alice approved a build, but exactly which Claude Code instance executed the build commands.
+
+### 4. Ephemeral Scoped On-Behalf-Of (OBO) JWTs
+- The control plane mints short-lived (5-minute TTL) On-Behalf-Of JWTs with tightly scoped audiences.
+- The AI agent never touches raw cloud master keys, production tokens, or `.env` files.
+- Tokens are injected just-in-time into isolated OS sandboxes and expire immediately after tool execution.
 
 ---
 
