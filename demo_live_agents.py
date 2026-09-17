@@ -23,6 +23,7 @@ import time
 import json
 import ssl
 import random
+import atexit
 import argparse
 import threading
 import urllib.request
@@ -87,6 +88,16 @@ MASTER_AGENT_ROSTER: List[Tuple[str, str, str, str, bool]] = [
 ]
 
 
+def safe_input(prompt_text: str, default: str = "") -> str:
+    """Reads user input safely, returning default on EOFError or KeyboardInterrupt."""
+    try:
+        val = input(prompt_text).strip()
+        return val if val else default
+    except (EOFError, KeyboardInterrupt):
+        print("")
+        return default
+
+
 def read_admin_token() -> str:
     """Reads administrative bearer token from .bap-admin-token if present."""
     token_file = os.path.join(WORKSPACE_ROOT, ".bap-admin-token")
@@ -106,18 +117,23 @@ def get_inspector_telemetry(server_url: str, admin_token: str) -> Dict[str, Any]
         req.add_header("Authorization", f"Bearer {admin_token}")
     try:
         with urllib.request.urlopen(req, context=ssl_ctx, timeout=4) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+            data = json.loads(resp.read().decode("utf-8"))
+            if isinstance(data, dict):
+                return data
+            return {"sessions": [], "agents": []}
     except Exception as e:
         return {"error": str(e), "sessions": [], "agents": []}
 
 
 def count_active_sessions(data: Dict[str, Any]) -> int:
     """Calculates active session count matching inspector_v2 logic (< 15s last active)."""
-    sessions = data.get("sessions", [])
+    if not isinstance(data, dict):
+        return 0
+    sessions = data.get("sessions") or []
     now = time.time()
     active = 0
     for s in sessions:
-        if s.get("status") == "active":
+        if isinstance(s, dict) and s.get("status") == "active":
             last_ms = 0
             if s.get("last_active_at"):
                 try:
@@ -127,9 +143,20 @@ def count_active_sessions(data: Dict[str, Any]) -> int:
                     last_ms = t.timestamp()
                 except Exception:
                     last_ms = now
-            if (now - last_ms) <= 15:
-                active += 1
-    return active
+_ALL_SPAWNED_AGENTS: List["DemoAgent"] = []
+
+
+def _cleanup_all():
+    """Guarantees all background workloads and heartbeats are torn down upon exit."""
+    for a in list(_ALL_SPAWNED_AGENTS):
+        if a.is_alive:
+            try:
+                a.close()
+            except Exception:
+                pass
+
+
+atexit.register(_cleanup_all)
 
 
 class DemoAgent:
@@ -149,7 +176,7 @@ class DemoAgent:
         self.operator = operator
         self.prompt = prompt
         self.is_claude = is_claude
-        self.server_url = server_url
+        self.server_url = server_url.rstrip("/")
         self.headless = headless
         
         # Clean slug for session ID
@@ -162,6 +189,7 @@ class DemoAgent:
         self.is_alive = False
         self._hb_stop = None
         self._hb_thread = None
+        _ALL_SPAWNED_AGENTS.append(self)
 
     def start(self):
         if self.is_claude:
@@ -171,47 +199,61 @@ class DemoAgent:
             else:
                 creation_flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
-            self.proc = subprocess.Popen(
-                [sys.executable, "-c", "import time; time.sleep(3600)"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                creationflags=creation_flags
-            )
+            try:
+                self.proc = subprocess.Popen(
+                    [sys.executable, "-c", "import time; time.sleep(3600)"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    creationflags=creation_flags
+                )
+            except Exception:
+                self.proc = None
 
-            # Enroll session on control plane via bapedge session-start
-            bapedge_bin = os.path.join(WORKSPACE_ROOT, "bapedge.exe")
-            if not os.path.isfile(bapedge_bin):
-                bapedge_bin = "bapedge.exe"
+            # Register session directly with Control Plane REST endpoint
+            payload = {
+                "session_id": self.session_id,
+                "user_prompt": self.prompt,
+                "app_id": self.app_id,
+                "instance_id": self.session_id,
+                "user_id": self.operator,
+                "user_email": f"{self.operator.lower().replace(' ', '.')}@enterprise.internal",
+                "spiffe_id": f"spiffe://bap.internal/app/{self.app_id}/instance/{self.session_id}",
+                "client_pid": self.proc.pid if self.proc else os.getpid(),
+                "hostname": os.getenv("COMPUTERNAME", "localhost"),
+                "client_type": "claude-code",
+                "metadata": {
+                    "source": "demo_fleet",
+                    "role": self.name
+                }
+            }
+            try:
+                req = urllib.request.Request(
+                    f"{self.server_url}/api/v1/sessions/start",
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers={"Content-Type": "application/json"}
+                )
+                with urllib.request.urlopen(req, context=ssl_ctx, timeout=3):
+                    pass
+            except Exception:
+                pass
 
-            start_args = [
-                bapedge_bin, "session-start",
-                "--server", self.server_url,
-                "--session-id", self.session_id,
-                "--pid", str(self.proc.pid),
-                "--app-id", self.app_id,
-                "--prompt", self.prompt
-            ]
-            env = os.environ.copy()
-            env["BAP_USER_PROMPT"] = self.prompt
-            env["USERNAME"] = self.operator
-            subprocess.run(start_args, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             self.is_alive = True
 
             # Start automated heartbeat thread so Claude session remains active on radar
             self._hb_stop = threading.Event()
             def _claude_hb_worker():
-                while self._hb_stop and not self._hb_stop.wait(5.0):
+                while self._hb_stop and not self._hb_stop.wait(4.0):
                     if not self.is_alive:
                         break
                     try:
-                        payload = {
+                        hb_payload = {
                             "session_id": self.session_id,
                             "app_id": self.app_id,
                             "agent_id": self.session_id
                         }
                         req = urllib.request.Request(
                             f"{self.server_url}/api/v1/sessions/heartbeat",
-                            data=json.dumps(payload).encode("utf-8"),
+                            data=json.dumps(hb_payload).encode("utf-8"),
                             headers={"Content-Type": "application/json"}
                         )
                         with urllib.request.urlopen(req, context=ssl_ctx, timeout=3):
@@ -247,24 +289,35 @@ class DemoAgent:
             self._hb_stop.set()
 
         if self.is_claude:
-            bapedge_bin = os.path.join(WORKSPACE_ROOT, "bapedge.exe")
-            if not os.path.isfile(bapedge_bin):
-                bapedge_bin = "bapedge.exe"
-            # Gracefully notify control plane via bapedge session-end
-            subprocess.run(
-                [bapedge_bin, "session-end", "--server", self.server_url, "--session-id", self.session_id],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-            )
+            # Directly deregister via Control Plane
+            try:
+                end_payload = {
+                    "session_id": self.session_id,
+                    "reason": "demo termination"
+                }
+                req = urllib.request.Request(
+                    f"{self.server_url}/api/v1/sessions/end",
+                    data=json.dumps(end_payload).encode("utf-8"),
+                    headers={"Content-Type": "application/json"}
+                )
+                with urllib.request.urlopen(req, context=ssl_ctx, timeout=3):
+                    pass
+            except Exception:
+                pass
+
             if self.proc:
                 try:
                     self.proc.terminate()
-                    self.proc.wait(timeout=2)
+                    self.proc.wait(timeout=1)
                 except Exception:
                     pass
             self.is_alive = False
         else:
             if self.py_session:
-                self.py_session.end(reason="demo termination")
+                try:
+                    self.py_session.end(reason="demo termination")
+                except Exception:
+                    pass
             self.is_alive = False
 
 
@@ -390,10 +443,10 @@ def main():
         print("  [2] High-Load Fleet : 35 Agents  (Demonstrates UI concurrency & Live Radar scale) [RECOMMENDED]")
         print("  [3] Custom Fleet    : Enter any number between 1 and 50")
         print("")
-        scale_choice = input("Select Concurrency Scale [1/2/number, Enter = 35]: ").strip()
-        if scale_choice == "1" or scale_choice == "5":
+        scale_choice = safe_input("Select Concurrency Scale [1/2/number, Enter = 35]: ", default="35")
+        if scale_choice in ("1", "5"):
             target_count = 5
-        elif scale_choice == "2" or scale_choice == "35" or not scale_choice:
+        elif scale_choice in ("2", "35") or not scale_choice:
             target_count = 35
         elif scale_choice.isdigit():
             target_count = max(1, min(50, int(scale_choice)))
@@ -416,7 +469,7 @@ def main():
         py_half = target_count - claude_half
         print(f"  [3] Mixed Squad ({claude_half} Claude Code + {py_half} Python SDK)  [RECOMMENDED]")
         print("")
-        mode_choice = input("Select Mode [1/2/3, Enter = 3]: ").strip()
+        mode_choice = safe_input("Select Mode [1/2/3, Enter = 3]: ", default="3")
         if mode_choice not in ("1", "2", "3"):
             mode = "3"
         else:
@@ -471,7 +524,7 @@ def main():
         else:
             kill_count = max(2, int(target_count * 0.25))  # e.g. 8 for 35
 
-        input(f"\n>>> Press [ENTER] when ready to randomly CLOSE {kill_count} agents and watch them drop on the UI...")
+        safe_input(f"\n>>> Press [ENTER] when ready to randomly CLOSE {kill_count} agents and watch them drop on the UI...")
 
         # ---------------------------------------------------------------------
         # STAGE 2: Terminate Subset of Agents Randomly
@@ -505,7 +558,7 @@ def main():
         else:
             repl_count = max(2, kill_count // 2)  # e.g. 4 for 35
 
-        input(f"\n>>> Press [ENTER] when ready to launch {repl_count} NEW replacement agents...")
+        safe_input(f"\n>>> Press [ENTER] when ready to launch {repl_count} NEW replacement agents...")
 
         # ---------------------------------------------------------------------
         # STAGE 3: Launch Replacement Agents
@@ -539,7 +592,7 @@ def main():
         print("\n" + "-" * 90)
         print(f">>> [PAUSE] Notice {repl_count} NEW agents appeared on the UI and the count INCREASED to {live_count}!")
         print("-" * 90)
-        input("\n>>> Press [ENTER] to cleanly shut down all demo agents and finish...")
+        safe_input("\n>>> Press [ENTER] to cleanly shut down all demo agents and finish...")
 
     finally:
         # ---------------------------------------------------------------------
@@ -556,4 +609,13 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n\n[-] Demonstration stopped by user. All workloads cleanly closed.\n")
+        sys.exit(0)
+    except Exception as e:
+        print(f"\n[-] Unexpected error during demonstration: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)

@@ -84,6 +84,23 @@ This document represents the complete functional and non-functional requirements
 ### Epic 2: Transparent AI Agent Interception & Model Context Protocol (BAP-EPIC-2)
 **Summary**: Provide drop-in governance for commercial and open-source AI agent developer runtimes without modifying agent source code.
 
+#### Story BAP-200: Make BAPEdge the Sole Executor for Protected Agent Actions
+- **Type**: Story | **Points**: 13 | **Priority**: Highest (P0) | **Status**: `DONE`
+- **Description**: Establish Broker-Owned Execution as the core BAP enforcement model. Prevent duplicate command execution by using Claude Code's native `updatedInput` to route allowed commands solely through `bapedge exec`, while decision-only hooks remain available for audit/shadow mode. Capture process exit codes, enforce anti-tampering guards on BAP policies and binaries, generate cryptographic execution receipts, and correlate repeated evasion attempts into threat risk events.
+- **Acceptance Criteria**:
+  - `Given` an allowed non-idempotent operation (e.g. counter increment),
+  - `When` executed via the BAP governed flow,
+  - `Then` the operation occurs inside the sandbox boundary exactly once, and zero duplicate native execution occurs.
+  - `Given` a denied action across any vector (Bash, Read, Write, Edit, Python, PowerShell, MCP, child process),
+  - `When` evaluated by the interceptor or BAPEdge broker,
+  - `Then` zero side effects occur on the filesystem or network.
+  - `Given` an agent tool attempting to tamper with `.claude/`, `policy.cedar`, `.bap/`, or BAP binaries,
+  - `Then` execution is blocked immediately with a Security Invariant Violation (`DENIED_TAMPER`).
+  - `Given` sequential alternative evasion attempts within a session,
+  - `Then` BAPEdge correlates them, escalates session threat level (`LOW` -> `ELEVATED` -> `CRITICAL`), and logs correlated risk event telemetry.
+  - `Given` any command execution,
+  - `Then` BAPEdge returns the actual output, exit status, and a cryptographic `ExecutionReceipt` recording request hash, identity, delegation, policy version, sandbox profile, and result.
+
 #### Story BAP-201: Claude Code PreToolUse Lifecycle Hook Interceptor
 - **Type**: Story | **Points**: 8 | **Priority**: Highest | **Status**: `DONE`
 - **Description**: Implement `interceptor.exe` implementing Anthropic's Claude Code hook schema. Intercept `Bash`, `FileEdit`, and `View` operations via standard input/output JSON streams.

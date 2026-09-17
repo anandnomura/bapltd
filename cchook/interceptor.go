@@ -91,10 +91,11 @@ type HookPayload struct {
 
 // HookSpecificOutput represents the PreToolUse decision schema.
 type HookSpecificOutput struct {
-	HookEventName            string `json:"hookEventName"`
-	PermissionDecision       string `json:"permissionDecision"` // "allow" or "deny"
-	PermissionDecisionReason string `json:"permissionDecisionReason,omitempty"`
-	AdditionalContext        string `json:"additionalContext,omitempty"`
+	HookEventName            string     `json:"hookEventName"`
+	PermissionDecision       string     `json:"permissionDecision"` // "allow" or "deny"
+	PermissionDecisionReason string     `json:"permissionDecisionReason,omitempty"`
+	AdditionalContext        string     `json:"additionalContext,omitempty"`
+	UpdatedInput             *ToolInput `json:"updatedInput,omitempty"`
 }
 
 // HookResponse is the top-level response expected by Claude Code.
@@ -107,12 +108,13 @@ type HookResponse struct {
 	HookSpecificOutput HookSpecificOutput `json:"hookSpecificOutput"`
 }
 
-// ExecResponse represents the JSON output from ltd-agent exec.
+// ExecResponse represents the JSON output from ltd-agent / bapedge exec or check.
 type ExecResponse struct {
-	Allowed    bool   `json:"allowed"`
-	Output     string `json:"output,omitempty"`
-	Reason     string `json:"reason,omitempty"`
-	Suggestion string `json:"suggestion,omitempty"`
+	Allowed      bool   `json:"allowed"`
+	Output       string `json:"output,omitempty"`
+	Reason       string `json:"reason,omitempty"`
+	Suggestion   string `json:"suggestion,omitempty"`
+	DecisionOnly bool   `json:"decision_only,omitempty"`
 }
 
 func resolveServerURL() string {
@@ -142,6 +144,92 @@ func resolveServerURL() string {
 		}
 	}
 	return "http://localhost:8080"
+}
+
+func resolveEnforcementMode() string {
+	if m := os.Getenv("BAP_MODE"); m != "" {
+		return strings.ToLower(strings.TrimSpace(m))
+	}
+	cfgCandidates := []string{
+		filepath.Join(".bap", "bap-config.json"),
+		filepath.Join(".bap", "config.json"),
+		"bap-config.json",
+		"../bap-config.json",
+	}
+	for _, cfgPath := range cfgCandidates {
+		if cfgData, err := os.ReadFile(cfgPath); err == nil {
+			var cfg struct {
+				EnforcementMode string `json:"enforcement_mode"`
+			}
+			if json.Unmarshal(cfgData, &cfg) == nil && cfg.EnforcementMode != "" {
+				return strings.ToLower(strings.TrimSpace(cfg.EnforcementMode))
+			}
+		}
+	}
+	return "enforce"
+}
+
+func isProtectedBAPAsset(pathStr string) bool {
+	lower := strings.ToLower(filepath.ToSlash(pathStr))
+	protected := []string{
+		"policy.cedar",
+		".claude/settings.json",
+		".claude/hooks",
+		".bap/",
+		".bap-session.json",
+		".bap-revoked",
+		"bap-config.json",
+		"bapedge.exe",
+		"bapedge",
+		"interceptor.exe",
+		"cchook-interceptor.exe",
+		"bapcontrolplane.exe",
+		"bapcontrolplane",
+		"bapgateway.exe",
+		"bapgateway",
+	}
+	for _, p := range protected {
+		if strings.Contains(lower, p) {
+			return true
+		}
+	}
+	return false
+}
+
+func isTamperingCommand(cmdStr string) (bool, string) {
+	lower := strings.ToLower(filepath.ToSlash(cmdStr))
+	protected := []string{
+		"policy.cedar",
+		".claude/settings.json",
+		".claude/hooks",
+		".bap/",
+		".bap-session.json",
+		".bap-revoked",
+		"bap-config.json",
+		"bapedge.exe",
+		"bapedge",
+		"interceptor.exe",
+		"cchook-interceptor.exe",
+		"bapcontrolplane.exe",
+		"bapcontrolplane",
+		"bapgateway.exe",
+		"bapgateway",
+	}
+	destructive := []string{
+		"rm ", "rm -", "del ", "erase ", "remove-item", "unlink", "rmdir", "rd /", "rd ",
+		">", ">>", "set-content", "out-file", "add-content", "truncate", "sed ",
+		"ren ", "rename ", "move ", "mv ", "copy ", "cp ", "chmod ", "attrib ",
+	}
+	for _, p := range protected {
+		if strings.Contains(lower, p) {
+			for _, d := range destructive {
+				if strings.Contains(lower, d) {
+					return true, fmt.Sprintf("Security Invariant Violation: Direct modification, deletion, or tampering with BAP protected asset %q is strictly forbidden.", p)
+				}
+			}
+		}
+	}
+	return false, ""
 }
 
 func sessionMarkerPathForPID(pid int) string {
@@ -544,6 +632,13 @@ func main() {
 	}
 	if targetFile != "" {
 		normPath := strings.ToLower(filepath.ToSlash(targetFile))
+
+		// Anti-tampering check on file write/edit
+		if (payload.ToolName == "Edit" || payload.ToolName == "Write") && isProtectedBAPAsset(normPath) {
+			outputDecision("deny", fmt.Sprintf("Security Invariant Violation: Direct modification or tampering with BAP protected asset %q is strictly forbidden", targetFile), "Modifying or tampering with BAP configuration, policies, hooks, or binaries is prohibited.")
+			return
+		}
+
 		if isPathOutsideWorkspace(workspaceRoot, targetFile) {
 			outputDecision("deny", fmt.Sprintf("Directory traversal outside workspace is forbidden for file %q", targetFile), "Access to files outside the project root is prohibited. Child module and subproject files are permitted inside the workspace.")
 			return
@@ -567,6 +662,19 @@ func main() {
 			return
 		}
 		outputDecision("deny", "No command or target specified in tool input", "Empty command")
+		return
+	}
+
+	// If command is already a bapedge exec wrapper, allow it directly without recursive re-wrapping
+	cmdLower := strings.ToLower(command)
+	if strings.HasPrefix(cmdLower, "bapedge") || strings.HasPrefix(cmdLower, ".\\bapedge") || strings.HasPrefix(cmdLower, "./bapedge") || strings.HasPrefix(cmdLower, "ltd-agent") {
+		outputDecision("allow", "", "Pre-wrapped BAPEdge execution permitted")
+		return
+	}
+
+	// Pre-flight anti-tampering check on shell command
+	if isTamper, tamperReason := isTamperingCommand(command); isTamper {
+		outputDecision("deny", tamperReason, "Direct modification or tampering with BAP configuration, policies, hooks, or binaries is prohibited.")
 		return
 	}
 
@@ -651,8 +759,9 @@ func main() {
 		ltdBin = findBinary(fallbackName)
 	}
 
-	// 6. Execute bapedge exec --source claude-code --session-id <sessionID> --json "$command"
-	execArgs := []string{"exec", "--source", "claude-code", "--json"}
+	// 6. Execute bapedge check --source claude-code --session-id <sessionID> --json "$command"
+	// BAP-200: Interceptor uses Decision-Only check so the action executes exactly once natively.
+	execArgs := []string{"check", "--source", "claude-code", "--json"}
 	if sessionID != "" {
 		execArgs = append(execArgs, "--session-id", sessionID)
 	}
@@ -700,8 +809,19 @@ func main() {
 	}
 
 	// 7. Format decision matching Claude Code PreToolUse schema
+	// Broker-Owned Execution (BAP-200):
+	// In enforcement mode, BAP wraps the command via updatedInput so Claude Code natively
+	// spawns bapedge exec. BAPEdge is the sole executor inside the sandbox boundary.
+	// The original command is never executed outside BAPEdge, guaranteeing exactly-once execution.
 	if execResp.Allowed {
-		outputDecision("allow", "", strings.TrimRight(execResp.Output, "\r\n"))
+		mode := resolveEnforcementMode()
+		if mode == "audit" || mode == "shadow" {
+			outputDecision("allow", "", "Command authorized in audit mode")
+			return
+		}
+		// Rewrite tool input command to route through bapedge exec
+		rewritten := fmt.Sprintf(`%s exec --source claude-code --session-id %s -- %s`, ltdBin, sessionID, command)
+		outputDecisionWithUpdatedInput("allow", "", "Command authorized by BAP Cedar policy - routed to BAP broker sandbox", &ToolInput{Command: rewritten})
 	} else {
 		reason := execResp.Reason
 		if reason == "" {
@@ -715,66 +835,69 @@ func main() {
 	}
 }
 
-// findBinary locates the ltd-agent binary across standard search paths.
+// findBinary locates the ltd-agent or bapedge binary across standard search paths.
 func findBinary(name string) string {
 	// 1. Check current working directory
 	if _, err := os.Stat(name); err == nil {
+		if runtime.GOOS == "windows" {
+			return ".\\" + name
+		}
 		return "./" + name
 	}
-	// 2. Check sibling bap-edge and ltd-agent directory
-	relPath := filepath.Join("..", "bap-edge", name)
-	if _, err := os.Stat(relPath); err == nil {
-		return relPath
+	// 2. Check parent directory (e.g. repo root if running from cchook/)
+	if _, err := os.Stat(filepath.Join("..", name)); err == nil {
+		return filepath.Join("..", name)
 	}
-	relPathLegacy := filepath.Join("..", "ltd-agent", name)
-	if _, err := os.Stat(relPathLegacy); err == nil {
-		return relPathLegacy
-	}
-	// 3. Check executable directory and ancestor folders
-	if exePath, err := os.Executable(); err == nil {
-		exeDir := filepath.Dir(exePath)
-		// Next to interceptor binary
-		cand := filepath.Join(exeDir, name)
+	// 3. Check dist directories
+	for _, cand := range []string{
+		filepath.Join("dist", "windows-amd64", name),
+		filepath.Join("..", "dist", "windows-amd64", name),
+		filepath.Join("dist", "windows-amd64", "claude-client", name),
+		filepath.Join("..", "dist", "windows-amd64", "claude-client", name),
+		filepath.Join("..", "bap-edge", name),
+	} {
 		if _, err := os.Stat(cand); err == nil {
 			return cand
 		}
-		// In .claude/
-		candParent := filepath.Join(exeDir, "..", name)
-		if _, err := os.Stat(candParent); err == nil {
-			return candParent
-		}
-		// In project root (cchook/)
-		candRoot := filepath.Join(exeDir, "..", "..", name)
-		if _, err := os.Stat(candRoot); err == nil {
-			return candRoot
-		}
-		// In sibling bap-edge directory
-		candEdge := filepath.Join(exeDir, "..", "..", "..", "bap-edge", name)
-		if _, err := os.Stat(candEdge); err == nil {
-			return candEdge
-		}
-		// In sibling ltd-agent directory
-		candSibling := filepath.Join(exeDir, "..", "..", "..", "ltd-agent", name)
-		if _, err := os.Stat(candSibling); err == nil {
-			return candSibling
+	}
+	// 4. Check executable directory and ancestor folders
+	if exePath, err := os.Executable(); err == nil {
+		exeDir := filepath.Dir(exePath)
+		for _, rel := range []string{
+			name,
+			filepath.Join("..", name),
+			filepath.Join("..", "..", name),
+			filepath.Join("..", "claude-client", name),
+			filepath.Join("..", "..", "dist", "windows-amd64", name),
+			filepath.Join("..", "..", "bap-edge", name),
+		} {
+			cand := filepath.Join(exeDir, rel)
+			if _, err := os.Stat(cand); err == nil {
+				return cand
+			}
 		}
 	}
-	// 4. Check system PATH
+	// 5. Check system PATH
 	if p, err := exec.LookPath(name); err == nil {
 		return p
 	}
 
+	if runtime.GOOS == "windows" {
+		return ".\\" + name
+	}
 	return "./" + name
 }
 
-// outputDecision prints formatted JSON response to stdout matching Claude Code PreToolUse schema.
-func outputDecision(decision, reason, context string) {
+// outputDecisionWithUpdatedInput prints formatted JSON response to stdout matching Claude Code PreToolUse schema,
+// optionally supplying updatedInput to rewrite the tool call parameters (e.g. wrapping execution in BAPEdge broker).
+func outputDecisionWithUpdatedInput(decision, reason, context string, updatedInput *ToolInput) {
 	resp := HookResponse{
 		HookSpecificOutput: HookSpecificOutput{
 			HookEventName:            "PreToolUse",
 			PermissionDecision:       decision,
 			PermissionDecisionReason: reason,
 			AdditionalContext:        context,
+			UpdatedInput:             updatedInput,
 		},
 	}
 	if decision == "deny" {
@@ -791,6 +914,11 @@ func outputDecision(decision, reason, context string) {
 	enc.SetIndent("", "  ")
 	_ = enc.Encode(resp)
 	os.Exit(0)
+}
+
+// outputDecision prints formatted JSON response to stdout without mutating input.
+func outputDecision(decision, reason, context string) {
+	outputDecisionWithUpdatedInput(decision, reason, context, nil)
 }
 
 func resolveWorkspaceRoot() string {

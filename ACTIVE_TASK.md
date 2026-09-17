@@ -183,8 +183,12 @@ Implement the top 3 high-impact enterprise MVP capabilities:
   - Implemented `MASTER_AGENT_ROSTER` with 40 distinct enterprise agent personas (unique roles, app IDs, operators, prompts).
   - Added background heartbeat management for Claude Code sessions so all 35 agents pulse simultaneously on the Live Workload Radar and Activity Inspector.
   - Dynamic scaling across lifecycle stages: terminates ~25% of the fleet in Stage 2, launches multiple replacements in Stage 3, and cleanly tears down all 35 sessions in Stage 4.
-
-
-
-
-
+- [x] **Task 7: BAP-200 — Make BAPEdge the Sole Executor for Protected Agent Actions (P0)**
+  - Established **Broker-Owned Execution** as the definitive BAP enforcement model across Claude Code, GitHub Copilot CLI, MCP, and Python SDK.
+  - Added cryptographic **Execution Receipts** (`ExecutionReceipt` struct) recording `request_hash`, `identity`, `delegation`, `policy_version`, `sandbox_profile`, `session_id`, `timestamp`, and `result`.
+  - Added integer process `exit_code` capture to `sandbox.RunSandboxedCommandWithExitCode`.
+  - Implemented Claude Code command rewriting via `updatedInput` in `cchook/interceptor.go`: allowed commands are rewritten to `bapedge.exe exec ...`, ensuring Claude Code runs BAPEdge as sole broker, guaranteeing **exactly-once execution** inside the sandbox with zero duplicate native runs.
+  - Implemented strict **Anti-Tampering Invariants**: any agent tool (`Write`, `Edit`, `Bash`, `Python`) attempting to delete, overwrite, rename, or modify `.claude/`, `policy.cedar`, `.bap/`, or BAP binaries is denied with `DENIED_TAMPER` (zero side effects).
+  - Implemented **Correlated Risk Events**: sequential evasion attempts within a session are tracked in `.bap/risk_state.json`, escalating session threat level (`LOW` -> `ELEVATED` -> `CRITICAL`) and transmitting correlated risk warnings.
+  - Authored comprehensive test suite `tests/test_bap200_sole_executor.py` verifying all 9 acceptance criteria (100% pass).
+  - Created architectural specification `docs/EXECUTION_MODEL.md`.

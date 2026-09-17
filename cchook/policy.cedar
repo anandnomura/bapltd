@@ -77,6 +77,12 @@ forbid (
     context.full_command like "*system.net.sockets*" ||
     context.full_command like "*tcpclient*" ||
     context.full_command like "*udpclient*" ||
+    context.full_command like "*socket.socket*" ||
+    context.full_command like "*urllib.request*" ||
+    context.full_command like "*requests.get*" ||
+    context.full_command like "*requests.post*" ||
+    context.full_command like "*http.client*" ||
+    context.full_command like "*169.254.169.254*" ||
     context.full_command like "*-encodedcommand*" ||
     context.full_command like "*-enc *" ||
     context.full_command like "*-encoded *" ||

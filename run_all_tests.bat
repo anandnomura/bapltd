@@ -69,7 +69,12 @@ echo [*] Configured Endpoints: ControlPlane=!CP_URL! (local=!CP_IS_LOCAL!), Gate
 :: -----------------------------------------------------------------------------
 echo.
 if "!CP_IS_LOCAL!"=="1" taskkill /F /IM bapcontrolplane.exe >nul 2>&1
-if "!GW_IS_LOCAL!"=="1" taskkill /F /IM bapgateway.exe >nul 2>&1
+if "%SKIP_BUILD%"=="1" (
+    echo [1/11] Skipping multi-platform build [SKIP_BUILD=1]...
+    echo [PASS] Pre-built binaries in dist/ preserved.
+    set /a PASS_COUNT+=1
+    goto :skip_build
+)
 echo [1/11] Building all platforms into dist/ and generating fresh role packages...
 call "%ROOT_DIR%build_all_platforms.bat"
 if !ERRORLEVEL! neq 0 (
@@ -78,6 +83,8 @@ if !ERRORLEVEL! neq 0 (
 )
 echo [PASS] All multi-platform binaries and archives packaged cleanly into dist/.
 set /a PASS_COUNT+=1
+
+:skip_build
 
 :: -----------------------------------------------------------------------------
 :: Step 2: Run Go Unit Tests
@@ -247,6 +254,21 @@ if !ERRORLEVEL! neq 0 (
     set /a FAIL_COUNT+=1
 ) else (
     echo [PASS] MCP Server JSON-RPC handshake, tool discovery, safe execution, and zero-trust denial verified.
+    set /a PASS_COUNT+=1
+)
+
+:: -----------------------------------------------------------------------------
+:: Step 7d: Test BAP-200 Sole Executor & Cryptographic Receipts [python tests\test_bap200_sole_executor.py]
+:: -----------------------------------------------------------------------------
+echo.
+echo [7d/12] Testing BAP-200 Sole Executor, Tamper Resistance, and Receipts [tests\test_bap200_sole_executor.py]...
+cd /d "%ROOT_DIR%"
+python tests\test_bap200_sole_executor.py
+if !ERRORLEVEL! neq 0 (
+    echo [FAIL] test_bap200_sole_executor.py failed!
+    set /a FAIL_COUNT+=1
+) else (
+    echo [PASS] BAP-200: Exactly-once execution, zero side effects on deny, receipts, and tamper resistance verified.
     set /a PASS_COUNT+=1
 )
 

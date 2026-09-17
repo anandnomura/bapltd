@@ -20,6 +20,7 @@ Available Commands:
   sync      Synchronize or inspect local policy cache from control plane (with offline fallback)
   serve     Start the zero-trust attestation server on Unix domain socket
   exec      Evaluate command against Cedar policy and run in sandboxed kernel namespace
+  check     Evaluate command against Cedar policy in decision-only mode (zero execution side effects)
   mcp       Run as Model Context Protocol (MCP) stdio server for Claude, Copilot, and Cursor
   attest      Client test command: connect to attestation server and request OBO JWT
   verify-log  Verify cryptographic integrity and anti-tamper hash-chain of local audit log
@@ -70,6 +71,8 @@ func main() {
 		}
 	case "exec":
 		cmd.RunExec(args)
+	case "check", "authorize":
+		cmd.RunCheck(args)
 	case "mcp":
 		if err := cmd.RunMCP(args); err != nil {
 			fmt.Fprintf(os.Stderr, "Error running MCP server: %v\n", err)

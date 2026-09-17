@@ -1,175 +1,256 @@
 # 🛡️ Bounded Authority Plane (BAP)
-### *Zero-Trust Security Posture (ZSP) for Autonomous AI Agents*
 
-> **Open-Source AI Agent Sandboxing, Policy Enforcement, and Cryptographic Governance.**  
-> *Empowering autonomous agents like Claude Code and GitHub Copilot to build software boldly — without giving them the keys to the kingdom.*
+### Identity, Zero Standing Privilege, and runtime authorization for AI agents
 
----
+> **The human requested the work. The agent performed the action. The enterprise must be able to distinguish and prove both.**
 
-## 💡 The AI Developer Dilemma
+BAP is an open-source reference implementation for controlling AI agents that can take actions on developer machines, servers, APIs, databases, MCP tools, and cloud services.
 
-We are witnessing an unprecedented shift in software engineering: **autonomous AI agents are no longer just generating text snippets; they are running terminal commands, editing production files, and interacting with network APIs.**
+The core idea is simple:
 
-Tools like Claude Code, GitHub Copilot CLI, and agentic workflows operate directly on developer workstations. But this breakthrough velocity introduces a terrifying new attack surface:
-- **Prompt Injections & Jailbreaks**: Malicious inputs disguised in code comments or web pages can hijack an agent to steal `~/.aws/credentials` or `.env` secrets.
-- **Accidental Mass Destruction**: Hallucinations can lead to catastrophic deletions (`rmdir /s /q C:\` or `Remove-Item -Recurse`).
-- **Data Exfiltration**: Rogue or compromised agents can open reverse TCP sockets or exfiltrate private source code via unauthorized network calls.
+- Give every agent its own identity.
+- Keep the human identity separate from the agent identity.
+- Record on whose behalf the agent is acting.
+- Give the agent no permanent access to protected resources.
+- Evaluate each protected action when it is requested.
+- Issue only the authority needed for that action.
+- Enforce that authority both where the agent runs and where the resource is accessed.
+- Preserve evidence of the request, decision, action, and result.
 
-Until now, security teams faced an impossible tradeoff: **either cripple the AI agent's autonomy with rigid permission prompts on every command, or grant it unchecked access to developer machines.**
-
----
-
-## 🎯 What is BAP?
-
-**Bounded Authority Plane (BAP)** is an open-source, dual-layer governance kernel built from the ground up with a **Zero-trust Security Posture (ZSP)** at its heart.
-
-BAP establishes a cryptographic boundary around AI agents. It acts as an intelligent, transparent gatekeeper that evaluates every shell invocation, file edit, and network call against declarative zero-trust policies in **less than 1.5 milliseconds** — completely offline, with zero disruption to developer flow.
-
-### The ZSP Philosophy (Zero-Trust Security Posture)
-1. **Never Trust, Always Verify**: Every tool invocation requested by an agent is intercepted and evaluated before process creation.
-2. **Least Privilege by Default**: Agents only have authority within the active workspace root. Navigating outside is strictly forbidden.
-3. **Fail-Secure Invariant**: If central servers go down or network partitions occur, BAP never fails open. Local cached policies continue protecting the host with 100% offline resilience.
-4. **Transparent Governance**: Agents require **zero code modifications**. Standard developer toolchains (`git`, `python`, `npm`, `go`, `cargo`) work at native speed.
+**BAP does not treat a human credential as an agent identity, and it does not treat natural-language intent as authority.**
 
 ---
 
-## 🏗️ Architecture: The Dual-PEP Model
+## Why BAP exists
 
-BAP divides governance into an ultra-low latency **Client-Side Edge Broker** and a centralized **Governance Control Plane**:
+AI agents are no longer limited to suggesting code. They can run commands, change files, call APIs, query data, and trigger workflows.
+
+Most current integrations still make the agent use the human's credentials:
+
+```text
+Alice asks an agent to investigate an issue
+                ↓
+The agent decides which actions to take
+                ↓
+The resource records: "Alice performed the action"
+```
+
+That breaks the accountability model. The enterprise cannot reliably answer whether Alice performed the action herself, which agent acted, what the agent was asked to do, or what authority it had.
+
+BAP separates the identities and reconnects them through explicit delegation:
+
+```text
+Human identity + Agent identity + Delegation + Requested action
+                              ↓
+                     Enterprise policy
+                              ↓
+                      Bounded authority
+                              ↓
+                 Enforcement at the resource
+```
+
+The human owns the request. The agent owns the execution. BAP preserves both.
+
+---
+
+## Zero Standing Privilege
+
+In BAP, **ZSP means Zero Standing Privilege**.
+
+An agent may run continuously and remain identifiable and observable without holding permanent access to production systems.
+
+```text
+Agent is running                         YES
+Agent has an identity                    YES
+Agent can be traced                      YES
+
+Agent has permanent production access   NO
+Agent stores a permanent database key    NO
+Agent inherits the human's credentials   NO
+
+Approved protected action
+        ↓
+Short-lived, narrowly scoped authority
+        ↓
+Action is enforced and recorded
+        ↓
+Authority expires or is consumed
+```
+
+Zero Trust is the security approach. Zero Standing Privilege is the authority outcome BAP is designed to achieve.
+
+---
+
+## The six questions BAP answers
+
+Every protected agent action should answer:
+
+1. **Who is the human or business process requesting the work?**
+2. **Which agent or workload is performing it?**
+3. **What exact action and resource are being requested?**
+4. **Is the action allowed under current policy and context?**
+5. **What minimum authority should be issued, and where will it be enforced?**
+6. **Can the enterprise prove what was requested, decided, attempted, and completed?**
+
+---
+
+## Target architecture
+
+Download the executive Level-0 architecture as an [editable SVG](visuals/ZSP_BAP_Target_Architecture_Level_0.svg) or [PNG](visuals/ZSP_BAP_Target_Architecture_Level_0.png).
+
+BAP uses two enforcement points for protected actions:
+
+- **Edge PEP:** intercepts the action where the agent runs.
+- **Resource PEP:** independently validates the authority at the API, gateway, service, tool, or data boundary.
+
+The control plane is not the second PEP. It provides identity registration, policy, authorization, grant issuance, governance, revocation, and evidence services to both enforcement points.
 
 ```mermaid
-graph TD
-    subgraph Central_Infrastructure ["Central Control Plane (Port 8443 / 8444)"]
-        CP["bapcontrolplane (mTLS Protected API)"]
-        DASH["bapdashboard (React Web UI)"]
-        CHAIN["Tamper-Evident SHA-256 Audit Chain"]
-        CEDAR_MASTER["Authoritative Policy Store"]
-        SPIFFE_REG["SPIFFE Registry & Attestation Engine"]
-        
-        CP --- DASH
-        CP --- CHAIN
-        CP --- CEDAR_MASTER
-        CP --- SPIFFE_REG
-    end
+flowchart TD
+    H["Human or business application"] -->|request| A["AI agent"]
+    A -->|proposed action| E["Edge PEP / Identity Shield"]
+    E -->|identity + delegation + action + context| C["BAP control plane"]
+    C -->|allow, deny, or bounded grant| E
 
-    subgraph Developer_Seat ["Developer Seat (Local Workstation)"]
-        subgraph Agents ["AI Agent Runtimes"]
-            CLAUDE["Claude Code CLI"]
-            COPILOT["GitHub Copilot CLI"]
-            MCP_IDE["IDE (Cursor / VSCode via MCP)"]
-            PY_AGENT["Python SDK Autonomous Agents"]
-        end
+    E -->|local action| S["OS-enforced boundary"]
+    S --> L["Local files, process, or tool"]
 
-        subgraph Interceptors ["PEP Interceptors"]
-            HOOK["interceptor (PreToolUse)"]
-            COPSHIM["copilot-interceptor"]
-            MCP_SRV["bapmcp (Model Context Protocol)"]
-        end
+    E -->|request + bounded grant| R["Resource PEP"]
+    R -->|validated request| P["Protected API, data, or service"]
 
-        subgraph BAP_Edge ["bapedge - Local Trusted Daemon"]
-            ENGINE["In-Process Cedar Engine (Sub-2ms)"]
-            CACHE["Local Policy Cache (policy.cedar)"]
-            SPIFFE_RESOLVE["5-Stage SPIFFE / User Identity Resolver"]
-            SANDBOX["OS Process Sandbox (Job Objects / Namespaces)"]
-            LOCAL_AUDIT[".bap/ & ltd-audit.jsonl"]
-        end
-
-        CLAUDE -->|PreToolUse JSON| HOOK
-        COPILOT -->|CLI Intercept| COPSHIM
-        MCP_IDE -->|JSON-RPC stdio| MCP_SRV
-        PY_AGENT -->|SDK Client or REST| BAP_Edge
-
-        HOOK --> BAP_Edge
-        COPSHIM --> BAP_Edge
-        MCP_SRV --> BAP_Edge
-        BAP_Edge --> SPIFFE_RESOLVE
-        BAP_Edge --> ENGINE
-        ENGINE --> CACHE
-        BAP_Edge --> SANDBOX
-        BAP_Edge --> LOCAL_AUDIT
-    end
-
-    BAP_Edge -.->|Async Telemetry Stream| CP
-    BAP_Edge -.->|Remote Policy Sync and Kill-Switch| CP
-    BAP_Edge -.->|mTLS Channel and Attestation| CP
+    E -.-> V["Evidence and telemetry"]
+    R -.-> V
+    C -.-> V
 ```
 
-### Core Components
-- **`bapedge`**: The local trusted gatekeeper. Powered by an embedded pure-Go AWS Cedar evaluation engine, it resolves operator & SPIFFE identities, isolates executions in OS sandboxes, and evaluates rules in memory in sub-2ms.
-- **`interceptor`**: Seamlessly integrates with Claude Code's native `PreToolUse` lifecycle hook without changing a single line of Claude's source code.
-- **`copilot-interceptor`**: Wraps GitHub Copilot CLI executions to prevent defense evasion, shell escaping, and unauthorized credential access.
-- **`bapmcp`**: First-class Model Context Protocol (MCP) server enabling Cursor, VS Code, and IDE agents to govern LLM tool invocations natively via JSON-RPC stdio.
-- **`python-agent` (`bap_sdk`)**: Production-ready Python SDK client for programmatic governance of autonomous agent workflows, workers, and pipelines.
-- **`bapcontrolplane`**: Central server managing the SPIFFE Workload Registry, binary attestation engine (TOFU in Dev, strict whitelisting in Prod), One-Time Code (OTC) enrollment, ephemeral On-Behalf-Of (OBO) JWT grants, and mutual TLS (mTLS) client verification with localhost-isolated admin controls.
-- **`bapdashboard`**: Real-time visual observability cockpits (`inspector_v2.html` on 8443 and React UI on 8444) rendering live agent presence radars, allow/deny ratios, SPIFFE identity registries, and tamper-evident audit streams.
+The resource PEP matters because a compromised agent can bypass a cooperative client library or local hook. A protected backend should not be reachable through an ungoverned path.
 
 ---
 
-## ✨ Key Features
+## Identity and authority are different
 
-| Capability | How It Protects You |
+| Concept | Question answered | BAP treatment |
+|---|---|---|
+| Human identity | Who requested the work? | Authenticated by the enterprise identity provider and referenced by a delegation record. |
+| Agent identity | Which logical agent is this? | Registered with owner, purpose, risk, allowed tools, environments, and lifecycle. |
+| Workload identity | Which running instance is calling? | Cryptographically authenticated runtime identity; SPIFFE/SPIRE is one target integration. |
+| Intent | Why was the work requested? | Context and evidence. Natural language alone never grants authority. |
+| Bounded grant | What may this workload do now? | Short-lived, audience-bound, action- and resource-specific authority. |
+
+The target grant model is:
+
+```text
+agent        = claude-code/instance-123
+on_behalf_of = alice@company.com
+action       = READ
+resource     = trades/883
+audience     = trade-api
+expires      = now + 45 seconds
+jti          = unique single-use identifier
+request_hash = hash of the normalized request
+```
+
+The workload credential proves **who the caller is**. The BAP grant proves **what that caller may do right now**.
+
+---
+
+## Runtime flows
+
+### Local developer action
+
+1. A developer gives Claude Code, Copilot, or another agent a request.
+2. The integration captures the request as session context.
+3. Before a tool action, the edge evaluates the normalized operation against Cedar policy.
+4. A denied action is stopped and recorded.
+5. A permitted action runs through the available operating-system boundary and is recorded.
+
+### Protected enterprise resource
+
+1. The agent proposes a specific API, tool, or data operation.
+2. BAP evaluates human delegation, agent/workload identity, requested action, resource, policy, environment, risk, and approvals.
+3. If allowed, BAP issues a bounded grant.
+4. The agent presents the grant to the resource PEP.
+5. The resource PEP validates the grant, checks the requested resource, prevents replay, and forwards only the approved request.
+6. The decision and result are correlated in the evidence trail.
+
+---
+
+## What this repository implements today
+
+This repository is a working **engineering prototype and reference implementation**. It demonstrates the BAP control flow; it is not yet a production identity or authorization platform.
+
+| Area | Current implementation |
 |---|---|
-| **SPIFFE Workload Identity** | Issues cryptographic, standard-compliant SVIDs (`spiffe://bap.internal/app/{app_id}/instance/{instance_id}`) binding every agent action to a provable workload identity. |
-| **TOFU to Production Whitelisting** | Rapid developer iteration with automated **Trust-On-First-Use (TOFU)** hash locking, smoothly transitioning to strict cryptographic release whitelisting in production. |
-| **mTLS & Secure Client Mesh** | Control Plane enforces Mutual TLS with pinned Corporate Root CAs, terminating unauthorized or unattested client connections at the transport layer. |
-| **Binary Image Attestation** | Validates SHA-256 checksums of agent runtime binaries against signed baselines before issuing credentials or granting execution rights. |
-| **Ephemeral Scoped OBO JWTs** | Mints short-lived (5-minute) On-Behalf-Of tokens with strict audience and role constraints. Agents never hold persistent cloud API keys or master credentials. |
-| **AWS Cedar Policy Kernel** | Author human-readable, mathematically verifiable policies (e.g., allow `git` and `npm`, forbid access to `~/.aws`, `.env`, and raw sockets). |
-| **Workspace Sandboxing** | Confines agent file operations strictly to the project directory. Directory traversals (`dir ..`, path escapes) are blocked automatically. |
-| **OS-Level Process Isolation** | Sandboxes execution via Windows Job Objects and Linux namespaces/cgroups with execution timeouts and ANSI output sanitization. |
-| **Native Model Context Protocol (MCP)** | Integrates directly with Cursor, Windsurf, and VS Code through standard MCP tools (`exec`, `read_file`, `list_directory`). |
-| **Sub-2ms Decision Latency** | Evaluates policies in-process. Developers never feel lag or input stalls while pairing with AI. |
-| **Offline-First Zero-Trust** | Network down? Airplane mode? `bapedge` enforces local cached policies without skipping a beat — failing secure by default. |
-| **Progressive Enterprise Rollout** | Start in **Audit/Shadow Mode** to observe and baseline agent actions with zero disruption, then flip to **Enforce Mode** for strict Zero-Trust hard blocking. |
-| **Multi-Instance Concurrency** | Run multiple Claude Code terminals across different repos simultaneously with zero lockouts or variable collisions. |
-| **Self-Healing Session Guard** | A detached watchdog monitors Claude Code PIDs; if your terminal abruptly closes or crashes, your original environment settings are restored instantly. |
-| **Tamper-Evident SHA-256 Audits** | Telemetry logs are cryptographically chained ($H_n = \text{SHA256}(H_{n-1} \parallel \text{Event})$). Any retrospective log tampering is immediately detected. |
-| **Emergency Fleet Kill-Switch** | Instantly revoke a compromised session or isolate the entire fleet by SPIFFE ID or session token with a single API call from security operations. |
-| **Zero-Dependency Portability** | Static Go binaries compiled with `CGO_ENABLED=0` for Windows, Linux (amd64/arm64), and macOS (Intel/Apple Silicon). |
+| Agent integrations | Claude Code lifecycle and `PreToolUse` hook, Copilot command wrapper, MCP server, and Python SDK examples. |
+| Local policy | Embedded Cedar evaluation with default-deny behavior and audit/enforce modes. |
+| Intent context | Claude `UserPromptSubmit` capture correlated to the active session and subsequent events. |
+| Sessions | Session lifecycle, heartbeats, revocation, and SQLite-backed session persistence. |
+| Agent registry | In-memory agent/app/instance registry with development TOFU and production hash allow-list modes. |
+| Workload identifier | A unique `spiffe://`-formatted identifier is assigned to enrolled instances. Native SPIFFE SVID issuance is a target integration. |
+| Authority grants | Signed prototype JWT grants with scope checks and atomic one-time consumption. |
+| Resource enforcement | `bapgateway` and an Envoy external-authorization demonstration enforce grants before a protected sample API. |
+| Local execution boundary | Linux namespace isolation is implemented. Other platforms currently provide more limited process controls. |
+| Policy distribution | Versioned Cedar bundles, digest validation, local cache, offline evaluation, and a persisted kill-switch state. |
+| Evidence | Local and central SHA-256 hash chaining, session correlation, and live dashboards. External immutable anchoring is future work. |
+
+Production adoption requires integration with enterprise human identity, cryptographic workload identity, hardened platform isolation, strongly authenticated control-plane APIs, production key management, durable replay state, and externally anchored evidence. See `ARCHITECTURE.md` for the target design and maturity boundaries.
 
 ---
 
-## ⚡ Quickstart: Up and Running in 60 Seconds
+## Repository components
 
-### 1. One-Click Developer Installation (Windows)
-From the repository root or release package:
+| Component | Role |
+|---|---|
+| `bap-edge/` | Local policy evaluation, command execution, audit, session tooling, policy cache, and MCP server. |
+| `cchook/` | Claude Code lifecycle and tool-request integration. |
+| `copilot/` | Copilot command wrapper integration. |
+| `python-agent/` | Python SDK and governed/ungoverned agent examples. |
+| `bap-controlplane/` | Registration, prototype grants, policy distribution, sessions, revocation, audit ingestion, and dashboards. |
+| `bap-gateway/` | Resource-side PEP reference implementation. |
+| `envoy/` | Envoy external-authorization demonstration. |
+| `dashboard/` | React governance dashboard. |
+
+The existing inspector and React dashboard are the starting point for the BAP cockpit. The MVP cockpit will separate an executive coverage/risk view from SecOps, platform-operations, and agent-owner drill-downs.
+
+---
+
+## Quick start on Windows
+
+From the repository root:
+
 ```batch
 install_bap_client.bat
-```
-*This deploys canonical client binaries to `%USERPROFILE%\bin` and automatically configures your User `PATH`.*
-
-### 2. Pre-Flight Health Check
-Verify your environment, binaries, Claude Code CLI, and Cedar engine:
-```batch
 bap_doctor.bat
-```
-*Returns a clean 5-domain diagnostic report confirming your workstation is ready.*
-
-### 3. Launch Governed Claude Code
-Launch Claude Code under BAP Zero-Trust protection:
-```batch
 run_claude_bap.bat
 ```
-*All agent bash executions, file reads, and tool calls are now transparently governed!*
+
+To run the local control-plane supervisor:
+
+```batch
+start_controlplane_supervisor.bat
+```
+
+To run the resource-PEP demonstration, follow [`envoy/ENVOY_PODMAN_GUIDE.md`](envoy/ENVOY_PODMAN_GUIDE.md) or the gateway tests under `tests/`.
+
+> The supplied scripts and certificates are intended for local development and demonstration. Review configuration, keys, authentication, network exposure, and platform controls before using them outside an isolated environment.
 
 ---
 
-## 🛡️ Cedar Policies in Action
+## Cedar policy example
 
-BAP uses declarative AWS Cedar policies. Here is how simple it is to enforce zero-trust rules:
+BAP evaluates structured context with Cedar. The current prototype includes command context such as executable, arguments, full command, and workspace-escape detection.
 
 ```cedar
-// 1. Allow standard developer toolchains within the workspace
 permit (
     principal,
-    action in [Action::"exec", Action::"tool_use"],
-    resource
+    action == Action::"Execute",
+    resource == Command::"CLI"
 )
 when {
-    context.executable in ["git", "python", "go", "npm", "node", "mvn", "cargo"]
+    context.executable in ["git", "python", "go", "npm"] &&
+    context.escapes_workspace == false
 };
 
-// 2. FORBID access to sensitive credentials and environment files
 forbid (
     principal,
     action,
@@ -180,151 +261,35 @@ when {
     context.full_command like "*~/.aws*" ||
     context.full_command like "*.ssh*"
 };
-
-// 3. FORBID unconstrained network egress utilities
-forbid (
-    principal,
-    action,
-    resource
-)
-when {
-    context.full_command like "*curl*" ||
-    context.full_command like "*wget*" ||
-    context.full_command like "*tcpclient*"
-};
 ```
 
-When an agent attempts a forbidden action (like reading `.env`), BAP halts execution and returns intelligent remediation guidance:
-```text
-[DENIED] Denial triggered by: policy policy2
-[SUGGESTION] Direct access or tampering with .env credential files is strictly prohibited. Access required configuration via sandboxed environment variables or the corporate Secret Store.
-```
+Command inspection is useful policy context, but it is not a replacement for operating-system isolation or resource-side enforcement.
 
 ---
 
-## 🆔 Cryptographic Workload Identity & Attestation (SPIFFE)
+## Design principles
 
-Autonomous AI agents cannot be governed by traditional static API keys or network IPs alone. When multiple agents run locally or across distributed build nodes, security teams need to know **which exact agent binary executed which command, on behalf of which human developer.**
-
-BAP implements the industry-standard **SPIFFE (Secure Production Identity Framework for Everyone)** architecture natively:
-
-### 1. Attested SPIFFE Workload IDs
-Every governed AI agent receives a verifiable SPIFFE ID conforming to the corporate trust domain:
-```text
-spiffe://bap.internal/app/{app_id}/instance/{instance_id}
-```
-*Example:* `spiffe://bap.internal/app/claude-code/instance/seat-eng-42`
-
-### 2. Binary Image Attestation (SHA-256)
-Before issuing credentials or authorizing high-privilege tool calls, BAP verifies the cryptographic integrity of the agent runtime:
-- Computes the SHA-256 binary digest of the executable (e.g., `claude.exe`, `copilot.exe`).
-- Validates the digest against authoritative corporate attestation baselines.
-- Thwarts trojanized agent wrappers, modified binaries, and malicious prompt-injected shims.
-
-### 3. Dual-Identity Binding (Operator + Workload)
-BAP's 5-stage identity resolution engine binds every single tool execution to two distinct cryptographic entities:
-1. **Operator Identity**: Authenticated human developer (`alice@corp.internal`) resolved via SSO tokens, OIDC, or `apiKeyHelper`.
-2. **Workload Identity**: Attested AI agent instance (`spiffe://bap.internal/app/claude-code/instance/01J8K...`).
-
-This guarantees **unforgeable non-repudiation**: audit logs prove not only that Alice approved a build, but exactly which Claude Code instance executed the build commands.
-
-### 4. Ephemeral Scoped On-Behalf-Of (OBO) JWTs
-- The control plane mints short-lived (5-minute TTL) On-Behalf-Of JWTs with tightly scoped audiences.
-- The AI agent never touches raw cloud master keys, production tokens, or `.env` files.
-- Tokens are injected just-in-time into isolated OS sandboxes and expire immediately after tool execution.
+1. **Human identity and agent identity remain distinct.**
+2. **Identity is not authority.**
+3. **Intent is context and evidence, not permission.**
+4. **Agents have no standing privilege to protected resources.**
+5. **Authority is bounded, short-lived, audience-specific, and preferably single-use.**
+6. **Protected resources enforce authority independently.**
+7. **Every decision and outcome produces correlated evidence.**
+8. **BAP complements existing IdP, IGA, gateway, secrets, policy, and observability platforms.**
 
 ---
 
-## 🔒 Secure Client Communication: TOFU to Enterprise Production
+## Documentation
 
-A central architectural requirement of BAP is that the **Control Plane only communicates with verified, cryptographically attested clients**. Unauthenticated tools, rogue scripts, or network attackers cannot query policy, inject telemetry, or mint credentials.
-
-BAP solves the friction vs. security dilemma through an intentional, two-tier governance model:
-
-### 1. Trust-On-First-Use (TOFU) in Development
-Developer workstations require high velocity. Forcing engineers to pre-register new binary hashes on every local SDK tweak or tool update creates friction.
-- **Development Profile (`types.ProfileDev`)**: BAP enables **Trust-On-First-Use (TOFU)**. On first contact, the control plane records and pins the agent runtime's SHA-256 binary hash (`agent.EnrolledBinaryHash`).
-- **Tamper Lockdown**: Once enrolled, the hash is permanently anchored. If malware or an untrusted process modifies the binary, injects a shim, or swaps the executable, BAP immediately halts execution:
-  ```text
-  [ATTESTATION FAILURE] binary hash mismatch with enrolled development hash:
-  got: a1b2c3d4... (modified) | expected: e5f6a7b8... (enrolled)
-  ```
-
-### 2. Strict Cryptographic Whitelisting in Production
-In production pipelines (CI/CD build runners, Kubernetes pods, automated workflow daemons), **TOFU is explicitly disabled**:
-- **Production Profile (`types.ProfileProd`)**: Every binary must be pre-declared in an authoritative cryptographic whitelist (`AllowedBinaryHashes`).
-- **Zero-Tolerance Gate**: If an unattested or unlisted binary requests authorization or attempts to connect, the control plane rejects it instantly:
-  ```text
-  [SECURITY REJECTION] unauthorized binary image hash in production: deadbeef...
-  ```
-- All production binaries must be signed and promoted through enterprise Release Engineering pipelines.
-
-### 3. Mutual TLS (mTLS) & Pinned CA Verification
-- **Bidirectional Handshake**: Both `bapcontrolplane` and connecting clients (`bapedge`, standalone `bapdashboard`) can enforce mutual TLS (`-client-cert`, `-client-key`, and `-ca-cert`).
-- **Transport-Layer Dropping**: Any client connection lacking a valid certificate signed by the corporate BAP Root CA (`bap-root-ca.crt`) is terminated at the TLS handshake before reaching application logic.
-- **One-Time Code (OTC) Enrollment**: Developer workstation onboarding uses single-use, cryptographically random OTC tokens (`/api/v1/enroll/otc`) that expire upon first redemption, eliminating replay attacks.
-
-### 4. Gated Administrative Isolation (`localhost`-Only by Default)
-- **Localhost Shielding**: Administrative endpoints (global kill-switches, policy reloads, session revocations) are bound strictly to `localhost` (`127.0.0.1`) by default (`allowRemoteAdmin = false`).
-- **File-Secured Admin Bearer**: Admin actions require high-entropy bearer credentials persisted in `.bap-admin-token` with strict POSIX/NTFS file access permissions (`0600`).
-- **Remote Admin Gating**: Opening admin APIs across networks requires explicit operator flags, mTLS verification, and strict origin validation (`BAP_ALLOWED_ORIGINS`).
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) — target architecture, current implementation mapping, trust boundaries, and runtime patterns.
+- [`API_GUIDE.md`](API_GUIDE.md) — current prototype API contract and authentication status.
+- [`JIRA_STORIES.md`](JIRA_STORIES.md) — prioritized engineering backlog and production-readiness plan.
+- [`MVP_DEPLOYMENT.md`](MVP_DEPLOYMENT.md) — local prototype deployment guide.
+- [`PROJECT_MAP.md`](PROJECT_MAP.md) — repository navigation.
 
 ---
 
-### 🛡️ Dev vs. Production Governance Matrix
+## One-sentence definition
 
-| Governance Dimension | Local Development (`ProfileDev`) | Enterprise Production (`ProfileProd`) |
-|---|---|---|
-| **Binary Attestation** | **TOFU (Trust-On-First-Use)**: Auto-pins on first run, locks against modification | **Strict Cryptographic Whitelist**: Only pre-signed CI/CD release hashes permitted |
-| **Transport Layer** | Local TLS (`-tls-auto`) / Loopback HTTPS | **Enforced mTLS**: Bidirectional verification with pinned Corporate Root CA |
-| **Client Enrollment** | Self-service One-Time Codes (OTC) or developer identity | Pre-provisioned SVIDs and enterprise certificate enrollment |
-| **Cedar Policy Mode** | **Audit / Shadow Mode**: Telemetry baselining with zero breakage | **Strict Enforce Mode**: Real-time Zero-Trust hard blocking of unauthorized calls |
-| **Admin API Access** | Local loopback only (`127.0.0.1`) with file-secured admin token | Isolated management VPC / ingress gateway with SSO & hardware-backed mTLS |
-| **Workload Credentials** | Short-lived OBO JWTs with automatic developer refresh | Ephemeral 5-minute scoped OBO JWTs restricted to specific resource ARNs |
-
----
-
-## 📊 Live Observability & Dashboards
-
-BAP provides dual visibility cockpits for developers and security teams:
-
-- **Activity Inspector Cockpit** (`https://localhost:8443/inspector_v2.html`): Zero-dependency single-file HUD with a real-time agent presence radar, allow/deny ratios, live telemetry logs, and instantaneous session kill-switches.
-- **Enterprise React Dashboard** (`https://localhost:8444/dashboard/`): Modern administrative interface for fleet-wide policy management, binary attestation tracking, and cryptographic audit chain verification.
-
-To start the Control Plane with auto-restart supervision:
-- **Windows**: `start_controlplane_supervisor.bat`
-- **Linux**: `./scripts/supervise_controlplane.sh start`
-
----
-
-## 🧪 Headless Automated Resiliency Suite
-
-Verify system integrity, auto-restart capabilities, concurrency scaling, and offline fail-secure boundaries headlessly:
-
-```batch
-run_resiliency_test.bat
-```
-*(Optionally pass `-Json` for machine-readable CI/CD pipeline assertions.)*
-
----
-
-## 🗺️ Project Documentation
-
-- 📖 **[Central MVP Deployment Guide](MVP_DEPLOYMENT.md)** — Step-by-step enterprise deployment, seat onboarding, and operator manual.
-- 📋 **[JIRA Product Backlog & Stories](JIRA_STORIES.md)** — Comprehensive user stories, acceptance criteria, and future enhancement roadmap.
-- 🏛️ **[System Architecture Reference](ARCHITECTURE.md)** — In-depth architectural design, trust boundaries, identity models, and storage engine.
-- 📡 **[API Specification](API_GUIDE.md)** — Complete OpenAPI/REST contract for Control Plane and Edge CLI interfaces.
-- 🗺️ **[Project Navigation Map](PROJECT_MAP.md)** — Index of all repository modules, directories, and assets.
-
----
-
-## 🤝 Join the Open-Source Movement
-
-Autonomous AI agents are transforming engineering velocity. But without foundational security, enterprise adoption will stall under risk and fear.
-
-**BAP is built to make autonomous agents safe, trustworthy, and auditable.**
-
-We welcome contributors, security researchers, and AI toolchain builders! Feel free to open issues, submit pull requests, or start a discussion.
-
-*Licensed under the Apache License 2.0. Built with security, speed, and developer joy at heart.*
-
+**BAP gives every AI agent its own identity and only the authority it needs, when it needs it, while preserving the human delegation and evidence behind every action.**

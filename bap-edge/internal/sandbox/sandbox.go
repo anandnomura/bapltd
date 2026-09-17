@@ -216,9 +216,9 @@ func CleanOutput(raw string) string {
 	return strings.TrimSpace(s)
 }
 
-// RunSandboxedCommand executes the shell command in an isolated sandbox,
-// injecting CORP_OBO_TOKEN and capturing combined stdout and stderr.
-func RunSandboxedCommand(cmdStr string) (string, error) {
+// RunSandboxedCommandWithExitCode executes the shell command in an isolated sandbox,
+// injecting CORP_OBO_TOKEN and capturing combined stdout and stderr along with the integer exit code.
+func RunSandboxedCommandWithExitCode(cmdStr string) (string, int, error) {
 	cmd := BuildExecCmd(cmdStr)
 
 	// Apply platform-specific sandbox attributes
@@ -243,5 +243,21 @@ func RunSandboxedCommand(cmdStr string) (string, error) {
 	cmd.Env = append(env, fmt.Sprintf("CORP_OBO_TOKEN=%s", InjectedOBOToken))
 
 	output, err := cmd.CombinedOutput()
-	return CleanOutput(string(output)), err
+	cleaned := CleanOutput(string(output))
+	exitCode := 0
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		} else {
+			exitCode = 1
+		}
+	}
+	return cleaned, exitCode, err
+}
+
+// RunSandboxedCommand executes the shell command in an isolated sandbox,
+// injecting CORP_OBO_TOKEN and capturing combined stdout and stderr.
+func RunSandboxedCommand(cmdStr string) (string, error) {
+	out, _, err := RunSandboxedCommandWithExitCode(cmdStr)
+	return out, err
 }

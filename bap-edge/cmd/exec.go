@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bap-edge/internal/httptransport"
+	"crypto/sha256"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -23,18 +24,200 @@ type execContext struct {
 	source          string
 	sessionID       string
 	serverURL       string
+	policyPath      string
 	auditLogPath    string
 	fullCommand     string
 	executable      string
 	cmdArguments    string
 	enforcementMode string
+	decisionOnly    bool
 	shadowDenied    bool
 	shadowReason    string
 	forceJSON       bool
 	forceRaw        bool
 }
 
+type sessionRiskState struct {
+	SessionID      string    `json:"session_id"`
+	DenialCount    int       `json:"denial_count"`
+	LastDenial     time.Time `json:"last_denial"`
+	ThreatLevel    string    `json:"threat_level"`
+	AttemptHistory []string  `json:"attempt_history"`
+}
+
+func recordSessionDenial(sessionID, fullCmd, reason string) (int, string) {
+	if sessionID == "" {
+		sessionID = "default"
+	}
+	_ = os.MkdirAll(".bap", 0700)
+	riskPath := filepath.Join(".bap", "risk_state.json")
+
+	var allRisks map[string]*sessionRiskState
+	data, err := os.ReadFile(riskPath)
+	if err == nil {
+		_ = json.Unmarshal(data, &allRisks)
+	}
+	if allRisks == nil {
+		allRisks = make(map[string]*sessionRiskState)
+	}
+
+	rec, exists := allRisks[sessionID]
+	if !exists || rec == nil {
+		rec = &sessionRiskState{
+			SessionID:      sessionID,
+			DenialCount:    0,
+			AttemptHistory: []string{},
+		}
+		allRisks[sessionID] = rec
+	}
+
+	rec.DenialCount++
+	rec.LastDenial = time.Now().UTC()
+	if len(rec.AttemptHistory) > 20 {
+		rec.AttemptHistory = rec.AttemptHistory[1:]
+	}
+	rec.AttemptHistory = append(rec.AttemptHistory, strings.TrimSpace(fullCmd))
+
+	if rec.DenialCount >= 4 {
+		rec.ThreatLevel = "CRITICAL"
+	} else if rec.DenialCount >= 2 {
+		rec.ThreatLevel = "ELEVATED"
+	} else {
+		rec.ThreatLevel = "LOW"
+	}
+
+	if updatedData, err := json.MarshalIndent(allRisks, "", "  "); err == nil {
+		_ = os.WriteFile(riskPath, updatedData, 0600)
+	}
+
+	return rec.DenialCount, rec.ThreatLevel
+}
+
+func isTamperingAttempt(cmdStr string) (bool, string) {
+	lower := strings.ToLower(cmdStr)
+	norm := strings.ReplaceAll(lower, "\\", "/")
+
+	protectedAssets := []string{
+		"policy.cedar",
+		".claude/settings.json",
+		".claude/hooks",
+		".bap/",
+		".bap-session.json",
+		".bap-revoked",
+		"bap-config.json",
+		"bapedge.exe",
+		"bapedge",
+		"interceptor.exe",
+		"cchook-interceptor.exe",
+		"bapcontrolplane.exe",
+		"bapcontrolplane",
+		"bapgateway.exe",
+		"bapgateway",
+	}
+
+	destructiveOperators := []string{
+		"rm ", "rm -", "del ", "erase ", "remove-item", "unlink", "rmdir", "rd /", "rd ",
+		">", ">>", "set-content", "out-file", "add-content", "truncate", "sed ",
+		"ren ", "rename ", "move ", "mv ", "copy ", "cp ", "chmod ", "attrib ",
+	}
+
+	for _, asset := range protectedAssets {
+		if strings.Contains(norm, asset) {
+			for _, op := range destructiveOperators {
+				if strings.Contains(norm, op) {
+					return true, fmt.Sprintf("Security Invariant Violation: Direct modification, deletion, or tampering with BAP protected asset %q is strictly forbidden.", asset)
+				}
+			}
+		}
+	}
+	return false, ""
+}
+
+func generateExecutionReceipt(ec *execContext, result string, exitCode int) *types.ExecutionReceipt {
+	h := sha256.New()
+	h.Write([]byte(strings.TrimSpace(ec.fullCommand)))
+	requestHash := fmt.Sprintf("sha256:%x", h.Sum(nil))
+
+	policyHash := "v1.0.0-cedar"
+	polPath := ec.policyPath
+	if polPath == "" {
+		polPath = "policy.cedar"
+	}
+	if pBytes, err := os.ReadFile(polPath); err == nil {
+		ph := sha256.Sum256(pBytes)
+		policyHash = fmt.Sprintf("sha256:%x", ph[:16])
+	}
+
+	uID, _, spiffeID := resolveLocalIdentity()
+	identity := spiffeID
+	if identity == "" {
+		identity = fmt.Sprintf("spiffe://bap.local/agent/%s", ec.source)
+	}
+
+	userStr := uID
+	if userStr == "" {
+		userStr = os.Getenv("USERNAME")
+		if userStr == "" {
+			userStr = os.Getenv("USER")
+		}
+	}
+	if userStr == "" {
+		userStr = "unknown-user"
+	}
+	delegation := fmt.Sprintf("user:%s->agent:%s", userStr, ec.source)
+
+	sandboxProfile := "bap-broker-standard"
+	if ec.decisionOnly {
+		sandboxProfile = "bap-decision-only"
+	}
+
+	ts := ec.startTime.UTC()
+	receiptSeed := fmt.Sprintf("%s-%s-%d", requestHash, ec.sessionID, ts.UnixNano())
+	rSum := sha256.Sum256([]byte(receiptSeed))
+	receiptID := fmt.Sprintf("rcpt-%x-%d", rSum[:6], ts.Unix())
+
+	return &types.ExecutionReceipt{
+		ReceiptID:      receiptID,
+		RequestHash:    requestHash,
+		Identity:       identity,
+		Delegation:     delegation,
+		PolicyVersion:  policyHash,
+		PolicyHash:     policyHash,
+		SandboxProfile: sandboxProfile,
+		SessionID:      ec.sessionID,
+		Timestamp:      ts,
+		Result:         result,
+	}
+}
+
 func (ec *execContext) exit(resp types.ExecResponse, code int) {
+	resp.ExitCode = code
+
+	result := "ALLOWED_EXECUTED"
+	if ec.decisionOnly {
+		result = "DECISION_ONLY"
+	} else if ec.shadowDenied {
+		result = "AUDIT_PERMITTED"
+	} else if !resp.Allowed {
+		if strings.Contains(strings.ToLower(resp.Reason), "tamper") {
+			result = "DENIED_TAMPER"
+		} else {
+			result = "DENIED_POLICY"
+		}
+		denialCount, threatLevel := recordSessionDenial(ec.sessionID, ec.fullCommand, resp.Reason)
+		if denialCount >= 2 {
+			if resp.Warning == "" {
+				resp.Warning = fmt.Sprintf("[CORRELATED RISK EVENT] Repeated alternative attempts detected (%d denials in session %q, Threat Level: %s)", denialCount, ec.sessionID, threatLevel)
+			}
+		}
+	} else if code != 0 {
+		result = "EXECUTION_FAILED"
+	}
+
+	if resp.Receipt == nil {
+		resp.Receipt = generateExecutionReceipt(ec, result, code)
+	}
+
 	if !resp.Allowed && resp.Suggestion == "" {
 		resp.Suggestion = GenerateSuggestion(ec.fullCommand, ec.executable, resp.Reason)
 	}
@@ -100,6 +283,8 @@ func RunExec(args []string) {
 	epCfg := config.ResolveEndpoints()
 	serverFlag := fs.String("server", epCfg.ControlPlaneURL, "Central control plane URL for telemetry streaming")
 	modeFlag := fs.String("mode", epCfg.EnforcementMode, "Enforcement mode: 'enforce' (default) or 'audit'/'shadow'")
+	decisionOnlyFlag := fs.Bool("decision-only", false, "Evaluate policy and log audit decision without executing the command")
+	checkOnlyFlag := fs.Bool("check-only", false, "Alias for --decision-only")
 
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintf(os.Stderr, "Error parsing arguments: %v\n", err)
@@ -111,8 +296,10 @@ func RunExec(args []string) {
 		source:          *sourceFlag,
 		sessionID:       *sessionFlag,
 		serverURL:       *serverFlag,
+		policyPath:      *policyPath,
 		auditLogPath:    *auditLogFlag,
 		enforcementMode: strings.ToLower(strings.TrimSpace(*modeFlag)),
+		decisionOnly:    *decisionOnlyFlag || *checkOnlyFlag,
 		forceJSON:       *jsonFlag,
 		forceRaw:        *rawFlag,
 	}
@@ -140,6 +327,18 @@ func RunExec(args []string) {
 	}
 	fullCommand = sandbox.CleanCommandString(fullCommand)
 	ec.fullCommand = fullCommand
+
+	// Pre-flight anti-tampering check:
+	// Verify if the agent attempts to modify, rename, delete, or overwrite BAP hooks, policies, or binaries
+	if isTamper, tamperReason := isTamperingAttempt(fullCommand); isTamper {
+		resp := types.ExecResponse{
+			Allowed: false,
+			Reason:  tamperReason,
+			Mode:    ec.enforcementMode,
+		}
+		ec.exit(resp, 1)
+		return
+	}
 
 	// Fast sync of remote revocations from control plane if reachable
 	syncRevocationsFast(ec.serverURL, *policyPath)
@@ -205,13 +404,33 @@ func RunExec(args []string) {
 		}
 	}
 
-	// 4. Execute sandboxed command (allowed by Cedar or permitted in audit mode)
-	output, execErr := sandbox.RunSandboxedCommand(fullCommand)
+	// 4. Decision-Only Mode Check:
+	// If decision-only mode was requested (e.g. from Claude Code PreToolUse hook),
+	// return the authorization decision immediately without executing the command.
+	// This guarantees that the native agent executes the command exactly once.
+	if ec.decisionOnly {
+		resp := types.ExecResponse{
+			Allowed:      true,
+			DecisionOnly: true,
+			Mode:         ec.enforcementMode,
+		}
+		if ec.shadowDenied {
+			resp.Warning = fmt.Sprintf("[BAP AUDIT MODE] Policy violation detected: %s. Execution permitted in audit mode.", ec.shadowReason)
+			resp.Reason = ec.shadowReason
+			resp.Suggestion = GenerateSuggestion(fullCommand, executable, ec.shadowReason)
+		}
+		ec.exit(resp, 0)
+		return
+	}
+
+	// 5. Execute sandboxed command (allowed by Cedar or permitted in audit mode)
+	output, exitCode, execErr := sandbox.RunSandboxedCommandWithExitCode(fullCommand)
 
 	resp := types.ExecResponse{
-		Allowed: true,
-		Output:  output,
-		Mode:    ec.enforcementMode,
+		Allowed:  true,
+		Output:   output,
+		ExitCode: exitCode,
+		Mode:     ec.enforcementMode,
 	}
 	if ec.shadowDenied {
 		resp.Warning = fmt.Sprintf("[BAP AUDIT MODE] Policy violation detected: %s. Execution permitted in audit mode.", ec.shadowReason)
@@ -220,9 +439,15 @@ func RunExec(args []string) {
 	}
 	if execErr != nil {
 		resp.Reason = fmt.Sprintf("Command execution failed: %v", execErr)
-		ec.exit(resp, 1)
+		ec.exit(resp, exitCode)
+		return
 	}
-	ec.exit(resp, 0)
+	ec.exit(resp, exitCode)
+}
+
+// RunCheck executes policy evaluation in decision-only mode (bapedge check <cmd>).
+func RunCheck(args []string) {
+	RunExec(append([]string{"--decision-only"}, args...))
 }
 
 func isTerminal(f *os.File) bool {
@@ -273,6 +498,14 @@ func exitWithResponse(resp types.ExecResponse, code int, forceJSON, forceRaw boo
 		}
 		fmt.Fprintf(os.Stderr, "[TIP] Pass '-json' to receive machine-readable structured JSON responses.\n")
 		os.Exit(code)
+	}
+
+	if resp.DecisionOnly {
+		if resp.Warning != "" {
+			fmt.Fprintf(os.Stderr, "[WARNING] %s\n", resp.Warning)
+		}
+		fmt.Println("[ALLOWED] Command authorized by BAP Cedar policy (decision-only mode)")
+		os.Exit(0)
 	}
 
 	if resp.Warning != "" {
