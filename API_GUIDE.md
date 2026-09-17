@@ -24,6 +24,7 @@ This document is the complete REST API specification for **`bapcontrolplane`**, 
 | `POST` | `/api/v1/apps/revoke` | Emergency kill-switch revoking an entire fleet/app | None |
 | `POST` | `/api/v1/instances/heartbeat`| Edge agent instance liveness heartbeat | Agent ID |
 | `POST` | `/api/v1/sessions/start` | Start an agent execution session (Claude Code, Copilot, CLI) | None |
+| `POST` | `/api/v1/sessions/prompt` | Submit locally classified Claude mission context; raw prompt optional | Prototype hook contract |
 | `POST` | `/api/v1/sessions/end` | Record conclusion or shutdown of an agent session | None |
 | `GET` | `/api/v1/sessions` | List recent agent execution sessions with stats | None |
 | `GET` | `/api/v1/sessions/{id}` | Retrieve details and stats for a specific session | None |
@@ -497,6 +498,35 @@ The Session Engine tracks discrete agent execution sessions (Claude Code interac
     }
   }
   ```
+
+#### Submit Claude Mission Context
+
+- **Method**: `POST`
+- **Path**: `/api/v1/sessions/prompt`
+- **Producer**: the managed Claude Code `UserPromptSubmit` hook through BAP Edge
+- **Request Body**:
+  ```json
+  {
+    "session_id": "sess-claude-20260912-140000",
+    "producer": "claude-lifecycle-hook",
+    "user_prompt": "Fix the login bug and update the database schema",
+    "prompt_hash": "7cb8d5d32db030d0bf4e9f57933078b5fb7cb91b38d92c1914975436d6c1621b",
+    "prompt_capture_enabled": true,
+    "intent": {
+      "primary": "BUG_FIX",
+      "secondary": ["DATABASE_CHANGE"],
+      "tags": ["DATABASE"],
+      "confidence": 0.98,
+      "classifier_version": "bap-intent-rules-v1",
+      "source": "claude-user-prompt-submit",
+      "evidence": ["BUG_FIX:fix the bug", "DATABASE_CHANGE:update database"]
+    }
+  }
+  ```
+
+`intent.primary` is mandatory and may be `UNKNOWN`. If endpoint policy disables raw prompt capture, `user_prompt` is omitted and `prompt_capture_enabled` is `false`; the normalized intent and prompt hash are still required. Intent is observability context and is not accepted as authority for an operation.
+
+The current repository validates the hook contract but does not yet cryptographically authenticate this endpoint. Production edge authentication is tracked as `BAP-221`.
 
 #### End Session
 - **Method**: `POST`

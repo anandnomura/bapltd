@@ -15,7 +15,8 @@ To make laptop configuration effortless, BAP provides **a single, simple place**
 │   "gateway_url":      "https://bap-gateway.corp.internal:9090",         │
 │   "envoy_url":        "https://bap-envoy.corp.internal:10000",          │
 │   "trust_domain":     "bap.corp.internal",                             │
-│   "environment":      "production"                                     │
+│   "environment":      "production",                                    │
+│   "capture_user_prompt": false                                           │
 │ }                                                                      │
 └────────────────────────────────────────────────────────────────────────┘
                                     │
@@ -29,6 +30,8 @@ To make laptop configuration effortless, BAP provides **a single, simple place**
            [Central Corporate BAP Control Plane on Port 8080]
               (Fleet Radar, Agent Registry, Telemetry Stream)
 ```
+
+`capture_user_prompt` controls raw Claude prompt persistence and transmission. Intent classification remains mandatory and uses `UNKNOWN` when the prompt cannot be classified. The environment variable `BAP_CAPTURE_USER_PROMPT` overrides the file for managed endpoint deployment.
 
 ---
 
@@ -160,4 +163,3 @@ The Gateway PEP reads `controlplane_url` from `bap-config.json` by default. When
 - **Simple File**: `bap-config.json` in project root or `~/.bap/config.json` in user home.
 - **One Command**: `bapedge config set --server <url>` or `configure_endpoints.bat <url>`.
 - **Zero Friction**: Developers never edit code or batch scripts to point Claude Code to the central corporate control plane.
-

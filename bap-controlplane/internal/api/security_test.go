@@ -117,7 +117,7 @@ func TestPromptTelemetryAcceptsOnlyLifecycleHookProducer(t *testing.T) {
 		want int
 	}{
 		{`{"session_id":"sess-prompt","user_prompt":"hello"}`, http.StatusBadRequest},
-		{`{"session_id":"sess-prompt","user_prompt":"hello","producer":"claude-lifecycle-hook"}`, http.StatusOK},
+		{`{"session_id":"sess-prompt","user_prompt":"hello","producer":"claude-lifecycle-hook","prompt_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","prompt_capture_enabled":true,"intent":{"primary":"UNKNOWN","confidence":0,"classifier_version":"bap-intent-rules-v1","source":"claude-user-prompt-submit","evidence":["no-rule-match"]}}`, http.StatusOK},
 	} {
 		r := httptest.NewRequest(http.MethodPost, "/api/v1/sessions/prompt", strings.NewReader(tc.body))
 		w := httptest.NewRecorder()
@@ -127,8 +127,30 @@ func TestPromptTelemetryAcceptsOnlyLifecycleHookProducer(t *testing.T) {
 		}
 	}
 	events := s.auditStore.List(10)
-	if len(events) != 1 || events[0].UserPrompt != "hello" || events[0].FullCommand != "USER_PROMPT_SUBMITTED" {
+	if len(events) != 1 || events[0].UserPrompt != "hello" || events[0].FullCommand != "USER_PROMPT_SUBMITTED" || events[0].PrimaryIntent != "UNKNOWN" {
 		t.Fatalf("expected exactly one prompt event, got %#v", events)
+	}
+}
+
+func TestPromptTelemetryAllowsIntentWithoutRawPrompt(t *testing.T) {
+	s := setupTestServer()
+	_, err := s.sessionStore.Start(session.SessionStartRequest{SessionID: "sess-private-intent", AppID: "claude-code"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := `{"session_id":"sess-private-intent","producer":"claude-lifecycle-hook","prompt_hash":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","prompt_capture_enabled":false,"intent":{"primary":"BUG_FIX","secondary":["DATABASE_CHANGE"],"tags":["DATABASE"],"confidence":0.98,"classifier_version":"bap-intent-rules-v1","source":"claude-user-prompt-submit"}}`
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/sessions/prompt", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("prompt status = %d: %s", w.Code, w.Body.String())
+	}
+	got, err := s.sessionStore.Get("sess-private-intent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.UserPrompt != "" || got.Intent.Primary != "BUG_FIX" || len(got.Intent.Secondary) != 1 || got.Intent.Secondary[0] != "DATABASE_CHANGE" || got.Intent.PromptCaptured {
+		t.Fatalf("unexpected private intent session: %#v", got)
 	}
 }
 

@@ -1,6 +1,6 @@
 # Claude Code Hook Interceptor for ltd-agent
 
-This directory contains the configuration and script to intercept [Claude Code](https://docs.anthropic.com/en/docs/agents-and-tools/claude-code) `Bash` tool calls and route them through the `ltd-agent` zero-trust execution broker.
+This directory contains the native Claude Code lifecycle integration. It captures `UserPromptSubmit` for local mission classification and intercepts `PreToolUse` actions for BAPEdge governance.
 
 ## Directory Structure
 
@@ -57,6 +57,20 @@ cchook/
      ```
    - Always exits with code `0` so Claude Code cleanly processes the decision.
 
+3. **Fast local mission classification**:
+   - Every non-empty `UserPromptSubmit` receives one primary intent. Mixed requests retain secondary intents and context tags; ambiguous prompts use `UNKNOWN`.
+   - Classification is deterministic, versioned, local, and has no LLM or network dependency.
+   - Intent is sent to the control plane for CIO telemetry but is never treated as action authority.
+   - Raw prompt capture is controlled independently with `capture_user_prompt` in `bap-config.json` or `BAP_CAPTURE_USER_PROMPT=true|false`.
+
+   ```json
+   {
+     "capture_user_prompt": false
+   }
+   ```
+
+   With capture disabled, the hook does not write the raw prompt locally or send it centrally. It still sends the normalized intent and SHA-256 prompt hash.
+
 ---
 
 ## User Testing
@@ -94,5 +108,4 @@ echo {"tool_input": {"command": "cat .env"}} | interceptor.exe
 ```
 
 👉 For the full test matrix and security architecture, see the root [TESTING_GUIDE.md](../TESTING_GUIDE.md).
-
 

@@ -124,7 +124,35 @@ Key subsystems of `bapcontrolplane`:
   - Manages discrete agent execution sessions (`POST /api/v1/sessions/start`, `POST /api/v1/sessions/end`, `GET /api/v1/sessions`).
   - Correlates incoming audit events by `session_id`, dynamically calculating allow/deny ratios, durations, and active status for real-time presence detection on the Inspector Live Radar.
 
-### 2.3. Edge Telemetry Streaming & Self-Test Isolation Filter
+### 2.3. Claude Mission Context at BAP Edge
+
+For Claude Code, the `UserPromptSubmit` lifecycle hook is the trusted capture point for mission context. The hook performs a deterministic, versioned classification locally before sending telemetry to the control plane.
+
+The mission contract contains:
+
+- one mandatory primary intent;
+- zero or more secondary intents for mixed work;
+- context tags such as `DATABASE`, `UI`, `PRODUCTION`, or `SECURITY`;
+- confidence, classifier version, matched-rule evidence, and a SHA-256 prompt hash;
+- an explicit flag stating whether raw prompt capture was enabled.
+
+`UNKNOWN` is a valid and required fallback. BAP does not force ambiguous natural language into a misleading category. Raw prompt persistence and transmission can be disabled with `capture_user_prompt: false` or `BAP_CAPTURE_USER_PROMPT=false`; classification still occurs in memory and normalized mission context is still sent.
+
+This path is deliberately separate from enforcement:
+
+```mermaid
+flowchart LR
+    Prompt["Claude UserPromptSubmit"] --> Classifier["BAP Edge intent classifier"]
+    Classifier --> Mission["Versioned mission context"]
+    Mission --> Cockpit["Control plane and CIO cockpit"]
+    Tool["Claude PreToolUse"] --> Operation["Normalized requested operation"]
+    Operation --> Policy["Cedar and sandbox enforcement"]
+    Mission -. "context and evidence only" .-> Policy
+```
+
+The classifier is a fast local rules engine and does not call an LLM. Its sub-millisecond budget applies only to local classification; telemetry delivery is measured separately. Authorization continues to evaluate the concrete operation, resource, identity, delegation, environment and policy—not the natural-language category.
+
+### 2.4. Edge Telemetry Streaming & Self-Test Isolation Filter
 
 `bapedge` bridges local execution with central fleet governance through a dedicated transmission subsystem (`internal/audit/transmitter.go`):
 - **Real-Time Synchronous Push (150ms Bounded)**: Whenever an execution event is logged locally, `bapedge` initiates a synchronous HTTP POST to `POST /api/v1/audit/ingest` with a strict 150ms timeout. If the control plane is reachable, the event is ingested immediately; if the network is partitioned or the server is down, the request silently drops without delaying the developer.
@@ -457,4 +485,3 @@ graph LR
      - *Advantages*: Zero-maintenance single-binary deployment; concurrency support via WAL mode; ACID transactions; sub-millisecond query performance for sessions and events; single-file backup (`bap-audit.db`).
    - **Cloud Enterprise / Fleet Deployment Profile**: **ClickHouse** or **TimescaleDB**.
      - *Advantages*: Optimized for multi-billion record analytical queries; 10:1 columnar compression ratios; sub-second aggregation across thousands of developer machines and CI nodes; native partitioning by date, app, and tenant.
-

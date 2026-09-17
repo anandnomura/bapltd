@@ -12,6 +12,7 @@ test('privileged prompt reveal and closed-loop revoke use real telemetry', async
     session_id: 'sess-browser', app_id: 'code-review', instance_id: 'laptop-alice',
     user_email: 'alice@example.test', hostname: 'ALICE-MBP',
     user_prompt: 'Review the payment changes for mistakes.',
+    intent: { primary: 'BUG_FIX', secondary: ['DATABASE_CHANGE'], tags: ['DATABASE'], confidence: 0.96, classifier_version: 'bap-intent-rules-v1', source: 'claude-user-prompt-submit', prompt_captured: true },
   } });
   await request.post('/api/v1/audit/ingest', { data: [{
     event_id: 'browser-event', session_id: 'sess-browser', source: 'code-review', executable: 'git',
@@ -22,6 +23,7 @@ test('privileged prompt reveal and closed-loop revoke use real telemetry', async
   await page.goto('/dashboard/');
   await expect(page.getByRole('heading', { name: 'Agent operations' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'code-review', exact: true })).toBeVisible();
+  await expect(page.getByText('Bug Fix', { exact: true }).first()).toBeVisible();
   await expect(page.getByText('Review the payment changes for mistakes.', { exact: true })).toHaveCount(0);
 
   await page.getByRole('button', { name: 'Unlock prompts' }).click();
@@ -87,6 +89,7 @@ test('500-agent fleet remains searchable, filterable, paged, and responsive', as
     hostname: `NODE-${String(index).padStart(3, '0')}`, status: 'active', last_active_at: now,
     allowed_count: index % 9, denied_count: index === 497 ? 3 : index === 498 ? 1 : 0,
     total_events: index % 12, user_prompt: `Process governed workload ${index}`,
+    intent: { primary: index % 2 ? 'BUG_FIX' : 'FEATURE_ENHANCEMENT', confidence: 0.9, classifier_version: 'bap-intent-rules-v1', source: 'claude-user-prompt-submit', prompt_captured: true },
   }));
   await page.route('**/api/v1/inspector/data', (route) => route.fulfill({ json: {
     agents: [], sessions, central_events: [], revoked_sessions: [], revoked_users: [],
@@ -96,6 +99,7 @@ test('500-agent fleet remains searchable, filterable, paged, and responsive', as
   await page.goto('/dashboard/');
   await expect(page.locator('.agent-tile')).toHaveCount(25);
   await expect(page.locator('.pager')).toContainText('1 / 20');
+  await expect(page.getByRole('region', { name: 'Live mission intent mix' })).toContainText('Bug Fix');
   await expect(page.getByRole('complementary', { name: 'Incident panel' }).getByText('Worker 497')).toBeVisible();
 
   await page.getByLabel('Search fleet').fill('Worker 499');
