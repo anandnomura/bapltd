@@ -287,9 +287,14 @@ func (s *Store) TrustDomain() string {
 // EnsureSessionAgent guarantees that any active agent session is tracked in the registry.
 // Callers must provide a stable, non-empty instance ID. Session-backed workloads use
 // their session ID when the client has no independently enrolled instance identity.
-func (s *Store) EnsureSessionAgent(appID, instanceID, spiffeID, userEmail, hostname string) *types.RegisteredAgent {
+func (s *Store) EnsureSessionAgent(appID, instanceID, spiffeID, userEmail, hostname string, agentNames ...string) *types.RegisteredAgent {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	customName := ""
+	if len(agentNames) > 0 && agentNames[0] != "" {
+		customName = agentNames[0]
+	}
 
 	now := time.Now()
 	if instanceID == "" {
@@ -308,6 +313,9 @@ func (s *Store) EnsureSessionAgent(appID, instanceID, spiffeID, userEmail, hostn
 		}
 		existing.Status = types.StatusActive
 		existing.LastHeartbeatAt = &now
+		if customName != "" && (existing.AgentName == "" || existing.AgentName == existing.AppID) {
+			existing.AgentName = customName
+		}
 		if spiffeID != "" && spiffeID != "NA" {
 			existing.SPIFFEID = spiffeID
 		}
@@ -320,6 +328,11 @@ func (s *Store) EnsureSessionAgent(appID, instanceID, spiffeID, userEmail, hostn
 		return existing
 	}
 
+	name := appID
+	if customName != "" {
+		name = customName
+	}
+
 	agent := &types.RegisteredAgent{
 		AgentID:         agentID,
 		AppID:           appID,
@@ -327,7 +340,7 @@ func (s *Store) EnsureSessionAgent(appID, instanceID, spiffeID, userEmail, hostn
 		SPIFFEID:        spiffeID,
 		TrustDomain:     s.trustDomain,
 		OwnerEmail:      userEmail,
-		AgentName:       appID,
+		AgentName:       name,
 		EnvProfile:      types.ProfileDev,
 		Status:          types.StatusActive,
 		Hostname:        hostname,

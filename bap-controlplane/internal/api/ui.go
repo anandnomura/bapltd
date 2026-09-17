@@ -2,31 +2,61 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"strings"
+
+	"bap-controlplane/internal/dashboardui"
 )
 
 func (s *Server) registerControlPlaneRoutes() {
+	// BAP-210: Mount unified CIO Cockpit (React Dashboard)
+	webFS := dashboardui.AssetsFS()
+	files := http.StripPrefix("/dashboard/", http.FileServer(http.FS(webFS)))
+	s.mux.Handle("/dashboard/", files)
+	s.mux.HandleFunc("/dashboard", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/dashboard/", http.StatusFound)
+	})
+
+	s.mux.HandleFunc("/dashboard-config", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		scheme := "http"
+		if r.TLS != nil {
+			scheme = "https"
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"control_plane_url": fmt.Sprintf("%s://%s", scheme, r.Host),
+		})
+	})
+
 	s.mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			http.NotFound(w, r)
+			return
+		}
+		if strings.Contains(r.Header.Get("Accept"), "text/html") {
+			http.Redirect(w, r, "/dashboard/", http.StatusFound)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]string{
 			"service":      "bapcontrolplane",
 			"status":       "ok",
-			"inspector":    "/inspector",
-			"inspector_v2": "/inspector_v2",
-			"dashboard":    "not hosted by this service; start bapdashboard separately",
+			"dashboard":    "/dashboard/",
+			"inspector":    "/dashboard/",
+			"inspector_v2": "/dashboard/",
 		})
 	})
 
-	s.mux.HandleFunc("/inspector", s.handleInspectorHTML("inspector.html", "BAP Activity Inspector"))
-	s.mux.HandleFunc("/inspector.html", s.handleInspectorHTML("inspector.html", "BAP Activity Inspector"))
-	s.mux.HandleFunc("/inspector_v2", s.handleInspectorHTML("inspector_v2.html", "BAP Inspector V2 - Executive Cockpit"))
-	s.mux.HandleFunc("/inspector_v2.html", s.handleInspectorHTML("inspector_v2.html", "BAP Inspector V2 - Executive Cockpit"))
+	// BAP-210: Consolidate the CIO Cockpit - redirect legacy inspector routes
+	redirectCockpit := func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/dashboard/", http.StatusFound)
+	}
+	s.mux.HandleFunc("/inspector", redirectCockpit)
+	s.mux.HandleFunc("/inspector.html", redirectCockpit)
+	s.mux.HandleFunc("/inspector_v2", redirectCockpit)
+	s.mux.HandleFunc("/inspector_v2.html", redirectCockpit)
 
 	s.mux.HandleFunc("/assets/admin-client.js", func(w http.ResponseWriter, r *http.Request) {
 		candidates := []string{

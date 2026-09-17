@@ -14,6 +14,12 @@ import (
 //go:embed web
 var assets embed.FS
 
+// AssetsFS returns the embedded web assets filesystem.
+func AssetsFS() fs.FS {
+	web, _ := fs.Sub(assets, "web")
+	return web
+}
+
 // Handler serves the dashboard and forwards API requests over the transport
 // configured by the dashboard process. The browser never connects directly to
 // the control plane, keeping TLS trust and optional client authentication in
@@ -47,10 +53,15 @@ func Handler(controlPlane *url.URL, transport http.RoundTripper, allowRemoteAdmi
 		http.Redirect(w, r, "/dashboard/", http.StatusTemporaryRedirect)
 	})
 	mux.Handle("/dashboard/", files)
-	mux.Handle("/inspector", proxy)
-	mux.Handle("/inspector.html", proxy)
-	mux.Handle("/inspector_v2", proxy)
-	mux.Handle("/inspector_v2.html", proxy)
+
+	// BAP-210: Consolidate the CIO Cockpit - redirect legacy inspector routes
+	redirectCockpit := func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/dashboard/", http.StatusFound)
+	}
+	mux.HandleFunc("/inspector", redirectCockpit)
+	mux.HandleFunc("/inspector.html", redirectCockpit)
+	mux.HandleFunc("/inspector_v2", redirectCockpit)
+	mux.HandleFunc("/inspector_v2.html", redirectCockpit)
 	mux.HandleFunc("/dashboard-config", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]string{"control_plane_url": controlPlane.String()})

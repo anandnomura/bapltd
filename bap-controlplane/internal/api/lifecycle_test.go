@@ -11,18 +11,18 @@ import (
 	"bap-controlplane/pkg/types"
 )
 
-func TestControlPlaneDoesNotHostDashboard(t *testing.T) {
+func TestControlPlaneHostsConsolidatedDashboard(t *testing.T) {
 	s := setupTestServer()
 	root := httptest.NewRecorder()
 	s.Handler().ServeHTTP(root, httptest.NewRequest("GET", "/", nil))
-	if root.Code != 200 || !strings.Contains(root.Body.String(), "start bapdashboard separately") {
+	if root.Code != 200 || !strings.Contains(root.Body.String(), "/dashboard/") {
 		t.Fatalf("unexpected control-plane root response: %d %s", root.Code, root.Body.String())
 	}
 
 	dashboard := httptest.NewRecorder()
 	s.Handler().ServeHTTP(dashboard, httptest.NewRequest("GET", "/dashboard/", nil))
-	if dashboard.Code != 404 {
-		t.Fatalf("control plane still hosts dashboard: status %d", dashboard.Code)
+	if dashboard.Code != 200 {
+		t.Fatalf("control plane failed to host dashboard: status %d", dashboard.Code)
 	}
 }
 

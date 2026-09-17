@@ -19,6 +19,7 @@ type Session struct {
 	SessionID    string        `json:"session_id"`
 	AppID        string        `json:"app_id"`
 	InstanceID   string        `json:"instance_id,omitempty"`
+	AgentName    string        `json:"agent_name,omitempty"`
 	UserID       string        `json:"user_id,omitempty"`
 	UserEmail    string        `json:"user_email,omitempty"`
 	SPIFFEID     string        `json:"spiffe_id,omitempty"`
@@ -41,6 +42,7 @@ type SessionStartRequest struct {
 	SessionID  string `json:"session_id,omitempty"`
 	AppID      string `json:"app_id"`
 	InstanceID string `json:"instance_id,omitempty"`
+	AgentName  string `json:"agent_name,omitempty"`
 	UserID     string `json:"user_id,omitempty"`
 	UserEmail  string `json:"user_email,omitempty"`
 	SPIFFEID   string `json:"spiffe_id,omitempty"`
@@ -154,8 +156,19 @@ func (s *Store) Start(req SessionStartRequest) (*Session, error) {
 		if existing.Status == "revoked" {
 			return nil, fmt.Errorf("session is revoked; administrator restore required")
 		}
+		if req.AgentName != "" {
+			existing.AgentName = req.AgentName
+		}
 		if req.UserPrompt != "" {
 			existing.UserPrompt = req.UserPrompt
+		}
+		if existing.Status != "active" || existing.EndedAt != nil || existing.CloseReason != "" {
+			existing.EndedAt = nil
+			existing.CloseReason = ""
+			existing.AllowedCount = 0
+			existing.DeniedCount = 0
+			existing.TotalEvents = 0
+			existing.StartedAt = now
 		}
 		existing.Status = "active"
 		existing.LastActiveAt = now
@@ -195,11 +208,16 @@ func (s *Store) Start(req SessionStartRequest) (*Session, error) {
 	if spiffeID == "" {
 		spiffeID = "NA"
 	}
+	agentName := req.AgentName
+	if agentName == "" {
+		agentName = appID
+	}
 
 	sess := &Session{
 		SessionID:    sessionID,
 		AppID:        appID,
 		InstanceID:   req.InstanceID,
+		AgentName:    agentName,
 		UserID:       userID,
 		UserEmail:    userEmail,
 		SPIFFEID:     spiffeID,

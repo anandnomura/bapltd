@@ -899,7 +899,7 @@ func (s *Server) handleSessionStart(w http.ResponseWriter, r *http.Request) {
 		if instanceID == "" {
 			instanceID = sess.SessionID
 		}
-		s.registry.EnsureSessionAgent(sess.AppID, instanceID, sess.SPIFFEID, sess.UserEmail, sess.Hostname)
+		s.registry.EnsureSessionAgent(sess.AppID, instanceID, sess.SPIFFEID, sess.UserEmail, sess.Hostname, sess.AgentName)
 	}
 	s.writeTelemetry(w, r, sess)
 }

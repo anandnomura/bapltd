@@ -42,14 +42,14 @@ func TestDashboardServesAssetsAndProxiesAPI(t *testing.T) {
 
 	inspector := httptest.NewRecorder()
 	handler.ServeHTTP(inspector, httptest.NewRequest("GET", "/inspector", nil))
-	if inspector.Code != 200 || !strings.Contains(inspector.Body.String(), "upstream") {
-		t.Fatalf("proxied inspector response: %d %s", inspector.Code, inspector.Body.String())
+	if inspector.Code != 302 || !strings.Contains(inspector.Header().Get("Location"), "/dashboard/") {
+		t.Fatalf("expected redirect to /dashboard/, got: %d %s", inspector.Code, inspector.Body.String())
 	}
 
 	inspectorV2 := httptest.NewRecorder()
 	handler.ServeHTTP(inspectorV2, httptest.NewRequest("GET", "/inspector_v2", nil))
-	if inspectorV2.Code != 200 || !strings.Contains(inspectorV2.Body.String(), "upstream") {
-		t.Fatalf("proxied inspector_v2 response: %d %s", inspectorV2.Code, inspectorV2.Body.String())
+	if inspectorV2.Code != 302 || !strings.Contains(inspectorV2.Header().Get("Location"), "/dashboard/") {
+		t.Fatalf("expected redirect to /dashboard/, got: %d %s", inspectorV2.Code, inspectorV2.Body.String())
 	}
 }
 
