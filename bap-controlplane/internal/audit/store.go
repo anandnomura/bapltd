@@ -9,25 +9,32 @@ import (
 )
 
 type Event struct {
-	EventID      string `json:"event_id"`
-	AgentID      string `json:"agent_id,omitempty"`
-	SessionID    string `json:"session_id,omitempty"`
-	UserID       string `json:"user_id,omitempty"`
-	UserEmail    string `json:"user_email,omitempty"`
-	SPIFFEID     string `json:"spiffe_id,omitempty"`
-	Timestamp    string `json:"timestamp"`
-	Source       string `json:"source"`
-	ClientPID    int    `json:"client_pid,omitempty"`
-	Executable   string `json:"executable"`
-	Arguments    string `json:"arguments,omitempty"`
-	FullCommand  string `json:"full_command"`
-	Decision     string `json:"decision"`
-	Reason       string `json:"reason,omitempty"`
-	UserPrompt   string `json:"user_prompt,omitempty"`
-	DurationMs   int64  `json:"duration_ms,omitempty"`
-	ExitCode     int    `json:"exit_code"`
-	PreviousHash string `json:"previous_hash"`
-	EventHash    string `json:"event_hash"`
+	EventID            string   `json:"event_id"`
+	AgentID            string   `json:"agent_id,omitempty"`
+	SessionID          string   `json:"session_id,omitempty"`
+	UserID             string   `json:"user_id,omitempty"`
+	UserEmail          string   `json:"user_email,omitempty"`
+	SPIFFEID           string   `json:"spiffe_id,omitempty"`
+	Timestamp          string   `json:"timestamp"`
+	Source             string   `json:"source"`
+	ClientPID          int      `json:"client_pid,omitempty"`
+	Executable         string   `json:"executable"`
+	Arguments          string   `json:"arguments,omitempty"`
+	FullCommand        string   `json:"full_command"`
+	Decision           string   `json:"decision"`
+	Reason             string   `json:"reason,omitempty"`
+	UserPrompt         string   `json:"user_prompt,omitempty"`
+	PrimaryIntent      string   `json:"primary_intent,omitempty"`
+	SecondaryIntents   []string `json:"secondary_intents,omitempty"`
+	IntentTags         []string `json:"intent_tags,omitempty"`
+	IntentConfidence   float64  `json:"intent_confidence,omitempty"`
+	IntentClassifier   string   `json:"intent_classifier,omitempty"`
+	PromptHash         string   `json:"prompt_hash,omitempty"`
+	PromptCaptured     bool     `json:"prompt_captured"`
+	DurationMs         int64    `json:"duration_ms,omitempty"`
+	ExitCode           int      `json:"exit_code"`
+	PreviousHash       string   `json:"previous_hash"`
+	EventHash          string   `json:"event_hash"`
 }
 
 type Store struct {
@@ -68,6 +75,9 @@ func (s *Store) Ingest(incoming []Event) (int, error) {
 		h.Write([]byte(ev.Source))
 		h.Write([]byte(ev.FullCommand))
 		h.Write([]byte(ev.Decision))
+		h.Write([]byte(ev.PrimaryIntent))
+		h.Write([]byte(ev.IntentClassifier))
+		h.Write([]byte(ev.PromptHash))
 		ev.EventHash = hex.EncodeToString(h.Sum(nil))
 
 		s.lastHash = ev.EventHash
@@ -110,6 +120,9 @@ func (s *Store) VerifyChain() (bool, error) {
 		h.Write([]byte(ev.Source))
 		h.Write([]byte(ev.FullCommand))
 		h.Write([]byte(ev.Decision))
+		h.Write([]byte(ev.PrimaryIntent))
+		h.Write([]byte(ev.IntentClassifier))
+		h.Write([]byte(ev.PromptHash))
 		computed := hex.EncodeToString(h.Sum(nil))
 
 		if ev.EventHash != computed {

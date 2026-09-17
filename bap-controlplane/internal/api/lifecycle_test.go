@@ -147,7 +147,7 @@ func TestRevokedSessionHeartbeatAndPromptBlock(t *testing.T) {
 
 	// 5. Subsequent prompt telemetry should be rejected with HTTP 403
 	wPrompt := httptest.NewRecorder()
-	rPrompt := httptest.NewRequest("POST", "/api/v1/sessions/prompt", strings.NewReader(`{"session_id":"sess-rev-test","user_prompt":"run unauthorized task","producer":"claude-lifecycle-hook"}`))
+	rPrompt := httptest.NewRequest("POST", "/api/v1/sessions/prompt", strings.NewReader(`{"session_id":"sess-rev-test","user_prompt":"run unauthorized task","producer":"claude-lifecycle-hook","prompt_hash":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","prompt_capture_enabled":true,"intent":{"primary":"UNKNOWN","confidence":0,"classifier_version":"bap-intent-rules-v1","source":"claude-user-prompt-submit"}}`))
 	rPrompt.Header.Set("Content-Type", "application/json")
 	s.Handler().ServeHTTP(wPrompt, rPrompt)
 	if wPrompt.Code != 403 {

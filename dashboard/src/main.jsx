@@ -44,6 +44,10 @@ function actionLabel(command = '', executable = '') {
   return clean.length > 48 ? `${clean.slice(0, 48)}…` : clean || executable || 'Tool action';
 }
 
+function intentLabel(value = 'UNKNOWN') {
+  return value.toLowerCase().split('_').map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+}
+
 function riskFor(agent) {
   if (agent.status === 'revoked') return 'REVOKED';
   if (agent.status === 'stopped' || agent.status === 'closed') return 'STOPPED';
@@ -77,6 +81,9 @@ function normalizeFleet(data, sensitive, now, localStatus) {
       spiffeId: agent.spiffe_id || `spiffe://bap.internal/app/${agent.app_id}/instance/${id}`,
       status: agent.status || currentPresence.status, lastSeen: currentPresence.age,
       prompt: agent.user_prompt || '', events: [], allowedCount: 0, deniedCount: 0, totalEvents: 0,
+      primaryIntent: agent.intent?.primary || 'UNKNOWN', secondaryIntents: agent.intent?.secondary || [],
+      intentTags: agent.intent?.tags || [], intentConfidence: agent.intent?.confidence || 0,
+      intentSource: agent.intent?.source || 'unavailable', promptCaptured: Boolean(agent.intent?.prompt_captured),
     });
   });
 
@@ -94,6 +101,7 @@ function normalizeFleet(data, sensitive, now, localStatus) {
     const revoked = session.status === 'revoked' || revokedSessions.includes(session.session_id) || revokedUsers.includes(session.user_id) || revokedUsers.includes(session.user_email);
     const status = localStatus[session.session_id] || (revoked ? 'revoked' : session.status || currentPresence.status);
     const next = existing || { id, events: [], allowedCount: 0, deniedCount: 0 };
+    const mission = session.intent || {};
     // Public telemetry protects stable identifiers. In that mode the session
     // record is still independently rendered, while privileged mode merges it
     // with its registered workload by exact instance identity.
@@ -105,6 +113,10 @@ function normalizeFleet(data, sensitive, now, localStatus) {
       hostname: session.hostname || next.hostname || 'unreported-host',
       spiffeId: session.spiffe_id || next.spiffeId || `spiffe://bap.internal/app/${session.app_id}/instance/${id}`,
       status, lastSeen: currentPresence.age, prompt: session.user_prompt || next.prompt || '', clientPid: session.client_pid,
+      primaryIntent: mission.primary || next.primaryIntent || 'UNKNOWN',
+      secondaryIntents: mission.secondary || next.secondaryIntents || [], intentTags: mission.tags || next.intentTags || [],
+      intentConfidence: mission.confidence || next.intentConfidence || 0, intentSource: mission.source || next.intentSource || 'unavailable',
+      promptCaptured: mission.prompt_captured ?? next.promptCaptured ?? Boolean(session.user_prompt),
       allowedCount: session.allowed_count || next.allowedCount || 0,
       deniedCount: session.denied_count || next.deniedCount || 0,
       totalEvents: session.total_events || next.totalEvents || 0,
@@ -121,12 +133,18 @@ function normalizeFleet(data, sensitive, now, localStatus) {
       if (event.decision === 'deny') target.deniedCount += 1;
     }
     if (!target.prompt && event.user_prompt && event.user_prompt !== PROTECTED) target.prompt = event.user_prompt;
+    if ((!target.primaryIntent || target.primaryIntent === 'UNKNOWN') && event.primary_intent) {
+      target.primaryIntent = event.primary_intent;
+      target.secondaryIntents = event.secondary_intents || [];
+      target.intentTags = event.intent_tags || [];
+      target.intentConfidence = event.intent_confidence || 0;
+    }
   });
 
   return [...fleet.values()].map((agent) => {
     const sortedEvents = [...agent.events].sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp));
     const latest = sortedEvents[0];
-    const normalized = { ...agent, events: sortedEvents, latest, currentAction: actionLabel(latest?.full_command, latest?.executable), hasTamper: sortedEvents.some((event) => (event.reason || '').toLowerCase().includes('tamper')) };
+    const normalized = { ...agent, primaryIntent: agent.primaryIntent || 'UNKNOWN', secondaryIntents: agent.secondaryIntents || [], intentTags: agent.intentTags || [], events: sortedEvents, latest, currentAction: actionLabel(latest?.full_command, latest?.executable), hasTamper: sortedEvents.some((event) => (event.reason || '').toLowerCase().includes('tamper')) };
     return { ...normalized, risk: riskFor(normalized) };
   });
 }
@@ -199,7 +217,7 @@ function App() {
       if (filter === 'RISK' && !['CRITICAL', 'ELEVATED'].includes(agent.risk)) return false;
       if (filter === 'HEALTHY' && agent.risk !== 'HEALTHY') return false;
       if (filter === 'STOPPED' && !['STOPPED', 'REVOKED'].includes(agent.risk)) return false;
-      return !q || [agent.name, agent.owner, agent.appId, agent.hostname, agent.id, agent.currentAction].some((value) => (value || '').toLowerCase().includes(q));
+      return !q || [agent.name, agent.owner, agent.appId, agent.hostname, agent.id, agent.currentAction, agent.primaryIntent, ...(agent.secondaryIntents || []), ...(agent.intentTags || [])].some((value) => (value || '').toLowerCase().includes(q));
     });
     return values.sort((a, b) => sortMode === 'RECENT' ? a.lastSeen - b.lastSeen : RISK_ORDER[b.risk] - RISK_ORDER[a.risk] || a.lastSeen - b.lastSeen);
   }, [fleet, filter, query, sortMode]);
@@ -209,6 +227,11 @@ function App() {
   const selected = fleet.find((agent) => agent.id === selectedId) || incidents[0] || visibleFleet[0] || null;
   const activeCount = fleet.filter((agent) => agent.status === 'active').length;
   const currentActions = fleet.filter((agent) => agent.status === 'active' && agent.latest).length;
+  const intentMix = useMemo(() => {
+    const counts = new Map();
+    fleet.forEach((agent) => counts.set(agent.primaryIntent || 'UNKNOWN', (counts.get(agent.primaryIntent || 'UNKNOWN') || 0) + 1));
+    return [...counts.entries()].map(([intent, count]) => ({ intent, count })).sort((a, b) => b.count - a.count || a.intent.localeCompare(b.intent));
+  }, [fleet]);
   const eventHistory = (sensitive || data)?.central_events || [];
   const allowedHistory = eventHistory.filter((event) => event.decision === 'allow').length;
   const deniedHistory = eventHistory.filter((event) => event.decision === 'deny').length;
@@ -287,6 +310,11 @@ function App() {
         <div className="metric history"><span>Audit integrity</span><strong className="compact">{data?.chain_status === 'valid' ? 'Verified' : data?.chain_status === 'corrupted' ? 'At risk' : 'Unverified'}</strong><small>{data?.policy_version || 'Policy status unavailable'} · tamper-evident chain</small></div>
       </section>
 
+      <section className="intent-overview" aria-label="Live mission intent mix">
+        <div><p className="eyebrow">Declared work</p><strong>Live mission mix</strong><span>Classified locally at BAP Edge</span></div>
+        <div className="intent-mix">{intentMix.slice(0, 6).map(({ intent, count }) => <span key={intent} className={intent === 'UNKNOWN' ? 'unknown' : ''}><b>{count}</b>{intentLabel(intent)}</span>)}{!intentMix.length && <span className="empty"><b>0</b>No active missions</span>}</div>
+      </section>
+
       <section className="workspace">
         <div className="fleet-panel">
           <div className="panel-toolbar">
@@ -304,6 +332,7 @@ function App() {
               return <button key={agent.id} className={`agent-tile risk-${agent.risk.toLowerCase()} ${selected?.id === agent.id ? 'selected' : ''}`} onClick={() => setSelectedId(agent.id)} aria-label={agent.name}>
                 <span className="tile-top"><i className={`state-dot ${stopped ? 'stopped' : killSwitch ? 'frozen' : ''}`}/><b>{agent.name}</b><em>{agent.risk}</em></span>
                 <span className="tile-owner">{agent.owner}</span>
+                <span className={`tile-intent ${agent.primaryIntent === 'UNKNOWN' ? 'unknown' : ''}`}>{intentLabel(agent.primaryIntent)}</span>
                 <span className="tile-action"><Icon name={stopped ? 'stop' : 'pulse'} size={13}/><span>{killSwitch && !stopped ? 'Execution frozen globally' : agent.currentAction}</span></span>
                 <span className="tile-foot"><small>{agent.appId}</small><small>{stopped ? agent.status : elapsed(agent.lastSeen)}</small></span>
               </button>;
@@ -327,9 +356,9 @@ function App() {
         <div className="timeline-panel">
           <div className="detail-heading"><div><p className="eyebrow">Prompt → policy → action</p><h2>{selected ? selected.name : 'Select an agent'} <span className={`risk-label ${selected?.risk?.toLowerCase() || ''}`}>{selected?.risk || 'NO SELECTION'}</span></h2></div>{selected && <div className="identity"><span>{selected.hostname}</span><code>{selected.sessionId || selected.id}</code></div>}</div>
           {selected ? <>
-            <div className="prompt-strip"><span><Icon name={sensitive ? 'unlock' : 'lock'}/>{sensitive ? 'Operator prompt' : 'Prompt protected'}</span><p>{sensitive ? (selected.prompt || 'No prompt captured for this session.') : 'Unlock a privileged demo session to reveal prompt telemetry.'}</p></div>
+            <div className="prompt-strip"><span><Icon name={sensitive ? 'unlock' : 'lock'}/>{sensitive ? 'Operator prompt' : 'Prompt protected'}</span><p>{sensitive ? (selected.prompt || (selected.promptCaptured ? 'No prompt received.' : 'Raw prompt capture disabled by endpoint policy.')) : 'Unlock a privileged demo session to reveal prompt telemetry.'}</p><div className="mission-classification"><b>{intentLabel(selected.primaryIntent)}</b>{selected.secondaryIntents.map((intent) => <em key={intent}>+ {intentLabel(intent)}</em>)}<small>{Math.round((selected.intentConfidence || 0) * 100)}% · {selected.intentSource}</small></div></div>
             <div className="timeline" aria-label="Prompt-to-action timeline">
-              <div className="timeline-event intent"><i/><span className="event-icon"><Icon name="command"/></span><div><b>Intent received</b><small>{selected.owner}</small></div></div>
+              <div className="timeline-event intent"><i/><span className="event-icon"><Icon name="command"/></span><div><b>{intentLabel(selected.primaryIntent)}</b><small>{selected.secondaryIntents.length ? `Also: ${selected.secondaryIntents.map(intentLabel).join(', ')}` : selected.owner}</small></div></div>
               {selected.events.slice(0, 4).reverse().map((event, index) => { const key = event.event_id || `${event.timestamp}-${index}`; return <button key={key} className={`timeline-event ${event.decision}`} onClick={() => setExpandedEvent(expandedEvent === key ? '' : key)}><i/><span className="event-icon"><Icon name={event.decision === 'deny' ? 'ban' : 'check'}/></span><div><b>{actionLabel(event.full_command, event.executable)}</b><small>{event.executable || 'control-plane'} · {event.decision || 'observed'} · {event.duration_ms || 1} ms</small>{expandedEvent === key && <code className="event-command">{event.full_command || event.reason}</code>}</div></button>; })}
               {selected.status === 'revoked' && <div className="timeline-event deny"><i/><span className="event-icon"><Icon name="ban"/></span><div><b>Execution authority revoked</b><small>Restart and future execution blocked</small></div></div>}
             </div>

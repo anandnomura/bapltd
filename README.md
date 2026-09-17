@@ -159,10 +159,15 @@ The workload credential proves **who the caller is**. The BAP grant proves **wha
 ### Local developer action
 
 1. A developer gives Claude Code, Copilot, or another agent a request.
-2. The integration captures the request as session context.
-3. Before a tool action, the edge evaluates the normalized operation against Cedar policy.
-4. A denied action is stopped and recorded.
-5. A permitted action runs through the available operating-system boundary and is recorded.
+2. For Claude Code, the managed `UserPromptSubmit` hook sends the prompt to BAP Edge.
+3. BAP Edge deterministically classifies a primary intent, optional secondary intents and context tags. Ambiguous work is explicitly `UNKNOWN`.
+4. Raw prompt capture is an independent endpoint option; normalized intent remains mandatory mission context.
+5. Before a tool action, the edge evaluates the actual normalized operation against Cedar policy.
+6. A denied action is stopped and recorded. A permitted action runs through the available operating-system boundary and is recorded.
+
+Intent explains the mission; it does not grant permission. For example, `Fix the login bug and update the database schema` becomes primary `BUG_FIX`, secondary `DATABASE_CHANGE`, and tag `DATABASE`. Authorization still evaluates each real file, command, API, resource and environment requested by the agent.
+
+The MVP taxonomy is intentionally small: investigation, bug fix, feature/enhancement, refactor, test/verification, documentation, database change, migration, deployment/release, work management, security remediation, and `UNKNOWN`. Context such as UI, API, database, infrastructure, production, security, and customer-facing work is represented with tags rather than creating hundreds of categories.
 
 ### Protected enterprise resource
 
@@ -183,7 +188,7 @@ This repository is a working **engineering prototype and reference implementatio
 |---|---|
 | Agent integrations | Claude Code lifecycle and `PreToolUse` hook, Copilot command wrapper, MCP server, and Python SDK examples. |
 | Local policy | Embedded Cedar evaluation with default-deny behavior and audit/enforce modes. |
-| Intent context | Claude `UserPromptSubmit` capture correlated to the active session and subsequent events. |
+| Intent context | Claude `UserPromptSubmit` is classified locally using versioned deterministic rules. Primary intent is mandatory, mixed work retains secondary intents/tags, and `UNKNOWN` is the safe fallback. Raw prompt capture is separately configurable. |
 | Sessions | Session lifecycle, heartbeats, revocation, and SQLite-backed session persistence. |
 | Agent registry | In-memory agent/app/instance registry with development TOFU and production hash allow-list modes. |
 | Workload identifier | A unique `spiffe://`-formatted identifier is assigned to enrolled instances. Native SPIFFE SVID issuance is a target integration. |
@@ -210,7 +215,7 @@ Production adoption requires integration with enterprise human identity, cryptog
 | `envoy/` | Envoy external-authorization demonstration. |
 | `dashboard/` | React governance dashboard. |
 
-The existing inspector and React dashboard are the starting point for the BAP cockpit. The MVP cockpit will separate an executive coverage/risk view from SecOps, platform-operations, and agent-owner drill-downs.
+The React CIO cockpit shows the live agent fleet, mission-intent mix, protected prompts, policy outcomes, incidents, Stop, Revoke, Restore and Fleet Freeze. Production RBAC, durable operations and managed endpoint rollout remain MVP work tracked in `JIRA_STORIES.md`.
 
 ---
 

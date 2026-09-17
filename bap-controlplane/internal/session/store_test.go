@@ -1,11 +1,48 @@
 package session
 
 import (
+	"path/filepath"
 	"testing"
 	"time"
 
 	"bap-controlplane/internal/audit"
 )
+
+func TestSessionIntentPersistsWithoutRawPrompt(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "sessions.db")
+	store, err := NewStoreWithDB(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.Start(SessionStartRequest{SessionID: "sess-intent", AppID: "claude-code"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.SetPromptAndIntent("sess-intent", "", IntentContext{
+		Primary: "BUG_FIX", Secondary: []string{"DATABASE_CHANGE"}, Tags: []string{"DATABASE"},
+		Confidence: .98, ClassifierVersion: "bap-intent-rules-v1", Source: "claude-user-prompt-submit",
+		PromptHash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", PromptCaptured: false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := NewStoreWithDB(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	got, err := reopened.Get("sess-intent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.UserPrompt != "" || got.Intent.Primary != "BUG_FIX" || len(got.Intent.Secondary) != 1 || got.Intent.Secondary[0] != "DATABASE_CHANGE" || got.Intent.PromptCaptured {
+		t.Fatalf("intent did not survive restart: %#v", got)
+	}
+}
 
 func TestSessionStore_Lifecycle(t *testing.T) {
 	store := NewStore()

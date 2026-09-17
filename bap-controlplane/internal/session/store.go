@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -34,21 +35,37 @@ type Session struct {
 	DeniedCount  int           `json:"denied_count"`
 	CloseReason  string        `json:"close_reason,omitempty"`
 	UserPrompt   string        `json:"user_prompt,omitempty"`
+	Intent       IntentContext `json:"intent"`
 	Events       []audit.Event `json:"events,omitempty"`
+}
+
+// IntentContext is mission context produced deterministically at BAP Edge.
+// It is observable evidence, not an authorization grant.
+type IntentContext struct {
+	Primary           string   `json:"primary"`
+	Secondary         []string `json:"secondary,omitempty"`
+	Tags              []string `json:"tags,omitempty"`
+	Confidence        float64  `json:"confidence"`
+	ClassifierVersion string   `json:"classifier_version"`
+	Source            string   `json:"source"`
+	Evidence          []string `json:"evidence,omitempty"`
+	PromptHash        string   `json:"prompt_hash,omitempty"`
+	PromptCaptured    bool     `json:"prompt_captured"`
 }
 
 // SessionStartRequest contains fields to initiate a session.
 type SessionStartRequest struct {
-	SessionID  string `json:"session_id,omitempty"`
-	AppID      string `json:"app_id"`
-	InstanceID string `json:"instance_id,omitempty"`
-	AgentName  string `json:"agent_name,omitempty"`
-	UserID     string `json:"user_id,omitempty"`
-	UserEmail  string `json:"user_email,omitempty"`
-	SPIFFEID   string `json:"spiffe_id,omitempty"`
-	ClientPID  int    `json:"client_pid,omitempty"`
-	Hostname   string `json:"hostname,omitempty"`
-	UserPrompt string `json:"user_prompt,omitempty"`
+	SessionID  string        `json:"session_id,omitempty"`
+	AppID      string        `json:"app_id"`
+	InstanceID string        `json:"instance_id,omitempty"`
+	AgentName  string        `json:"agent_name,omitempty"`
+	UserID     string        `json:"user_id,omitempty"`
+	UserEmail  string        `json:"user_email,omitempty"`
+	SPIFFEID   string        `json:"spiffe_id,omitempty"`
+	ClientPID  int           `json:"client_pid,omitempty"`
+	Hostname   string        `json:"hostname,omitempty"`
+	UserPrompt string        `json:"user_prompt,omitempty"`
+	Intent     IntentContext `json:"intent,omitempty"`
 }
 
 // Store manages sessions in memory with thread safety and optional SQLite durability.
@@ -111,6 +128,9 @@ func NewStoreWithDB(dbPath string) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("failed to initialize sqlite sessions schema: %w", err)
 	}
+	// Forward-compatible migration for databases created before mission intent
+	// became part of the session contract.
+	_, _ = db.Exec(`ALTER TABLE sessions ADD COLUMN intent_json TEXT`)
 
 	store := &Store{
 		sessions:     make(map[string]*Session),
@@ -137,6 +157,17 @@ func GenerateSessionID(prefix string) string {
 	return fmt.Sprintf("%s-%s-%s", prefix, time.Now().Format("150405"), hex.EncodeToString(b))
 }
 
+func normalizeIntent(intent IntentContext) IntentContext {
+	intent.Primary = strings.ToUpper(strings.TrimSpace(intent.Primary))
+	if intent.Primary == "" {
+		intent.Primary = "UNKNOWN"
+	}
+	if intent.Source == "" {
+		intent.Source = "unavailable"
+	}
+	return intent
+}
+
 // Start creates and registers a new session or re-activates an existing one.
 func (s *Store) Start(req SessionStartRequest) (*Session, error) {
 	s.mu.Lock()
@@ -161,6 +192,9 @@ func (s *Store) Start(req SessionStartRequest) (*Session, error) {
 		}
 		if req.UserPrompt != "" {
 			existing.UserPrompt = req.UserPrompt
+		}
+		if req.Intent.Primary != "" {
+			existing.Intent = normalizeIntent(req.Intent)
 		}
 		if existing.Status != "active" || existing.EndedAt != nil || existing.CloseReason != "" {
 			existing.EndedAt = nil
@@ -231,6 +265,7 @@ func (s *Store) Start(req SessionStartRequest) (*Session, error) {
 		DeniedCount:  0,
 		Events:       make([]audit.Event, 0),
 		UserPrompt:   req.UserPrompt,
+		Intent:       normalizeIntent(req.Intent),
 	}
 
 	s.sessions[sessionID] = sess
@@ -584,8 +619,9 @@ func (s *Store) Heartbeat(sessionID string) (*Session, error) {
 	return &cp, nil
 }
 
-// SetPrompt updates the UserPrompt and LastActiveAt timestamp for a session.
-func (s *Store) SetPrompt(sessionID, prompt string) (*Session, error) {
+// SetPromptAndIntent updates the optional raw prompt and mandatory normalized
+// mission intent for a session.
+func (s *Store) SetPromptAndIntent(sessionID, prompt string, intent IntentContext) (*Session, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -596,6 +632,7 @@ func (s *Store) SetPrompt(sessionID, prompt string) (*Session, error) {
 
 	now := time.Now().UTC()
 	sess.UserPrompt = prompt
+	sess.Intent = normalizeIntent(intent)
 	sess.LastActiveAt = now
 	if sess.Status == "closed" && sess.CloseReason == "idle_timeout" {
 		sess.Status = "active"
@@ -605,6 +642,12 @@ func (s *Store) SetPrompt(sessionID, prompt string) (*Session, error) {
 	s.saveSessionToDB(sess)
 	cp := *sess
 	return &cp, nil
+}
+
+// SetPrompt remains for compatibility with callers that do not yet provide
+// intent. UNKNOWN is explicit rather than silently inferring authority.
+func (s *Store) SetPrompt(sessionID, prompt string) (*Session, error) {
+	return s.SetPromptAndIntent(sessionID, prompt, IntentContext{Primary: "UNKNOWN", Source: "legacy-caller"})
 }
 
 // PurgeStale marks any active sessions that have been idle for longer than maxIdle as closed.
@@ -649,7 +692,7 @@ func (s *Store) loadFromDB() error {
 	if s.db == nil {
 		return nil
 	}
-	rows, err := s.db.Query(`SELECT session_id, app_id, instance_id, user_id, user_email, spiffe_id, status, started_at, ended_at, last_active_at, client_pid, hostname, total_events, allowed_count, denied_count, close_reason FROM sessions ORDER BY started_at ASC`)
+	rows, err := s.db.Query(`SELECT session_id, app_id, instance_id, user_id, user_email, spiffe_id, status, started_at, ended_at, last_active_at, client_pid, hostname, total_events, allowed_count, denied_count, close_reason, intent_json FROM sessions ORDER BY started_at ASC`)
 	if err != nil {
 		return err
 	}
@@ -657,10 +700,10 @@ func (s *Store) loadFromDB() error {
 
 	for rows.Next() {
 		var (
-			sessID, appID, instID, uID, uEmail, spiffeID, status, startedAtStr, endedAtStr, lastActiveStr, hostname, closeReason sql.NullString
+			sessID, appID, instID, uID, uEmail, spiffeID, status, startedAtStr, endedAtStr, lastActiveStr, hostname, closeReason, intentJSON sql.NullString
 			clientPID, totalEv, allowCnt, denyCnt                                                                                sql.NullInt64
 		)
-		if err := rows.Scan(&sessID, &appID, &instID, &uID, &uEmail, &spiffeID, &status, &startedAtStr, &endedAtStr, &lastActiveStr, &clientPID, &hostname, &totalEv, &allowCnt, &denyCnt, &closeReason); err != nil {
+		if err := rows.Scan(&sessID, &appID, &instID, &uID, &uEmail, &spiffeID, &status, &startedAtStr, &endedAtStr, &lastActiveStr, &clientPID, &hostname, &totalEv, &allowCnt, &denyCnt, &closeReason, &intentJSON); err != nil {
 			continue
 		}
 		startedAt, _ := time.Parse(time.RFC3339, startedAtStr.String)
@@ -672,6 +715,10 @@ func (s *Store) loadFromDB() error {
 			}
 		}
 
+		intent := IntentContext{}
+		if intentJSON.Valid && intentJSON.String != "" {
+			_ = json.Unmarshal([]byte(intentJSON.String), &intent)
+		}
 		sess := &Session{
 			SessionID:    sessID.String,
 			AppID:        appID.String,
@@ -689,6 +736,7 @@ func (s *Store) loadFromDB() error {
 			AllowedCount: int(allowCnt.Int64),
 			DeniedCount:  int(denyCnt.Int64),
 			CloseReason:  closeReason.String,
+			Intent:       normalizeIntent(intent),
 			Events:       make([]audit.Event, 0),
 		}
 		s.sessions[sess.SessionID] = sess
@@ -717,9 +765,10 @@ func (s *Store) saveSessionToDB(sess *Session) {
 	if sess.EndedAt != nil {
 		endedAtStr = sess.EndedAt.UTC().Format(time.RFC3339)
 	}
+	intentJSON, _ := json.Marshal(normalizeIntent(sess.Intent))
 	query := `
-	INSERT INTO sessions (session_id, app_id, instance_id, user_id, user_email, spiffe_id, status, started_at, ended_at, last_active_at, client_pid, hostname, total_events, allowed_count, denied_count, close_reason)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	INSERT INTO sessions (session_id, app_id, instance_id, user_id, user_email, spiffe_id, status, started_at, ended_at, last_active_at, client_pid, hostname, total_events, allowed_count, denied_count, close_reason, intent_json)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(session_id) DO UPDATE SET
 		status = excluded.status,
 		ended_at = excluded.ended_at,
@@ -727,7 +776,8 @@ func (s *Store) saveSessionToDB(sess *Session) {
 		total_events = excluded.total_events,
 		allowed_count = excluded.allowed_count,
 		denied_count = excluded.denied_count,
-		close_reason = excluded.close_reason;`
+		close_reason = excluded.close_reason,
+		intent_json = excluded.intent_json;`
 	_, _ = s.db.Exec(query,
 		sess.SessionID,
 		sess.AppID,
@@ -745,6 +795,7 @@ func (s *Store) saveSessionToDB(sess *Session) {
 		sess.AllowedCount,
 		sess.DeniedCount,
 		sess.CloseReason,
+		string(intentJSON),
 	)
 }
 

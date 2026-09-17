@@ -2,6 +2,7 @@ package api
 
 import (
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -35,6 +36,8 @@ type DemoActionRecord struct {
 	ExitCode   int     `json:"exit_code"`
 	Timestamp  string  `json:"timestamp"`
 }
+
+const demoIntentClassifierVersion = "bap-intent-rules-v1"
 
 type Server struct {
 	registry         *registry.Store
@@ -971,9 +974,12 @@ func (s *Server) handleSessionPrompt(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req struct {
-		SessionID  string `json:"session_id"`
-		UserPrompt string `json:"user_prompt"`
-		Producer   string `json:"producer"`
+		SessionID            string                `json:"session_id"`
+		UserPrompt           string                `json:"user_prompt"`
+		Producer             string                `json:"producer"`
+		Intent               session.IntentContext `json:"intent"`
+		PromptHash           string                `json:"prompt_hash"`
+		PromptCaptureEnabled bool                  `json:"prompt_capture_enabled"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "Invalid request payload: "+err.Error())
@@ -987,6 +993,41 @@ func (s *Server) handleSessionPrompt(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "prompt telemetry must come from the lifecycle hook")
 		return
 	}
+	req.Intent.Primary = strings.ToUpper(strings.TrimSpace(req.Intent.Primary))
+	for i := range req.Intent.Secondary {
+		req.Intent.Secondary[i] = strings.ToUpper(strings.TrimSpace(req.Intent.Secondary[i]))
+	}
+	for i := range req.Intent.Tags {
+		req.Intent.Tags[i] = strings.ToUpper(strings.TrimSpace(req.Intent.Tags[i]))
+	}
+	if !validIntentCategory(req.Intent.Primary) || req.Intent.ClassifierVersion == "" || req.Intent.Source != "claude-user-prompt-submit" {
+		writeError(w, http.StatusBadRequest, "a valid edge-classified intent is required")
+		return
+	}
+	for _, secondary := range req.Intent.Secondary {
+		if !validIntentCategory(secondary) || secondary == "UNKNOWN" || secondary == req.Intent.Primary {
+			writeError(w, http.StatusBadRequest, "secondary intent contains an invalid category")
+			return
+		}
+	}
+	if req.Intent.Confidence < 0 || req.Intent.Confidence > 1 {
+		writeError(w, http.StatusBadRequest, "intent confidence must be between 0 and 1")
+		return
+	}
+	if len(req.PromptHash) != 64 {
+		writeError(w, http.StatusBadRequest, "prompt_hash must be a SHA-256 digest")
+		return
+	}
+	if _, err := hex.DecodeString(req.PromptHash); err != nil {
+		writeError(w, http.StatusBadRequest, "prompt_hash must be hexadecimal")
+		return
+	}
+	if !req.PromptCaptureEnabled && req.UserPrompt != "" {
+		writeError(w, http.StatusBadRequest, "user_prompt must be omitted when prompt capture is disabled")
+		return
+	}
+	req.Intent.PromptHash = req.PromptHash
+	req.Intent.PromptCaptured = req.PromptCaptureEnabled
 	if s.sessionStore == nil {
 		writeError(w, http.StatusServiceUnavailable, "Session store unavailable")
 		return
@@ -995,7 +1036,7 @@ func (s *Server) handleSessionPrompt(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "Session authority has been revoked by administrator. Prompts are blocked.")
 		return
 	}
-	sess, err := s.sessionStore.SetPrompt(req.SessionID, req.UserPrompt)
+	sess, err := s.sessionStore.SetPromptAndIntent(req.SessionID, req.UserPrompt, req.Intent)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "Failed to update prompt: "+err.Error())
 		return
@@ -1004,26 +1045,44 @@ func (s *Server) handleSessionPrompt(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "User access has been revoked by administrator. Prompts are blocked.")
 		return
 	}
-	// Also log a telemetry event for prompt observability
-	if s.auditStore != nil && req.UserPrompt != "" {
+	// Always log the normalized intent. Raw prompt text is optional and follows
+	// the independently configured endpoint privacy policy.
+	if s.auditStore != nil {
 		_, _ = s.auditStore.Ingest([]audit.Event{{
-			EventID:     fmt.Sprintf("ev-prompt-%d", time.Now().UnixNano()),
-			SessionID:   req.SessionID,
-			Source:      sess.AppID,
-			Executable:  "user_prompt",
-			FullCommand: "USER_PROMPT_SUBMITTED",
-			Decision:    "intent",
-			Reason:      "User prompt captured for intent observability",
-			Timestamp:   time.Now().UTC().Format(time.RFC3339),
-			UserPrompt:  req.UserPrompt,
-			UserID:      sess.UserID,
-			UserEmail:   sess.UserEmail,
+			EventID:          fmt.Sprintf("ev-prompt-%d", time.Now().UnixNano()),
+			SessionID:        req.SessionID,
+			Source:           sess.AppID,
+			Executable:       "user_prompt",
+			FullCommand:      "USER_PROMPT_SUBMITTED",
+			Decision:         "intent",
+			Reason:           "User mission classified at BAP Edge",
+			Timestamp:        time.Now().UTC().Format(time.RFC3339),
+			UserPrompt:       req.UserPrompt,
+			PrimaryIntent:    req.Intent.Primary,
+			SecondaryIntents: req.Intent.Secondary,
+			IntentTags:       req.Intent.Tags,
+			IntentConfidence: req.Intent.Confidence,
+			IntentClassifier: req.Intent.ClassifierVersion,
+			PromptHash:       req.PromptHash,
+			PromptCaptured:   req.PromptCaptureEnabled,
+			UserID:           sess.UserID,
+			UserEmail:        sess.UserEmail,
 		}})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status": "updated",
+		"intent": sess.Intent,
 		"time":   time.Now().UTC(),
 	})
+}
+
+func validIntentCategory(category string) bool {
+	switch strings.ToUpper(strings.TrimSpace(category)) {
+	case "BUG_FIX", "DATABASE_CHANGE", "FEATURE_ENHANCEMENT", "INVESTIGATION", "REFACTOR", "TEST_VERIFICATION", "DOCUMENTATION", "MIGRATION", "DEPLOYMENT_RELEASE", "WORK_MANAGEMENT", "SECURITY_REMEDIATION", "UNKNOWN":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Server) handleResetSessions(w http.ResponseWriter, r *http.Request) {
@@ -1356,13 +1415,14 @@ func (s *Server) handleDemoFleetScale(w http.ResponseWriter, r *http.Request) {
 		AppID   string
 		Prompt  string
 		Action  string
+		Intent  session.IntentContext
 		Members []string
 	}{
-		{"Frontend Squad", "claude-code", "Review the release candidate and verify the UI build.", "npm run test:ui && npm run build", []string{"Alice", "Alex", "Amy", "Aaron", "Abby"}},
-		{"Payments Platform", "copilot", "Validate payment reconciliation changes before deployment.", "pytest tests/payments -q", []string{"Bob", "Brian", "Bella", "Ben", "Boris"}},
-		{"Cloud Ops / SRE", "antigravity", "Inspect production service health and deployment readiness.", "kubectl get pods --all-namespaces", []string{"Carol", "Chris", "Clara", "Cole", "Cynthia"}},
-		{"Security Core", "claude-code", "Review the policy bundle for risky permission changes.", "git diff -- policy.cedar", []string{"Dave", "Dan", "Diana", "Derek", "Daisy"}},
-		{"Data & Analytics", "python-agent", "Reconcile the daily analytics pipeline and report anomalies.", "python verify_pipeline.py --latest", []string{"Eve", "Ethan", "Emma", "Eric", "Elena"}},
+		{"Frontend Squad", "claude-code", "Review the release candidate and verify the UI build.", "npm run test:ui && npm run build", session.IntentContext{Primary: "TEST_VERIFICATION", Secondary: []string{"INVESTIGATION"}, Tags: []string{"UI"}, Confidence: .90, ClassifierVersion: demoIntentClassifierVersion, Source: "demo-fixture", PromptCaptured: true}, []string{"Alice", "Alex", "Amy", "Aaron", "Abby"}},
+		{"Payments Platform", "copilot", "Validate payment reconciliation changes before deployment.", "pytest tests/payments -q", session.IntentContext{Primary: "TEST_VERIFICATION", Secondary: []string{"DEPLOYMENT_RELEASE"}, Confidence: .88, ClassifierVersion: demoIntentClassifierVersion, Source: "demo-fixture", PromptCaptured: true}, []string{"Bob", "Brian", "Bella", "Ben", "Boris"}},
+		{"Cloud Ops / SRE", "antigravity", "Inspect production service health and deployment readiness.", "kubectl get pods --all-namespaces", session.IntentContext{Primary: "DEPLOYMENT_RELEASE", Secondary: []string{"INVESTIGATION"}, Tags: []string{"PRODUCTION", "INFRASTRUCTURE"}, Confidence: .91, ClassifierVersion: demoIntentClassifierVersion, Source: "demo-fixture", PromptCaptured: true}, []string{"Carol", "Chris", "Clara", "Cole", "Cynthia"}},
+		{"Security Core", "claude-code", "Review the policy bundle for risky permission changes.", "git diff -- policy.cedar", session.IntentContext{Primary: "SECURITY_REMEDIATION", Secondary: []string{"INVESTIGATION"}, Tags: []string{"SECURITY"}, Confidence: .86, ClassifierVersion: demoIntentClassifierVersion, Source: "demo-fixture", PromptCaptured: true}, []string{"Dave", "Dan", "Diana", "Derek", "Daisy"}},
+		{"Data & Analytics", "python-agent", "Reconcile the daily analytics pipeline and report anomalies.", "python verify_pipeline.py --latest", session.IntentContext{Primary: "INVESTIGATION", Secondary: []string{"DATABASE_CHANGE"}, Tags: []string{"DATABASE"}, Confidence: .82, ClassifierVersion: demoIntentClassifierVersion, Source: "demo-fixture", PromptCaptured: true}, []string{"Eve", "Ethan", "Emma", "Eric", "Elena"}},
 	}
 
 	enrolled := 0
@@ -1387,22 +1447,29 @@ func (s *Server) handleDemoFleetScale(w http.ResponseWriter, r *http.Request) {
 					SPIFFEID:   spiffe,
 					Hostname:   fmt.Sprintf("DEVHOST-%s", strings.ToUpper(m)),
 					UserPrompt: squad.Prompt,
+					Intent:     squad.Intent,
 				})
 
 				eventTime := time.Now().UTC().Add(time.Duration(-enrolled) * time.Second)
 				ev := audit.Event{
-					EventID:     fmt.Sprintf("demo-fleet-%d-%d", eventTime.UnixNano(), enrolled),
-					SessionID:   sessID,
-					Source:      squad.AppID,
-					Executable:  strings.Fields(squad.Action)[0],
-					FullCommand: squad.Action,
-					Decision:    "allow",
-					Reason:      "Authorized by the active Cedar fleet policy",
-					DurationMs:  1,
-					Timestamp:   eventTime.Format(time.RFC3339Nano),
-					ExitCode:    0,
-					UserPrompt:  squad.Prompt,
-					UserEmail:   email,
+					EventID:          fmt.Sprintf("demo-fleet-%d-%d", eventTime.UnixNano(), enrolled),
+					SessionID:        sessID,
+					Source:           squad.AppID,
+					Executable:       strings.Fields(squad.Action)[0],
+					FullCommand:      squad.Action,
+					Decision:         "allow",
+					Reason:           "Authorized by the active Cedar fleet policy",
+					DurationMs:       1,
+					Timestamp:        eventTime.Format(time.RFC3339Nano),
+					ExitCode:         0,
+					UserPrompt:       squad.Prompt,
+					PrimaryIntent:    squad.Intent.Primary,
+					SecondaryIntents: squad.Intent.Secondary,
+					IntentTags:       squad.Intent.Tags,
+					IntentConfidence: squad.Intent.Confidence,
+					IntentClassifier: squad.Intent.ClassifierVersion,
+					PromptCaptured:   true,
+					UserEmail:        email,
 				}
 				_, _ = s.auditStore.Ingest([]audit.Event{ev})
 				s.sessionStore.RecordEvent(sessID, ev)
@@ -1906,7 +1973,7 @@ func redactedTelemetry(value any) any {
 		case map[string]any:
 			for key, item := range v {
 				switch key {
-				case "user_prompt", "user_id", "user_email", "owner_email", "session_id", "instance_id", "spiffe_id", "hostname":
+				case "user_prompt", "prompt_hash", "user_id", "user_email", "owner_email", "session_id", "instance_id", "spiffe_id", "hostname":
 					if item != "" && item != nil {
 						v[key] = "[Protected: Admin Authentication Required]"
 					}
