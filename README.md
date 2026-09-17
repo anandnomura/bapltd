@@ -39,7 +39,7 @@ BAP divides governance into an ultra-low latency **Client-Side Edge Broker** and
 
 ```mermaid
 graph TD
-    subgraph Central_Infrastructure ["Central Control Plane (Port 8443 / 8444)"]
+    subgraph["Central_Infrastructure - Central Control Plane (Port 8443 / 8444)"]
         CP["bapcontrolplane (HTTPS REST API)"]
         DASH["bapdashboard (React Web UI)"]
         CHAIN["Tamper-Evident SHA-256 Audit Chain"]
