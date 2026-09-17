@@ -170,11 +170,14 @@ Implement the top 3 high-impact enterprise MVP capabilities:
   - Created `JIRA_STORIES.md`: Comprehensive product backlog covering 9 completed agile epics (23 user stories/bugs with acceptance criteria and security rationales) plus 5 future enhancement epics (10 backlog stories spanning visual policy authoring, SPIRE hardware attestation, eBPF/Landlock kernel sandboxing, Cloud KMS notarization, and LLM prompt injection detection).
   - Created `MVP_DEPLOYMENT.md`: Central, production-grade enterprise deployment guide with step-by-step instructions for Windows/Linux supervisors, systemd units, 1-click onboarding, pre-flight diagnostics, phased rollout strategy (Shadow vs Enforce), and emergency incident response.
   - Synchronized `PROJECT_MAP.md`.
-- [x] **Task 5: Root README Enhancement & SPIFFE Workload Identity Integration**
+- [x] **Task 5: Root README Enhancement: SPIFFE, TOFU & Production Governance**
   - Updated `README.md` with complete architectural representation of SPIFFE Workload Identities, Binary Image Attestation (SHA-256), and Ephemeral Scoped On-Behalf-Of (OBO) JWTs.
   - Added dedicated section `## 🆔 Cryptographic Workload Identity & Attestation (SPIFFE)` covering SPIFFE URIs (`spiffe://bap.internal/app/{app_id}/instance/{instance_id}`), 5-stage identity resolution pipeline, dual-identity binding (Operator + Workload), and just-in-time credential injection.
-  - Updated Mermaid architecture topology with SPIFFE registry, attestation flows, Model Context Protocol (`bapmcp`), OS-level process sandboxing (Job Objects/namespaces), and Python SDK agent integration.
-  - Expanded Key Feature Matrix to highlight SPIFFE identities, binary attestation, ephemeral OBO tokens, and native MCP support.
+  - Added dedicated section `## 🔒 Secure Client Communication: TOFU to Enterprise Production` explaining how the Control Plane only communicates with verified clients, Trust-On-First-Use (TOFU) in local dev, transition to strict CI/CD cryptographic whitelisting in production, Mutual TLS (mTLS), One-Time Code (OTC) onboarding, and localhost administrative isolation.
+  - Added high-impact **Dev vs. Production Governance Matrix** comparing attestation, transport security, enrollment, policy modes, admin access, and credential lifetimes.
+  - Updated Mermaid architecture topology with mTLS verified channels, attestation flows, Model Context Protocol (`bapmcp`), OS-level process sandboxing (Job Objects/namespaces), and Python SDK agent integration.
+  - Expanded Key Feature Matrix to highlight TOFU-to-prod whitelisting, mTLS mesh, SPIFFE identities, binary attestation, ephemeral OBO tokens, and native MCP support.
+
 
 
 

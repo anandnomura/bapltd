@@ -40,11 +40,11 @@ BAP divides governance into an ultra-low latency **Client-Side Edge Broker** and
 ```mermaid
 graph TD
     subgraph Central_Infrastructure ["Central Control Plane (Port 8443 / 8444)"]
-        CP["bapcontrolplane (HTTPS REST API)"]
+        CP["bapcontrolplane (mTLS Protected API)"]
         DASH["bapdashboard (React Web UI)"]
         CHAIN["Tamper-Evident SHA-256 Audit Chain"]
         CEDAR_MASTER["Authoritative Policy Store"]
-        SPIFFE_REG["SPIFFE Workload Registry & Attestation"]
+        SPIFFE_REG["SPIFFE Registry & Attestation Engine"]
         
         CP --- DASH
         CP --- CHAIN
@@ -91,7 +91,7 @@ graph TD
 
     BAP_Edge -.->|Async Telemetry Stream| CP
     BAP_Edge -.->|Remote Policy Sync & Kill-Switch| CP
-    BAP_Edge -.->|Binary Attestation & SVID Minting| CP
+    BAP_Edge -.->|mTLS Verified Channel & Attestation (TOFU / Whitelist)| CP
 ```
 
 ### Core Components
@@ -100,7 +100,7 @@ graph TD
 - **`copilot-interceptor`**: Wraps GitHub Copilot CLI executions to prevent defense evasion, shell escaping, and unauthorized credential access.
 - **`bapmcp`**: First-class Model Context Protocol (MCP) server enabling Cursor, VS Code, and IDE agents to govern LLM tool invocations natively via JSON-RPC stdio.
 - **`python-agent` (`bap_sdk`)**: Production-ready Python SDK client for programmatic governance of autonomous agent workflows, workers, and pipelines.
-- **`bapcontrolplane`**: Central server managing the SPIFFE Workload Registry, binary attestation (SHA-256), One-Time Code (OTC) enrollment, ephemeral On-Behalf-Of (OBO) JWT grants, dynamic Cedar policy distribution, and fleet-wide emergency kill-switches.
+- **`bapcontrolplane`**: Central server managing the SPIFFE Workload Registry, binary attestation engine (TOFU in Dev, strict whitelisting in Prod), One-Time Code (OTC) enrollment, ephemeral On-Behalf-Of (OBO) JWT grants, and mutual TLS (mTLS) client verification with localhost-isolated admin controls.
 - **`bapdashboard`**: Real-time visual observability cockpits (`inspector_v2.html` on 8443 and React UI on 8444) rendering live agent presence radars, allow/deny ratios, SPIFFE identity registries, and tamper-evident audit streams.
 
 ---
@@ -110,6 +110,8 @@ graph TD
 | Capability | How It Protects You |
 |---|---|
 | **SPIFFE Workload Identity** | Issues cryptographic, standard-compliant SVIDs (`spiffe://bap.internal/app/{app_id}/instance/{instance_id}`) binding every agent action to a provable workload identity. |
+| **TOFU to Production Whitelisting** | Rapid developer iteration with automated **Trust-On-First-Use (TOFU)** hash locking, smoothly transitioning to strict cryptographic release whitelisting in production. |
+| **mTLS & Secure Client Mesh** | Control Plane enforces Mutual TLS with pinned Corporate Root CAs, terminating unauthorized or unattested client connections at the transport layer. |
 | **Binary Image Attestation** | Validates SHA-256 checksums of agent runtime binaries against signed baselines before issuing credentials or granting execution rights. |
 | **Ephemeral Scoped OBO JWTs** | Mints short-lived (5-minute) On-Behalf-Of tokens with strict audience and role constraints. Agents never hold persistent cloud API keys or master credentials. |
 | **AWS Cedar Policy Kernel** | Author human-readable, mathematically verifiable policies (e.g., allow `git` and `npm`, forbid access to `~/.aws`, `.env`, and raw sockets). |
@@ -230,6 +232,55 @@ This guarantees **unforgeable non-repudiation**: audit logs prove not only that 
 - The control plane mints short-lived (5-minute TTL) On-Behalf-Of JWTs with tightly scoped audiences.
 - The AI agent never touches raw cloud master keys, production tokens, or `.env` files.
 - Tokens are injected just-in-time into isolated OS sandboxes and expire immediately after tool execution.
+
+---
+
+## 🔒 Secure Client Communication: TOFU to Enterprise Production
+
+A central architectural requirement of BAP is that the **Control Plane only communicates with verified, cryptographically attested clients**. Unauthenticated tools, rogue scripts, or network attackers cannot query policy, inject telemetry, or mint credentials.
+
+BAP solves the friction vs. security dilemma through an intentional, two-tier governance model:
+
+### 1. Trust-On-First-Use (TOFU) in Development
+Developer workstations require high velocity. Forcing engineers to pre-register new binary hashes on every local SDK tweak or tool update creates friction.
+- **Development Profile (`types.ProfileDev`)**: BAP enables **Trust-On-First-Use (TOFU)**. On first contact, the control plane records and pins the agent runtime's SHA-256 binary hash (`agent.EnrolledBinaryHash`).
+- **Tamper Lockdown**: Once enrolled, the hash is permanently anchored. If malware or an untrusted process modifies the binary, injects a shim, or swaps the executable, BAP immediately halts execution:
+  ```text
+  [ATTESTATION FAILURE] binary hash mismatch with enrolled development hash:
+  got: a1b2c3d4... (modified) | expected: e5f6a7b8... (enrolled)
+  ```
+
+### 2. Strict Cryptographic Whitelisting in Production
+In production pipelines (CI/CD build runners, Kubernetes pods, automated workflow daemons), **TOFU is explicitly disabled**:
+- **Production Profile (`types.ProfileProd`)**: Every binary must be pre-declared in an authoritative cryptographic whitelist (`AllowedBinaryHashes`).
+- **Zero-Tolerance Gate**: If an unattested or unlisted binary requests authorization or attempts to connect, the control plane rejects it instantly:
+  ```text
+  [SECURITY REJECTION] unauthorized binary image hash in production: deadbeef...
+  ```
+- All production binaries must be signed and promoted through enterprise Release Engineering pipelines.
+
+### 3. Mutual TLS (mTLS) & Pinned CA Verification
+- **Bidirectional Handshake**: Both `bapcontrolplane` and connecting clients (`bapedge`, standalone `bapdashboard`) can enforce mutual TLS (`-client-cert`, `-client-key`, and `-ca-cert`).
+- **Transport-Layer Dropping**: Any client connection lacking a valid certificate signed by the corporate BAP Root CA (`bap-root-ca.crt`) is terminated at the TLS handshake before reaching application logic.
+- **One-Time Code (OTC) Enrollment**: Developer workstation onboarding uses single-use, cryptographically random OTC tokens (`/api/v1/enroll/otc`) that expire upon first redemption, eliminating replay attacks.
+
+### 4. Gated Administrative Isolation (`localhost`-Only by Default)
+- **Localhost Shielding**: Administrative endpoints (global kill-switches, policy reloads, session revocations) are bound strictly to `localhost` (`127.0.0.1`) by default (`allowRemoteAdmin = false`).
+- **File-Secured Admin Bearer**: Admin actions require high-entropy bearer credentials persisted in `.bap-admin-token` with strict POSIX/NTFS file access permissions (`0600`).
+- **Remote Admin Gating**: Opening admin APIs across networks requires explicit operator flags, mTLS verification, and strict origin validation (`BAP_ALLOWED_ORIGINS`).
+
+---
+
+### 🛡️ Dev vs. Production Governance Matrix
+
+| Governance Dimension | Local Development (`ProfileDev`) | Enterprise Production (`ProfileProd`) |
+|---|---|---|
+| **Binary Attestation** | **TOFU (Trust-On-First-Use)**: Auto-pins on first run, locks against modification | **Strict Cryptographic Whitelist**: Only pre-signed CI/CD release hashes permitted |
+| **Transport Layer** | Local TLS (`-tls-auto`) / Loopback HTTPS | **Enforced mTLS**: Bidirectional verification with pinned Corporate Root CA |
+| **Client Enrollment** | Self-service One-Time Codes (OTC) or developer identity | Pre-provisioned SVIDs and enterprise certificate enrollment |
+| **Cedar Policy Mode** | **Audit / Shadow Mode**: Telemetry baselining with zero breakage | **Strict Enforce Mode**: Real-time Zero-Trust hard blocking of unauthorized calls |
+| **Admin API Access** | Local loopback only (`127.0.0.1`) with file-secured admin token | Isolated management VPC / ingress gateway with SSO & hardware-backed mTLS |
+| **Workload Credentials** | Short-lived OBO JWTs with automatic developer refresh | Ephemeral 5-minute scoped OBO JWTs restricted to specific resource ARNs |
 
 ---
 
