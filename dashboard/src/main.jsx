@@ -5,6 +5,7 @@ import './style.css';
 
 const API = '/api/v1';
 const PAGE_SIZE = 25;
+const PRIVILEGED_SESSION_MS = 60_000;
 const PROTECTED = '[Protected: Leadership Authentication Required]';
 const RISK_ORDER = { CRITICAL: 4, ELEVATED: 3, HEALTHY: 2, STOPPED: 1, REVOKED: 0 };
 
@@ -133,7 +134,9 @@ function normalizeFleet(data, sensitive, now, localStatus) {
 function App() {
   const [data, setData] = useState(null);
   const [sensitive, setSensitive] = useState(null);
-  const [adminToken, setAdminToken] = useState(() => sessionStorage.getItem('bap_admin_token') || '');
+  const [adminToken, setAdminToken] = useState('');
+  const [privilegedUntil, setPrivilegedUntil] = useState(0);
+  const [runtime, setRuntime] = useState({ environment: 'production', demo_mode: false });
   const [now, setNow] = useState(Date.now());
   const [connected, setConnected] = useState(false);
   const [lastRefresh, setLastRefresh] = useState(0);
@@ -150,6 +153,13 @@ function App() {
   const [localStatus, setLocalStatus] = useState({});
   const modalRef = useRef(null);
   const tokenRef = useRef(null);
+
+  useEffect(() => {
+    fetch('/dashboard-config', { credentials: 'omit', cache: 'no-store' })
+      .then((response) => response.ok ? response.json() : Promise.reject(new Error(`HTTP ${response.status}`)))
+      .then((config) => setRuntime({ environment: config.environment || 'production', demo_mode: Boolean(config.demo_mode) }))
+      .catch(() => setRuntime({ environment: 'production', demo_mode: false }));
+  }, []);
 
   const refresh = async (token = adminToken) => {
     try {
@@ -174,6 +184,12 @@ function App() {
   }, [adminToken]);
   useEffect(() => { if (modal && modalRef.current && !modalRef.current.open) { modalRef.current.showModal(); setTimeout(() => tokenRef.current?.focus(), 0); } }, [modal]);
   useEffect(() => { setPage(0); }, [query, filter, sortMode]);
+  useEffect(() => {
+    if (adminToken && privilegedUntil && now >= privilegedUntil) {
+      setAdminToken(''); setSensitive(null); setPrivilegedUntil(0);
+      setNotice('Privileged session expired. Protected telemetry is locked.');
+    }
+  }, [adminToken, now, privilegedUntil]);
 
   const fleet = useMemo(() => normalizeFleet(data, sensitive, now, localStatus), [data, sensitive, now, localStatus]);
   const incidents = useMemo(() => fleet.filter((a) => ['CRITICAL', 'ELEVATED'].includes(a.risk)).sort((a, b) => RISK_ORDER[b.risk] - RISK_ORDER[a.risk] || a.lastSeen - b.lastSeen), [fleet]);
@@ -232,14 +248,14 @@ function App() {
         await authenticatedFetch('/control/agent/kill', token, { target, action: modal.type.toLowerCase(), user_id: modal.agent.owner });
         setLocalStatus((prev) => ({ ...prev, [target]: modal.type === 'STOP' ? 'closed' : modal.type === 'REVOKE' ? 'revoked' : 'active' }));
       }
-      setAdminToken(token); sessionStorage.setItem('bap_admin_token', token); setNotice(modal.success); closeModal(); await refresh(token);
+      setAdminToken(token); setPrivilegedUntil(Date.now() + PRIVILEGED_SESSION_MS); setNotice(modal.success); closeModal(); await refresh(token);
     } catch (error) { setNotice(`Action failed: ${error.message}`); }
     finally { setPending(false); }
   }
 
   const openAction = (type, overrides = {}) => {
     const configs = {
-      REVEAL: { title: 'Start privileged demo session', detail: 'Unlock operator identity and prompt telemetry for this browser session.', confirm: 'Unlock telemetry', success: 'Privileged telemetry session active.' },
+      REVEAL: { title: 'Start privileged session', detail: 'Unlock operator identity and prompt telemetry for 60 seconds. The credential remains only in memory.', confirm: 'Unlock telemetry', success: 'Privileged telemetry session active for 60 seconds.' },
       START: { title: 'Start 25-agent demo', detail: 'Reset and seed the control plane with 25 active governed agents and live execution telemetry.', confirm: 'Start demo', success: '25-agent fleet demo started.' },
       INCIDENT: { title: 'Trigger controlled incident', detail: 'Emit three denied exfiltration attempts through the control plane and promote the workload into the incident queue.', confirm: 'Trigger incident', success: 'Critical incident injected into control-plane telemetry.' },
       RESET: { title: 'Reset demo scenario', detail: 'Clear session state, lift Global Freeze, and recreate a clean 25-agent fleet.', confirm: 'Reset scenario', success: 'Demo reset to a clean 25-agent fleet.' },
@@ -252,10 +268,10 @@ function App() {
   return <div className={`app-shell ${killSwitch ? 'is-frozen' : ''}`}>
     <header className="topbar">
       <div className="brand-lockup"><span className="brand-mark"><Icon name="shield" size={19}/></span><div><strong>BAP</strong><span>Fleet Command</span></div></div>
-      <div className="environment"><span>PRODUCTION</span><b>Enterprise control plane</b></div>
+      <div className="environment"><span>{runtime.environment.toUpperCase()}</span><b>{runtime.demo_mode ? 'Isolated demonstration control plane' : 'Enterprise control plane'}</b></div>
       <div className="topbar-actions">
         <div className={`connection ${connected ? 'online' : ''}`}><i/>{connected ? 'Live telemetry' : 'Reconnecting'}<small>{lastRefresh ? elapsed(now - lastRefresh) : 'waiting'}</small></div>
-        <button className={sensitive ? 'session-active' : 'quiet'} onClick={() => sensitive ? (setSensitive(null), setAdminToken(''), sessionStorage.removeItem('bap_admin_token')) : openAction('REVEAL')}><Icon name={sensitive ? 'unlock' : 'lock'}/>{sensitive ? 'Privileged session' : 'Unlock prompts'}</button>
+        <button className={sensitive ? 'session-active' : 'quiet'} onClick={() => sensitive ? (setSensitive(null), setAdminToken(''), setPrivilegedUntil(0)) : openAction('REVEAL')}><Icon name={sensitive ? 'unlock' : 'lock'}/>{sensitive ? `Privileged · ${Math.max(0, Math.ceil((privilegedUntil - now) / 1000))}s` : 'Unlock prompts'}</button>
         <button className={`freeze-button ${killSwitch ? 'release' : ''}`} onClick={() => openAction('FREEZE')}><Icon name={killSwitch ? 'play' : 'stop'}/>{killSwitch ? 'Release Freeze' : 'Global Freeze'}</button>
       </div>
     </header>
@@ -268,7 +284,7 @@ function App() {
         <div className="metric current"><span>Operating now</span><strong>{activeCount}</strong><small><i/> {currentActions} executing actions</small></div>
         <div className="metric"><span>Incident queue</span><strong className={incidents.length ? 'warn' : ''}>{incidents.length}</strong><small>{incidents.filter((agent) => agent.risk === 'CRITICAL').length} critical · {incidents.filter((agent) => agent.risk === 'ELEVATED').length} elevated</small></div>
         <div className="metric history"><span>Historical decisions</span><strong>{eventHistory.length}</strong><small><b>{allowedHistory} allowed</b> · {deniedHistory} denied</small></div>
-        <div className="metric history"><span>Audit integrity</span><strong className="compact">{data?.chain_status === 'corrupted' ? 'At risk' : 'Verified'}</strong><small>{data?.policy_version || 'Policy synced'} · immutable chain</small></div>
+        <div className="metric history"><span>Audit integrity</span><strong className="compact">{data?.chain_status === 'valid' ? 'Verified' : data?.chain_status === 'corrupted' ? 'At risk' : 'Unverified'}</strong><small>{data?.policy_version || 'Policy status unavailable'} · tamper-evident chain</small></div>
       </section>
 
       <section className="workspace">
@@ -292,7 +308,7 @@ function App() {
                 <span className="tile-foot"><small>{agent.appId}</small><small>{stopped ? agent.status : elapsed(agent.lastSeen)}</small></span>
               </button>;
             })}
-            {!visibleFleet.length && <div className="empty-fleet"><Icon name="search" size={22}/><strong>No agents match this view</strong><span>Change filters or start the demo fleet.</span></div>}
+            {!visibleFleet.length && <div className="empty-fleet"><Icon name="search" size={22}/><strong>No agents match this view</strong><span>{runtime.demo_mode ? 'Change filters or start the demo fleet.' : 'Change filters or wait for governed agents to connect.'}</span></div>}
           </div>
         </div>
 
@@ -329,7 +345,7 @@ function App() {
         </aside>
       </section>
 
-      <section className="demo-bar"><div><span className="demo-kicker">DEMO CONTROL</span><p>Deterministic orchestration backed by control-plane telemetry</p></div><div className="demo-actions"><button onClick={() => openAction('START')}><Icon name="play"/>Start Demo</button><button className="incident-trigger" onClick={() => openAction('INCIDENT')}><Icon name="alert"/>Trigger Incident</button><button onClick={() => openAction('RESET')}><Icon name="reset"/>Reset</button><button onClick={() => openAction('CLEANUP')}><Icon name="trash"/>Cleanup</button></div></section>
+      {runtime.demo_mode && <section className="demo-bar"><div><span className="demo-kicker">DEMO CONTROL</span><p>Deterministic orchestration backed by control-plane telemetry</p></div><div className="demo-actions"><button onClick={() => openAction('START')}><Icon name="play"/>Start Demo</button><button className="incident-trigger" onClick={() => openAction('INCIDENT')}><Icon name="alert"/>Trigger Incident</button><button onClick={() => openAction('RESET')}><Icon name="reset"/>Reset</button><button onClick={() => openAction('CLEANUP')}><Icon name="trash"/>Cleanup</button></div></section>}
     </main>
 
     <dialog ref={modalRef} className="action-dialog" onClose={() => setModal(null)}><form onSubmit={runAction}><div className={`dialog-icon ${['FREEZE', 'REVOKE', 'INCIDENT'].includes(modal?.type) ? 'danger' : ''}`}><Icon name={['FREEZE', 'STOP'].includes(modal?.type) ? 'stop' : modal?.type === 'REVOKE' ? 'ban' : modal?.type === 'INCIDENT' ? 'alert' : 'shield'} size={21}/></div><p className="eyebrow">Administrative confirmation</p><h2>{modal?.title}</h2><p>{modal?.detail}</p>{!adminToken && <label>Admin credential<input ref={tokenRef} aria-label="Admin credential" type="password" autoComplete="off" value={tokenInput} onChange={(event) => setTokenInput(event.target.value)} placeholder="Enter control-plane token" required/></label>}<div className="dialog-actions"><button type="button" onClick={closeModal}>Cancel</button><button className={['FREEZE', 'STOP', 'REVOKE', 'INCIDENT', 'CLEANUP'].includes(modal?.type) ? 'danger' : 'primary'} type="submit" disabled={pending || (!adminToken && !tokenInput)}>{pending ? 'Working…' : modal?.confirm || 'Confirm action'}</button></div></form></dialog>

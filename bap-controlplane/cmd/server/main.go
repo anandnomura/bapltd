@@ -39,7 +39,11 @@ func main() {
 	keyPath := flag.String("tls-key", "", "Path to TLS private key PEM file")
 	dbPath := flag.String("db", "", "Path to SQLite database file for state persistence (default: bap-controlplane.db, 'memory' for in-memory)")
 	allowedOrigins := flag.String("allowed-origins", os.Getenv("BAP_ALLOWED_ORIGINS"), "Comma-separated exact browser origins; same-origin only by default")
+	demoMode := flag.Bool("demo-mode", false, "Enable destructive synthetic demo endpoints (or set BAP_DEMO_MODE=true)")
 	flag.Parse()
+	if envDemo := strings.TrimSpace(os.Getenv("BAP_DEMO_MODE")); envDemo != "" {
+		*demoMode = envDemo == "1" || strings.EqualFold(envDemo, "true")
+	}
 	if (*certPath == "") != (*keyPath == "") {
 		log.Fatal("Both -tls-cert and -tls-key are required")
 	}
@@ -155,6 +159,7 @@ func main() {
 
 	server := api.NewServer(regStore, otcStore, minter, policyStore, auditStore, sessionStore)
 	server.SetAdminSecurity(*adminToken, *allowRemoteAdmin)
+	server.SetDemoMode(*demoMode)
 	if err := server.SetAllowedOrigins(strings.Split(*allowedOrigins, ",")); err != nil {
 		log.Fatal(err)
 	}

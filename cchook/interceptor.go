@@ -118,6 +118,38 @@ type ExecResponse struct {
 	DecisionOnly bool   `json:"decision_only,omitempty"`
 }
 
+// unwrapBrokerCommand recognizes only the exact command shape emitted by this
+// hook. Agent-authored lookalikes are never trusted: the embedded command is
+// decoded, bound to the current session, and sent through Cedar again.
+func unwrapBrokerCommand(command, expectedSessionID string) (string, bool, error) {
+	fields := strings.Fields(command)
+	if len(fields) == 0 {
+		return command, false, nil
+	}
+	executable := strings.Trim(fields[0], `"'`)
+	executable = filepath.Base(strings.ReplaceAll(executable, `\`, "/"))
+	switch strings.ToLower(executable) {
+	case "bapedge", "bapedge.exe", "ltd-agent", "ltd-agent.exe":
+	default:
+		return command, false, nil
+	}
+	if len(fields) != 8 || fields[1] != "exec" || fields[2] != "--source" || fields[3] != "claude-code" || fields[4] != "--session-id" || fields[6] != "--cmd-b64" {
+		return "", true, fmt.Errorf("untrusted BAPEdge invocation: expected the broker-owned exec wrapper")
+	}
+	if expectedSessionID == "" || fields[5] != expectedSessionID {
+		return "", true, fmt.Errorf("untrusted BAPEdge invocation: session binding mismatch")
+	}
+	payload, err := base64.StdEncoding.DecodeString(fields[7])
+	if err != nil {
+		return "", true, fmt.Errorf("untrusted BAPEdge invocation: invalid command payload")
+	}
+	decoded := strings.TrimSpace(string(payload))
+	if decoded == "" {
+		return "", true, fmt.Errorf("untrusted BAPEdge invocation: empty command payload")
+	}
+	return decoded, true, nil
+}
+
 func resolveServerURL() string {
 	if s := os.Getenv("BAP_SERVER_URL"); s != "" {
 		return strings.TrimRight(s, "/")
@@ -666,25 +698,6 @@ func main() {
 		return
 	}
 
-	// If command is already a bapedge exec wrapper, allow it directly without recursive re-wrapping
-	cmdLower := strings.ToLower(command)
-	if strings.Contains(cmdLower, "--cmd-b64") || strings.HasPrefix(cmdLower, "bapedge") || strings.HasPrefix(cmdLower, ".\\bapedge") || strings.HasPrefix(cmdLower, "./bapedge") || strings.HasPrefix(cmdLower, "ltd-agent") {
-		outputDecision("allow", "", "Pre-wrapped BAPEdge execution permitted")
-		return
-	}
-
-	// Pre-flight anti-tampering check on shell command
-	if isTamper, tamperReason := isTamperingCommand(command); isTamper {
-		outputDecision("deny", tamperReason, "Direct modification or tampering with BAP configuration, policies, hooks, or binaries is prohibited.")
-		return
-	}
-
-	// Pre-flight check for shell command directory traversal escaping workspace
-	if checkCommandWorkspaceEscape(workspaceRoot, command) {
-		outputDecision("deny", fmt.Sprintf("Directory traversal outside workspace is forbidden in command: %s", command), "Commands cannot navigate or reference paths outside the project workspace root. Child projects (e.g. Maven child modules) inside the workspace are permitted.")
-		return
-	}
-
 	// 4. Resolve session identifier
 	// Lifecycle hook IDs take precedence over workspace marker files so
 	// concurrent Claude sessions do not inherit each other's authority.
@@ -746,6 +759,24 @@ func main() {
 			wCmd := exec.Command(ltdBin, "watch", fmt.Sprintf("--pid=%d", ppid), fmt.Sprintf("--server=%s", serverURL), fmt.Sprintf("--session-id=%s", sessionID), "--detach")
 			_ = wCmd.Start()
 		}
+	}
+
+	decodedCommand, brokerWrapped, unwrapErr := unwrapBrokerCommand(command, sessionID)
+	if unwrapErr != nil {
+		outputDecision("deny", unwrapErr.Error(), "Direct or malformed BAPEdge invocation is not trusted.")
+		return
+	}
+	command = decodedCommand
+
+	// The decoded payload—not the wrapper text—is subject to the same local
+	// invariants and Cedar decision as an original agent command.
+	if isTamper, tamperReason := isTamperingCommand(command); isTamper {
+		outputDecision("deny", tamperReason, "Direct modification or tampering with BAP configuration, policies, hooks, or binaries is prohibited.")
+		return
+	}
+	if checkCommandWorkspaceEscape(workspaceRoot, command) {
+		outputDecision("deny", fmt.Sprintf("Directory traversal outside workspace is forbidden in command: %s", command), "Commands cannot navigate or reference paths outside the project workspace root. Child projects (e.g. Maven child modules) inside the workspace are permitted.")
+		return
 	}
 
 	// 5. Resolve bapedge (LTD) or ltd-agent executable
@@ -818,6 +849,10 @@ func main() {
 		mode := resolveEnforcementMode()
 		if mode == "audit" || mode == "shadow" {
 			outputDecision("allow", "", "Command authorized in audit mode")
+			return
+		}
+		if brokerWrapped {
+			outputDecision("allow", "", "Broker wrapper session-bound and payload re-authorized by BAP Cedar policy")
 			return
 		}
 		// Rewrite tool input command to route through bapedge exec using safe structured --cmd-b64

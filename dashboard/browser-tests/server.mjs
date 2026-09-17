@@ -10,7 +10,7 @@ const build = spawnSync('go', ['build', '-o', binary, './cmd/server'], { cwd: jo
 if (build.status !== 0) process.exit(build.status || 1);
 const dashboardBuild = spawnSync('go', ['build', '-o', dashboard, './cmd/dashboard'], { cwd: join(root, 'bap-controlplane'), stdio: 'inherit', windowsHide: true });
 if (dashboardBuild.status !== 0) process.exit(dashboardBuild.status || 1);
-const server = spawn(binary, ['-port', '18480', '-db', 'memory', '-policy', join(root, 'bap-edge/policy.cedar'), '-schema', join(root, 'bap-edge/schema.json')], { cwd: work, env: { ...process.env, BAP_ADMIN_TOKEN: 'browser-test-admin', BAP_SECRET_KEY: 'browser-test-signing-secret' }, stdio: 'inherit', windowsHide: true });
+const server = spawn(binary, ['-port', '18480', '-db', 'memory', '-policy', join(root, 'bap-edge/policy.cedar'), '-schema', join(root, 'bap-edge/schema.json')], { cwd: work, env: { ...process.env, BAP_ADMIN_TOKEN: 'browser-test-admin', BAP_SECRET_KEY: 'browser-test-signing-secret', BAP_DEMO_MODE: 'true' }, stdio: 'inherit', windowsHide: true });
 const dashboardServer = spawn(dashboard, ['-port', '18481', '-control-plane', 'http://127.0.0.1:18480'], { cwd: work, stdio: 'inherit', windowsHide: true });
 function stop() { dashboardServer.kill(); server.kill(); }
 process.on('SIGTERM', stop); process.on('SIGINT', stop); process.on('exit', stop);

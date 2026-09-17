@@ -25,8 +25,14 @@ func (s *Server) registerControlPlaneRoutes() {
 		if r.TLS != nil {
 			scheme = "https"
 		}
-		_ = json.NewEncoder(w).Encode(map[string]string{
+		mode := "production"
+		if s.demoMode {
+			mode = "demo"
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"control_plane_url": fmt.Sprintf("%s://%s", scheme, r.Host),
+			"environment":       mode,
+			"demo_mode":         s.demoMode,
 		})
 	})
 

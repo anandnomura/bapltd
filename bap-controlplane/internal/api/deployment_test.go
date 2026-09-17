@@ -59,11 +59,30 @@ func TestAdministrativeRoutesRejectMissingCredentials(t *testing.T) {
 		t.Run(path, func(t *testing.T) {
 			s := setupTestServer()
 			s.SetAdminSecurity("test-admin", true)
+			s.SetDemoMode(true)
 			r := httptest.NewRequest(http.MethodPost, path, nil)
 			w := httptest.NewRecorder()
 			s.Handler().ServeHTTP(w, r)
 			if w.Code != http.StatusUnauthorized {
 				t.Fatalf("status = %d, want 401", w.Code)
+			}
+		})
+	}
+}
+
+func TestDemoRoutesAreDisabledByDefault(t *testing.T) {
+	for _, path := range []string{
+		"/api/v1/sessions/reset", "/api/v1/demo/exec-safe", "/api/v1/demo/exec-attack", "/api/v1/demo/fleet-scale",
+	} {
+		t.Run(path, func(t *testing.T) {
+			s := setupTestServer()
+			s.SetAdminSecurity("test-admin", true)
+			r := httptest.NewRequest(http.MethodPost, path, nil)
+			r.Header.Set("Authorization", "Bearer test-admin")
+			w := httptest.NewRecorder()
+			s.Handler().ServeHTTP(w, r)
+			if w.Code != http.StatusNotFound {
+				t.Fatalf("status = %d, want 404 while demo mode is disabled", w.Code)
 			}
 		})
 	}

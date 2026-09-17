@@ -11,6 +11,7 @@ cd /d "%ROOT_DIR%"
 set "LTD_AUDIT_LOG=%ROOT_DIR%ltd-audit.jsonl"
 if exist "%LTD_AUDIT_LOG%" del /f /q "%LTD_AUDIT_LOG%" >nul 2>&1
 set "BAP_TEST_MODE=1"
+set "BAP_DEMO_MODE=1"
 set "GOTOOLCHAIN=auto"
 set "PATH=%ROOT_DIR%dist\windows-amd64\claude-client;%ROOT_DIR%dist\windows-amd64\claude-client\cchook;%ROOT_DIR%dist\windows-amd64\controlplane;%ROOT_DIR%dist\windows-amd64\gateway;%ROOT_DIR%dist\windows-amd64;%PATH%"
 
