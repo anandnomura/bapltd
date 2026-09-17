@@ -44,7 +44,7 @@ graph TD
         CP --- POLICY_STORE
     end
 
-    subgraph Developer_Workstation ["Developer Workstation (%USERPROFILE%\\bin)"]
+    subgraph Developer_Workstation ["Developer Workstation (Local Client)"]
         subgraph Agents ["AI Agent Runtimes"]
             CLAUDE["Claude Code CLI (claude.exe)"]
             COPILOT["GitHub Copilot CLI"]

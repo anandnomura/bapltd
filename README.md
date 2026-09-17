@@ -39,7 +39,7 @@ BAP divides governance into an ultra-low latency **Client-Side Edge Broker** and
 
 ```mermaid
 graph TD
-    subgraph["Central_Infrastructure - Central Control Plane (Port 8443 / 8444)"]
+    subgraph Central_Infrastructure ["Central Control Plane (Port 8443 / 8444)"]
         CP["bapcontrolplane (HTTPS REST API)"]
         DASH["bapdashboard (React Web UI)"]
         CHAIN["Tamper-Evident SHA-256 Audit Chain"]
@@ -62,8 +62,8 @@ graph TD
             COPSHIM["copilot-interceptor"]
         end
 
-        subgraph BAP_Edge ["bapedge — Local Trusted Daemon"]
-            ENGINE["In-Process Cedar Engine (<1.5ms)"]
+        subgraph BAP_Edge ["bapedge - Local Trusted Daemon"]
+            ENGINE["In-Process Cedar Engine (Sub-2ms)"]
             CACHE["Local Policy Cache (policy.cedar)"]
             LOCAL_AUDIT[".bap/ & ltd-audit.jsonl"]
         end
@@ -79,7 +79,7 @@ graph TD
         BAP_Edge --> LOCAL_AUDIT
     end
 
-    BAP_Edge -.->|Async Telemetry Stream (150ms)| CP
+    BAP_Edge -.->|Async Telemetry Stream| CP
     BAP_Edge -.->|Remote Policy Sync & Kill-Switch| CP
 ```
 
