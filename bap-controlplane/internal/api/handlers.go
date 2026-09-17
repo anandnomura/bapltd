@@ -789,7 +789,8 @@ func (s *Server) handleInspectorData(w http.ResponseWriter, r *http.Request) {
 	var revokedSessions []string
 	var revokedUsers []string
 	if s.sessionStore != nil {
-		sessionsList = s.sessionStore.ListVisible(50, 2*time.Hour)
+		// The command center paginates on the client and searches the full fleet.
+		sessionsList = s.sessionStore.ListVisible(1000, 2*time.Hour)
 		revokedSessions = s.sessionStore.ListRevoked()
 		revokedUsers = s.sessionStore.ListRevokedUsers()
 	}
@@ -1234,6 +1235,22 @@ func (s *Server) handleDemoExecAttack(w http.ResponseWriter, r *http.Request) {
 	reason := "BLOCKED BY GATEWAY PEP: Rogue agent credential exfiltration & egress dropped at perimeter (HTTP 401/403)"
 	actionID := fmt.Sprintf("act-attack-%d", time.Now().UnixNano())
 
+	// Model the incident as a governed session so its escalation is sourced
+	// entirely from control-plane telemetry and isolated from healthy agents.
+	if s.sessionStore != nil {
+		_, _ = s.sessionStore.Start(session.SessionStartRequest{
+			SessionID:  "sess-rogue-agent",
+			AppID:      "gateway-audit-agent",
+			InstanceID: "quarantine-probe-01",
+			AgentName:  "Credential Audit Probe",
+			UserID:     "security-demo",
+			UserEmail:  "security.demo@enterprise.internal",
+			SPIFFEID:   "spiffe://bap.internal/app/gateway-audit-agent/instance/quarantine-probe-01",
+			Hostname:   "SEC-LAB-01",
+			UserPrompt: "Test whether protected financial records can be exported outside the approved boundary.",
+		})
+	}
+
 	ev := audit.Event{
 		EventID:     actionID,
 		Source:      "bap-gateway-pep",
@@ -1261,15 +1278,9 @@ func (s *Server) handleDemoExecAttack(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Record activity on active session if available
+	// Record activity on the incident session itself.
 	if s.sessionStore != nil {
-		sessions := s.sessionStore.List(50)
-		for _, sess := range sessions {
-			if sess.Status == "active" {
-				s.sessionStore.RecordEvent(sess.SessionID, ev)
-				break
-			}
-		}
+		s.sessionStore.RecordEvent("sess-rogue-agent", ev)
 	}
 
 	actionRec := &DemoActionRecord{
@@ -1315,6 +1326,9 @@ func (s *Server) handleDemoFleetScale(w http.ResponseWriter, r *http.Request) {
 	// Always clear previous fleet
 	if s.sessionStore != nil {
 		s.sessionStore.Reset()
+		for _, revokedUser := range s.sessionStore.ListRevokedUsers() {
+			s.sessionStore.RestoreUser(revokedUser)
+		}
 	}
 	if s.registry != nil {
 		s.registry.Reset()
@@ -1323,17 +1337,18 @@ func (s *Server) handleDemoFleetScale(w http.ResponseWriter, r *http.Request) {
 	baseSquads := []struct {
 		Squad   string
 		AppID   string
+		Prompt  string
+		Action  string
 		Members []string
 	}{
-		{"Frontend Squad", "claude-code", []string{"Alice", "Alex", "Amy", "Aaron", "Abby"}},
-		{"Payments Platform", "copilot", []string{"Bob", "Brian", "Bella", "Ben", "Boris"}},
-		{"Cloud Ops / SRE", "antigravity", []string{"Carol", "Chris", "Clara", "Cole", "Cynthia"}},
-		{"Security Core", "claude-code", []string{"Dave", "Dan", "Diana", "Derek", "Daisy"}},
-		{"Data & Analytics", "python-agent", []string{"Eve", "Ethan", "Emma", "Eric", "Elena"}},
+		{"Frontend Squad", "claude-code", "Review the release candidate and verify the UI build.", "npm run test:ui && npm run build", []string{"Alice", "Alex", "Amy", "Aaron", "Abby"}},
+		{"Payments Platform", "copilot", "Validate payment reconciliation changes before deployment.", "pytest tests/payments -q", []string{"Bob", "Brian", "Bella", "Ben", "Boris"}},
+		{"Cloud Ops / SRE", "antigravity", "Inspect production service health and deployment readiness.", "kubectl get pods --all-namespaces", []string{"Carol", "Chris", "Clara", "Cole", "Cynthia"}},
+		{"Security Core", "claude-code", "Review the policy bundle for risky permission changes.", "git diff -- policy.cedar", []string{"Dave", "Dan", "Diana", "Derek", "Daisy"}},
+		{"Data & Analytics", "python-agent", "Reconcile the daily analytics pipeline and report anomalies.", "python verify_pipeline.py --latest", []string{"Eve", "Ethan", "Emma", "Eric", "Elena"}},
 	}
 
 	enrolled := 0
-	basePID := 12000
 
 	for _, squad := range baseSquads {
 		for i, m := range squad.Members {
@@ -1344,19 +1359,36 @@ func (s *Server) handleDemoFleetScale(w http.ResponseWriter, r *http.Request) {
 			email := fmt.Sprintf("%s.dev@enterprise.internal", strings.ToLower(m))
 			spiffe := fmt.Sprintf("spiffe://bap.internal/app/%s/instance/%s", squad.AppID, inst)
 			sessID := fmt.Sprintf("sess-%s", inst)
-			pid := basePID + enrolled*173
-
 			if s.sessionStore != nil {
 				_, _ = s.sessionStore.Start(session.SessionStartRequest{
 					SessionID:  sessID,
 					AppID:      squad.AppID,
 					InstanceID: inst,
+					AgentName:  fmt.Sprintf("%s · %s", squad.Squad, m),
 					UserID:     strings.ToLower(m),
 					UserEmail:  email,
 					SPIFFEID:   spiffe,
-					ClientPID:  pid,
 					Hostname:   fmt.Sprintf("DEVHOST-%s", strings.ToUpper(m)),
+					UserPrompt: squad.Prompt,
 				})
+
+				eventTime := time.Now().UTC().Add(time.Duration(-enrolled) * time.Second)
+				ev := audit.Event{
+					EventID:     fmt.Sprintf("demo-fleet-%d-%d", eventTime.UnixNano(), enrolled),
+					SessionID:   sessID,
+					Source:      squad.AppID,
+					Executable:  strings.Fields(squad.Action)[0],
+					FullCommand: squad.Action,
+					Decision:    "allow",
+					Reason:      "Authorized by the active Cedar fleet policy",
+					DurationMs:  1,
+					Timestamp:   eventTime.Format(time.RFC3339Nano),
+					ExitCode:    0,
+					UserPrompt:  squad.Prompt,
+					UserEmail:   email,
+				}
+				_, _ = s.auditStore.Ingest([]audit.Event{ev})
+				s.sessionStore.RecordEvent(sessID, ev)
 			}
 			enrolled++
 		}

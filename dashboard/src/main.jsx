@@ -1,904 +1,339 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { presence, elapsed } from './presence.js';
+import { elapsed, presence } from './presence.js';
 import './style.css';
 
 const API = '/api/v1';
-const PROTECTED_MSG = '[Protected: Leadership Authentication Required]';
+const PAGE_SIZE = 25;
+const PROTECTED = '[Protected: Leadership Authentication Required]';
+const RISK_ORDER = { CRITICAL: 4, ELEVATED: 3, HEALTHY: 2, STOPPED: 1, REVOKED: 0 };
 
-function formatToolDescription(executable, cmd) {
-  if (!cmd) return executable || 'Tool Action';
-  const c = cmd.toLowerCase();
-  if (c.includes('user_prompt_submitted')) return 'User submitted prompt';
-  if (c.includes('git status')) return 'Inspected working tree status';
-  if (c.includes('git log')) return 'Inspected repository commit history';
-  if (c.includes('fetching settlement') || c.includes('fetching transactions')) return 'Fetched settlement ledger records';
-  if (c.includes('reading application logs')) return 'Read application logs for payment 883';
-  if (c.includes('checking dependencies') || c.includes('inspecting cluster')) return 'Inspected cluster dependencies & topology';
-  if (c.includes('.env') && (c.includes('cat') || c.includes('type'))) return 'Attempted to read production secrets (.env)';
-  if (c.includes('.env') && c.includes('python')) return 'Tried alternate Python file extraction method';
-  if (c.includes('.env') && (c.includes('powershell') || c.includes('get-content'))) return 'Tried alternate PowerShell cmdlet evasion';
-  if (c.includes('curl') || c.includes('wget')) return 'Attempted external HTTP egress';
-  if (c.includes('whoami')) return 'Inspected process privileges & identity';
-  return cmd.length > 70 ? cmd.slice(0, 70) + '…' : cmd;
+const Icon = ({ name, size = 16 }) => {
+  const paths = {
+    shield: <><path d="M12 3 5 6v5c0 4.5 2.8 8.1 7 10 4.2-1.9 7-5.5 7-10V6l-7-3Z"/><path d="m9.5 12 1.6 1.6 3.7-4"/></>,
+    search: <><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></>,
+    pulse: <path d="M3 12h4l2-6 4 12 2-6h6"/>,
+    alert: <><path d="M12 3 2.7 20h18.6L12 3Z"/><path d="M12 9v4m0 3h.01"/></>,
+    lock: <><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></>,
+    unlock: <><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M9 10V7a4 4 0 0 1 7.5-2"/></>,
+    stop: <rect x="5" y="5" width="14" height="14" rx="2"/>,
+    ban: <><circle cx="12" cy="12" r="9"/><path d="m6 6 12 12"/></>,
+    play: <path d="m8 5 11 7-11 7V5Z"/>,
+    reset: <><path d="M4 10a8 8 0 1 1 2 7"/><path d="M4 4v6h6"/></>,
+    trash: <><path d="M4 7h16M9 7V4h6v3m3 0-1 14H7L6 7"/><path d="M10 11v6m4-6v6"/></>,
+    chevron: <path d="m9 18 6-6-6-6"/>,
+    command: <><path d="M9 6v12m6-12v12M6 9h12M6 15h12"/></>,
+    check: <path d="m5 12 4 4L19 6"/>,
+  };
+  return <svg className="icon" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
+};
+
+function actionLabel(command = '', executable = '') {
+  const value = command.toLowerCase();
+  if (!command) return 'Waiting for next tool call';
+  if (value.includes('user_prompt_submitted')) return 'Received operator prompt';
+  if (value.includes('git log')) return 'Reading repository history';
+  if (value.includes('git status')) return 'Inspecting working tree';
+  if (value.includes('pytest')) return 'Running verification suite';
+  if (value.includes('financial-records')) return 'Blocked credential exfiltration';
+  if (value.includes('.env')) return 'Blocked secret access attempt';
+  if (value.includes('stop_session')) return 'Session terminated by admin';
+  if (value.includes('revoke_access')) return 'Authority revoked by admin';
+  const clean = command.replace(/\s+/g, ' ').trim();
+  return clean.length > 48 ? `${clean.slice(0, 48)}…` : clean || executable || 'Tool action';
 }
 
-function computeRisk(deniedCount, status, warning, hasTamper) {
-  if (status === 'revoked') return { level: 'REVOKED', weight: 40 };
-  if (deniedCount >= 2 || (warning && warning.includes('CRITICAL')) || hasTamper) {
-    return { level: 'CRITICAL', weight: 100 };
-  }
-  if (deniedCount === 1 || (warning && warning.includes('ELEVATED'))) {
-    return { level: 'ELEVATED', weight: 75 };
-  }
-  if (status === 'stopped' || status === 'closed') {
-    return { level: 'STOPPED', weight: 10 };
-  }
-  return { level: 'HEALTHY', weight: 25 };
+function riskFor(agent) {
+  if (agent.status === 'revoked') return 'REVOKED';
+  if (agent.status === 'stopped' || agent.status === 'closed') return 'STOPPED';
+  if (agent.deniedCount >= 2 || agent.hasTamper) return 'CRITICAL';
+  if (agent.deniedCount === 1) return 'ELEVATED';
+  return 'HEALTHY';
+}
+
+function protectedValue(value) {
+  return typeof value === 'string' && value.startsWith('[Protected:');
+}
+
+function normalizeFleet(data, sensitive, now, localStatus) {
+  const source = sensitive || data || {};
+  const sessions = source.sessions || [];
+  const agents = source.agents || [];
+  const events = source.central_events || [];
+  const revokedSessions = source.revoked_sessions || [];
+  const revokedUsers = source.revoked_users || [];
+  const fleet = new Map();
+
+  agents.forEach((agent, index) => {
+	const rawId = agent.instance_id || agent.agent_id;
+	const id = protectedValue(rawId) ? `${agent.app_id || 'agent'}:registered:${index}` : rawId;
+    const currentPresence = presence(agent, now);
+    fleet.set(id, {
+      id, instanceId: id, agentId: agent.agent_id, sessionId: '', appId: agent.app_id || 'agent',
+      name: agent.agent_name || agent.app_id || id,
+      owner: agent.owner_email || agent.owner_id || 'Governed operator',
+      hostname: agent.hostname || 'unreported-host',
+      spiffeId: agent.spiffe_id || `spiffe://bap.internal/app/${agent.app_id}/instance/${id}`,
+      status: agent.status || currentPresence.status, lastSeen: currentPresence.age,
+      prompt: agent.user_prompt || '', events: [], allowedCount: 0, deniedCount: 0, totalEvents: 0,
+    });
+  });
+
+  sessions.forEach((session, index) => {
+    const existing = fleet.get(session.instance_id) || fleet.get(session.session_id) ||
+      (protectedValue(session.session_id)
+        ? [...fleet.values()].find((agent) => agent.appId === session.app_id && !agent.sessionId)
+        : null);
+	// A restarted workload can share an instance with a closed historical
+	// session. The live session owns the fleet tile; history stays in totals.
+	if (existing?.sessionId && existing.status === 'active' && session.status !== 'active') return;
+	const rawId = session.session_id;
+	const id = existing?.id || (protectedValue(rawId) ? `${session.app_id || 'agent'}:session:${index}` : rawId);
+    const currentPresence = presence(session, now);
+    const revoked = session.status === 'revoked' || revokedSessions.includes(session.session_id) || revokedUsers.includes(session.user_id) || revokedUsers.includes(session.user_email);
+    const status = localStatus[session.session_id] || (revoked ? 'revoked' : session.status || currentPresence.status);
+    const next = existing || { id, events: [], allowedCount: 0, deniedCount: 0 };
+    // Public telemetry protects stable identifiers. In that mode the session
+    // record is still independently rendered, while privileged mode merges it
+    // with its registered workload by exact instance identity.
+    fleet.set(id, {
+      ...next, sessionId: session.session_id, instanceId: session.instance_id || next.instanceId || session.session_id,
+      agentId: next.agentId || session.session_id, appId: session.app_id || next.appId || 'agent',
+      name: session.agent_name || session.role || next.name || session.app_id || 'Agent',
+      owner: session.user_email || session.user_id || next.owner || 'Governed operator',
+      hostname: session.hostname || next.hostname || 'unreported-host',
+      spiffeId: session.spiffe_id || next.spiffeId || `spiffe://bap.internal/app/${session.app_id}/instance/${id}`,
+      status, lastSeen: currentPresence.age, prompt: session.user_prompt || next.prompt || '', clientPid: session.client_pid,
+      allowedCount: session.allowed_count || next.allowedCount || 0,
+      deniedCount: session.denied_count || next.deniedCount || 0,
+      totalEvents: session.total_events || next.totalEvents || 0,
+    });
+  });
+
+  events.forEach((event) => {
+    const target = [...fleet.values()].find((agent) => agent.sessionId === event.session_id || agent.instanceId === event.session_id || agent.id === event.session_id);
+    if (!target) return;
+    target.events.push(event);
+    target.totalEvents = Math.max(target.totalEvents || 0, target.events.length);
+    if (!target.sessionId) {
+      if (event.decision === 'allow') target.allowedCount += 1;
+      if (event.decision === 'deny') target.deniedCount += 1;
+    }
+    if (!target.prompt && event.user_prompt && event.user_prompt !== PROTECTED) target.prompt = event.user_prompt;
+  });
+
+  return [...fleet.values()].map((agent) => {
+    const sortedEvents = [...agent.events].sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp));
+    const latest = sortedEvents[0];
+    const normalized = { ...agent, events: sortedEvents, latest, currentAction: actionLabel(latest?.full_command, latest?.executable), hasTamper: sortedEvents.some((event) => (event.reason || '').toLowerCase().includes('tamper')) };
+    return { ...normalized, risk: riskFor(normalized) };
+  });
 }
 
 function App() {
   const [data, setData] = useState(null);
   const [sensitive, setSensitive] = useState(null);
+  const [adminToken, setAdminToken] = useState(() => sessionStorage.getItem('bap_admin_token') || '');
   const [now, setNow] = useState(Date.now());
   const [connected, setConnected] = useState(false);
   const [lastRefresh, setLastRefresh] = useState(0);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [filterPill, setFilterPill] = useState('all');
-  const [selectedAgentId, setSelectedAgentId] = useState(null);
-  const [expandedEvents, setExpandedEvents] = useState({});
+  const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState('ALL');
+  const [sortMode, setSortMode] = useState('RISK');
+  const [page, setPage] = useState(0);
+  const [selectedId, setSelectedId] = useState('');
+  const [expandedEvent, setExpandedEvent] = useState('');
   const [notice, setNotice] = useState('');
   const [pending, setPending] = useState(false);
-  const [actionModal, setActionModal] = useState(null);
-  const [adminToken, setAdminToken] = useState(sessionStorage.getItem('bap_admin_token') || '');
+  const [modal, setModal] = useState(null);
   const [tokenInput, setTokenInput] = useState('');
-  const [revealUntil, setRevealUntil] = useState(0);
-  const [stoppingIds, setStoppingIds] = useState({});
-
+  const [localStatus, setLocalStatus] = useState({});
   const modalRef = useRef(null);
-  const tokenInputRef = useRef(null);
-  const refreshTimer = useRef(null);
+  const tokenRef = useRef(null);
 
-  // Poll control plane data every 2s
-  useEffect(() => {
-    let active = true;
-    async function fetchTelemetry() {
-      try {
-        const headers = adminToken ? { Authorization: `Bearer ${adminToken}` } : {};
-        const url = adminToken ? `${API}/admin/inspector/data` : `${API}/inspector/data`;
-        const res = await fetch(url, { headers, cache: 'no-store' });
-        if (res.ok) {
-          const json = await res.json();
-          if (active) {
-            setData(json);
-            if (adminToken && json.admin_authorized) {
-              setSensitive(json);
-            }
-            setConnected(true);
-            setLastRefresh(Date.now());
-          }
-        } else {
-          if (active) setConnected(false);
-        }
-      } catch (err) {
-        if (active) setConnected(false);
-      } finally {
-        if (active) refreshTimer.current = setTimeout(fetchTelemetry, 2000);
-      }
-    }
-    fetchTelemetry();
-    const ticker = setInterval(() => setNow(Date.now()), 1000);
-    return () => {
-      active = false;
-      clearTimeout(refreshTimer.current);
-      clearInterval(ticker);
-    };
-  }, [adminToken]);
-
-  // Reveal countdown
-  useEffect(() => {
-    if (sensitive && revealUntil > 0 && now >= revealUntil) {
-      setSensitive(null);
-      setRevealUntil(0);
-      setAdminToken('');
-      sessionStorage.removeItem('bap_admin_token');
-      setNotice('Admin reveal session has expired. Telemetry is protected.');
-    }
-  }, [now, revealUntil, sensitive]);
-
-  // Open modal
-  useEffect(() => {
-    if (actionModal && modalRef.current && !modalRef.current.open) {
-      modalRef.current.showModal();
-      tokenInputRef.current?.focus();
-    }
-  }, [actionModal]);
-
-  // Close modal
-  function closeModal() {
-    setActionModal(null);
-    setTokenInput('');
-    modalRef.current?.close();
-  }
-
-  // Execute admin action (Stop, Revoke, Restore, Freeze)
-  async function executeAdminAction(e) {
-    if (e) e.preventDefault();
-    if (!actionModal || pending) return;
-
-    const tokenToUse = adminToken || tokenInput;
-    if (!tokenToUse) {
-      setNotice('An administrative credential is required.');
-      return;
-    }
-
-    setPending(true);
-    setNotice('');
-    const curAction = actionModal;
-    const targetId = curAction.targetId;
-
-    if (curAction.type === 'stop') {
-      setStoppingIds(prev => ({ ...prev, [targetId]: 'stopping' }));
-    }
-
+  const refresh = async (token = adminToken) => {
     try {
-      const res = await fetch(`${API}${curAction.path}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${tokenToUse}`,
-        },
-        body: curAction.body ? JSON.stringify(curAction.body) : undefined,
-      });
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      const response = await fetch(`${API}${token ? '/admin/inspector/data' : '/inspector/data'}`, { headers, cache: 'no-store' });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const payload = await response.json();
+      setData(payload);
+      if (token && payload.admin_authorized) setSensitive(payload);
+      setConnected(true); setLastRefresh(Date.now());
+      return payload;
+    } catch { setConnected(false); return null; }
+  };
 
-      if (!res.ok) {
-        const errJson = await res.json().catch(() => ({}));
-        throw new Error(errJson.error || errJson.message || `HTTP ${res.status}`);
-      }
+  useEffect(() => {
+    let alive = true;
+    const poll = async () => { if (alive) await refresh(); };
+    poll();
+    const interval = setInterval(poll, 2000);
+    const clock = setInterval(() => setNow(Date.now()), 1000);
+    return () => { alive = false; clearInterval(interval); clearInterval(clock); };
+  }, [adminToken]);
+  useEffect(() => { if (modal && modalRef.current && !modalRef.current.open) { modalRef.current.showModal(); setTimeout(() => tokenRef.current?.focus(), 0); } }, [modal]);
+  useEffect(() => { setPage(0); }, [query, filter, sortMode]);
 
-      const result = await res.json();
-      setAdminToken(tokenToUse);
-      sessionStorage.setItem('bap_admin_token', tokenToUse);
+  const fleet = useMemo(() => normalizeFleet(data, sensitive, now, localStatus), [data, sensitive, now, localStatus]);
+  const incidents = useMemo(() => fleet.filter((a) => ['CRITICAL', 'ELEVATED'].includes(a.risk)).sort((a, b) => RISK_ORDER[b.risk] - RISK_ORDER[a.risk] || a.lastSeen - b.lastSeen), [fleet]);
+  const filteredFleet = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const values = fleet.filter((agent) => {
+      if (filter === 'RISK' && !['CRITICAL', 'ELEVATED'].includes(agent.risk)) return false;
+      if (filter === 'HEALTHY' && agent.risk !== 'HEALTHY') return false;
+      if (filter === 'STOPPED' && !['STOPPED', 'REVOKED'].includes(agent.risk)) return false;
+      return !q || [agent.name, agent.owner, agent.appId, agent.hostname, agent.id, agent.currentAction].some((value) => (value || '').toLowerCase().includes(q));
+    });
+    return values.sort((a, b) => sortMode === 'RECENT' ? a.lastSeen - b.lastSeen : RISK_ORDER[b.risk] - RISK_ORDER[a.risk] || a.lastSeen - b.lastSeen);
+  }, [fleet, filter, query, sortMode]);
+  const pageCount = Math.max(1, Math.ceil(filteredFleet.length / PAGE_SIZE));
+  const safePage = Math.min(page, pageCount - 1);
+  const visibleFleet = filteredFleet.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE);
+  const selected = fleet.find((agent) => agent.id === selectedId) || incidents[0] || visibleFleet[0] || null;
+  const activeCount = fleet.filter((agent) => agent.status === 'active').length;
+  const currentActions = fleet.filter((agent) => agent.status === 'active' && agent.latest).length;
+  const eventHistory = (sensitive || data)?.central_events || [];
+  const allowedHistory = eventHistory.filter((event) => event.decision === 'allow').length;
+  const deniedHistory = eventHistory.filter((event) => event.decision === 'deny').length;
+  const killSwitch = Boolean(data?.kill_switch);
 
-      if (curAction.type === 'stop') {
-        setStoppingIds(prev => ({ ...prev, [targetId]: 'stopped' }));
-        setNotice(`Session ${targetId} stopped. Workload process terminated.`);
-      } else if (curAction.type === 'revoke') {
-        setNotice(`Access REVOKED for ${curAction.targetName || targetId}. Workload killed and future actions blocked.`);
-      } else if (curAction.type === 'restore') {
-        setNotice(`Access RESTORED for ${curAction.targetName || targetId}. Workload is permitted.`);
-      } else if (curAction.type === 'freeze') {
-        setNotice(`Fleet governance state updated: ${curAction.body?.enabled ? 'GLOBAL FLEET FROZEN' : 'FLEET RESTORED'}`);
-      } else if (curAction.reveal) {
-        setSensitive(result);
-        setRevealUntil(Date.now() + 60_000);
-        setNotice('Protected telemetry revealed for 60 seconds.');
-      }
-
-      closeModal();
-      // Immediate refresh
-      const refreshRes = await fetch(`${API}/inspector/data`, { cache: 'no-store' });
-      if (refreshRes.ok) setData(await refreshRes.json());
-    } catch (err) {
-      if (curAction.type === 'stop') {
-        setStoppingIds(prev => {
-          const next = { ...prev };
-          delete next[targetId];
-          return next;
-        });
-      }
-      setNotice(`Action failed: ${err.message}`);
-    } finally {
-      setPending(false);
-    }
+  function closeModal() { modalRef.current?.close(); setModal(null); setTokenInput(''); }
+  async function authenticatedFetch(path, token, body) {
+    const response = await fetch(`${API}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: body === undefined ? undefined : JSON.stringify(body) });
+    if (!response.ok) { const detail = await response.json().catch(() => ({})); throw new Error(detail.error || detail.message || `HTTP ${response.status}`); }
+    return response.json().catch(() => ({}));
   }
 
-  // Parse server telemetry
-  const agents = sensitive?.agents || data?.agents || [];
-  const sessions = sensitive?.sessions || data?.sessions || [];
-  const events = sensitive?.central_events || data?.central_events || [];
-  const revokedUsers = sensitive?.revoked_users || data?.revoked_users || [];
-  const revokedSessions = sensitive?.revoked_sessions || data?.revoked_sessions || [];
-  const killSwitchActive = data?.kill_switch || false;
-
-  // Build unified agent list
-  const agentMap = new Map();
-
-  // 1. Map registered agents
-  agents.forEach(ag => {
-    const p = presence(ag, now);
-    const id = ag.instance_id || ag.agent_id;
-    agentMap.set(id, {
-      id,
-      instanceId: ag.instance_id || ag.agent_id,
-      agentId: ag.agent_id,
-      appId: ag.app_id,
-      name: ag.agent_name || ag.app_id,
-      owner: ag.owner_email || ag.owner_id || 'Carol Zhang (Finance)',
-      spiffeId: ag.spiffe_id || `spiffe://bap.internal/app/${ag.app_id}/instance/${id}`,
-      hostname: ag.hostname || 'DEVHOST-LOCAL',
-      status: ag.status || p.status,
-      presence: p,
-      lastSeen: p.age,
-      events: [],
-      allowedCount: 0,
-      deniedCount: 0,
-      latestCmd: '',
-      prompt: ag.user_prompt || '',
-      warning: '',
-    });
-  });
-
-  // 2. Map sessions (Claude Code / Python SDK / demo sessions)
-  sessions.forEach(sess => {
-    const id = sess.session_id;
-    const existing = agentMap.get(id) || agentMap.get(sess.instance_id);
-    const p = presence(sess, now);
-    const isRevoked = sess.status === 'revoked' || revokedUsers.includes(sess.user_id) || revokedUsers.includes(sess.user_email) || revokedSessions.includes(sess.session_id);
-    const effectiveStatus = isRevoked ? 'revoked' : stoppingIds[sess.session_id] || sess.status || p.status;
-
-    if (existing) {
-      existing.sessionId = sess.session_id;
-      existing.clientPid = sess.client_pid;
-      existing.hostname = sess.hostname || existing.hostname;
-      existing.owner = sess.user_email || sess.user_id || existing.owner;
-      existing.prompt = sess.user_prompt || existing.prompt;
-      if (sess.agent_name && (!existing.name || existing.name === existing.appId)) {
-        existing.name = sess.agent_name;
+  async function runAction(event) {
+    event?.preventDefault();
+    if (!modal || pending) return;
+    const token = adminToken || tokenInput;
+    if (!token) return;
+    setPending(true);
+    try {
+      if (modal.type === 'REVEAL') {
+        const response = await fetch(`${API}/admin/inspector/data`, { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        setSensitive(await response.json());
+      } else if (modal.type === 'START') {
+        await authenticatedFetch('/demo/fleet-scale', token, { count: 25 }); await authenticatedFetch('/demo/exec-safe', token, {});
+      } else if (modal.type === 'INCIDENT') {
+        await Promise.all([0, 1, 2].map(() => authenticatedFetch('/demo/exec-attack', token, {})));
+      } else if (modal.type === 'RESET') {
+        await authenticatedFetch('/sessions/reset', token, {}); await authenticatedFetch('/control/kill-switch', token, { enabled: false }); await authenticatedFetch('/demo/fleet-scale', token, { count: 25 });
+      } else if (modal.type === 'CLEANUP') {
+        await authenticatedFetch('/sessions/reset', token, {}); await authenticatedFetch('/control/kill-switch', token, { enabled: false });
+      } else if (modal.type === 'FREEZE') {
+        await authenticatedFetch('/control/kill-switch', token, { enabled: !killSwitch });
+      } else if (['STOP', 'REVOKE', 'RESTORE'].includes(modal.type)) {
+        const target = modal.agent.sessionId || modal.agent.agentId || modal.agent.id;
+        if (modal.type === 'STOP') setLocalStatus((prev) => ({ ...prev, [target]: 'stopping' }));
+        await authenticatedFetch('/control/agent/kill', token, { target, action: modal.type.toLowerCase(), user_id: modal.agent.owner });
+        setLocalStatus((prev) => ({ ...prev, [target]: modal.type === 'STOP' ? 'closed' : modal.type === 'REVOKE' ? 'revoked' : 'active' }));
       }
-      existing.status = effectiveStatus;
-      existing.presence = p;
-    } else {
-      const agentName = sess.agent_name || sess.role || (sess.metadata && sess.metadata.role) ||
-        (sess.app_id === 'claude-code' ? 'Claude Code' : sess.app_id === 'copilot' ? 'Copilot CLI' : sess.app_id);
-      agentMap.set(id, {
-        id,
-        sessionId: sess.session_id,
-        instanceId: sess.instance_id || sess.session_id,
-        agentId: sess.session_id,
-        appId: sess.app_id,
-        name: agentName,
-        owner: sess.user_email || sess.user_id || 'Governed Operator',
-        spiffeId: sess.spiffe_id || `spiffe://bap.internal/app/${sess.app_id}/instance/${sess.session_id}`,
-        hostname: sess.hostname || 'DEVHOST-LOCAL',
-        clientPid: sess.client_pid,
-        status: effectiveStatus,
-        presence: p,
-        lastSeen: p.age,
-        events: [],
-        allowedCount: sess.allowed_count || 0,
-        deniedCount: sess.denied_count || 0,
-        latestCmd: '',
-        prompt: sess.user_prompt || '',
-        warning: '',
-      });
-    }
-  });
+      setAdminToken(token); sessionStorage.setItem('bap_admin_token', token); setNotice(modal.success); closeModal(); await refresh(token);
+    } catch (error) { setNotice(`Action failed: ${error.message}`); }
+    finally { setPending(false); }
+  }
 
-  // 3. Associate audit events with agents
-  events.forEach(ev => {
-    const sessId = ev.session_id;
-    let target = agentMap.get(sessId);
-    if (!target) {
-      for (const ag of agentMap.values()) {
-        if (ag.sessionId === sessId || ag.instanceId === sessId || (ag.appId === ev.source && sessId && sessId.includes(ag.appId))) {
-          target = ag;
-          break;
-        }
-      }
-    }
-    if (target) {
-      target.events.push(ev);
-      if (ev.decision === 'allow') target.allowedCount++;
-      if (ev.decision === 'deny') target.deniedCount++;
-      if (!target.latestCmd && ev.full_command) {
-        target.latestCmd = ev.full_command;
-      }
-      if (!target.prompt && ev.user_prompt && ev.user_prompt !== PROTECTED_MSG) {
-        target.prompt = ev.user_prompt;
-      }
-      if (ev.reason && ev.reason.includes('CRITICAL')) {
-        target.warning = 'CRITICAL';
-      }
-    }
-  });
+  const openAction = (type, overrides = {}) => {
+    const configs = {
+      REVEAL: { title: 'Start privileged demo session', detail: 'Unlock operator identity and prompt telemetry for this browser session.', confirm: 'Unlock telemetry', success: 'Privileged telemetry session active.' },
+      START: { title: 'Start 25-agent demo', detail: 'Reset and seed the control plane with 25 active governed agents and live execution telemetry.', confirm: 'Start demo', success: '25-agent fleet demo started.' },
+      INCIDENT: { title: 'Trigger controlled incident', detail: 'Emit three denied exfiltration attempts through the control plane and promote the workload into the incident queue.', confirm: 'Trigger incident', success: 'Critical incident injected into control-plane telemetry.' },
+      RESET: { title: 'Reset demo scenario', detail: 'Clear session state, lift Global Freeze, and recreate a clean 25-agent fleet.', confirm: 'Reset scenario', success: 'Demo reset to a clean 25-agent fleet.' },
+      CLEANUP: { title: 'Clean up demo', detail: 'Close demo sessions and return fleet governance to its normal unfrozen state.', confirm: 'Clean up', success: 'Demo sessions cleaned up.' },
+      FREEZE: { title: killSwitch ? 'Release Global Freeze' : 'Activate Global Freeze', detail: killSwitch ? 'Return permitted agents to normal governed execution.' : 'Immediately block execution across the entire fleet.', confirm: killSwitch ? 'Release fleet' : 'Freeze entire fleet', success: killSwitch ? 'Global Freeze released.' : 'Global Freeze active. Entire fleet stopped.' },
+    };
+    setModal({ type, ...configs[type], ...overrides });
+  };
 
-  // Calculate risk level and sort
-  const allFleetAgents = Array.from(agentMap.values()).map(ag => {
-    const risk = computeRisk(ag.deniedCount, ag.status, ag.warning, ag.events.some(e => e.reason && e.reason.toLowerCase().includes('tamper')));
-    return { ...ag, riskLevel: risk.level, sortWeight: risk.weight };
-  });
+  return <div className={`app-shell ${killSwitch ? 'is-frozen' : ''}`}>
+    <header className="topbar">
+      <div className="brand-lockup"><span className="brand-mark"><Icon name="shield" size={19}/></span><div><strong>BAP</strong><span>Fleet Command</span></div></div>
+      <div className="environment"><span>PRODUCTION</span><b>Enterprise control plane</b></div>
+      <div className="topbar-actions">
+        <div className={`connection ${connected ? 'online' : ''}`}><i/>{connected ? 'Live telemetry' : 'Reconnecting'}<small>{lastRefresh ? elapsed(now - lastRefresh) : 'waiting'}</small></div>
+        <button className={sensitive ? 'session-active' : 'quiet'} onClick={() => sensitive ? (setSensitive(null), setAdminToken(''), sessionStorage.removeItem('bap_admin_token')) : openAction('REVEAL')}><Icon name={sensitive ? 'unlock' : 'lock'}/>{sensitive ? 'Privileged session' : 'Unlock prompts'}</button>
+        <button className={`freeze-button ${killSwitch ? 'release' : ''}`} onClick={() => openAction('FREEZE')}><Icon name={killSwitch ? 'play' : 'stop'}/>{killSwitch ? 'Release Freeze' : 'Global Freeze'}</button>
+      </div>
+    </header>
+    {killSwitch && <div className="freeze-ribbon"><Icon name="alert"/><strong>GLOBAL FREEZE ACTIVE</strong><span>All execution is blocked at the control plane. Telemetry remains online.</span></div>}
+    {notice && <div className="toast" role="status"><Icon name="check"/><span>{notice}</span><button aria-label="Dismiss notification" onClick={() => setNotice('')}>×</button></div>}
 
-  // Sort: Critical first, then Elevated, then Healthy, then Stopped/Revoked
-  allFleetAgents.sort((a, b) => b.sortWeight - a.sortWeight || a.lastSeen - b.lastSeen);
-
-  // Filter agents by search and pill
-  const filteredAgents = allFleetAgents.filter(ag => {
-    if (filterPill === 'risky' && !['CRITICAL', 'ELEVATED'].includes(ag.riskLevel)) return false;
-    if (filterPill === 'healthy' && ag.riskLevel !== 'HEALTHY') return false;
-    if (filterPill === 'revoked' && ag.riskLevel !== 'REVOKED') return false;
-    if (searchQuery) {
-      const q = searchQuery.toLowerCase();
-      return (
-        ag.name.toLowerCase().includes(q) ||
-        ag.owner.toLowerCase().includes(q) ||
-        ag.prompt.toLowerCase().includes(q) ||
-        ag.spiffeId.toLowerCase().includes(q) ||
-        ag.id.toLowerCase().includes(q)
-      );
-    }
-    return true;
-  });
-
-  // Auto-select first (highest risk) agent if none selected or selected agent missing
-  const activeSelectedAgent = allFleetAgents.find(a => a.id === selectedAgentId) || filteredAgents[0] || allFleetAgents[0] || null;
-
-  // Selected agent's chronological timeline events
-  const timelineEvents = activeSelectedAgent ? [...activeSelectedAgent.events].reverse() : [];
-
-  // Latest event for receipt preview
-  const latestEvent = timelineEvents.length > 0 ? timelineEvents[timelineEvents.length - 1] : null;
-
-  // Stats calculation
-  const totalActive = allFleetAgents.filter(a => a.status === 'active').length;
-  const totalAllowed = events.filter(e => e.decision === 'allow').length;
-  const totalDenied = events.filter(e => e.decision === 'deny').length;
-  const totalRisky = allFleetAgents.filter(a => ['CRITICAL', 'ELEVATED'].includes(a.riskLevel)).length;
-  const totalRevoked = allFleetAgents.filter(a => a.riskLevel === 'REVOKED' || a.status === 'revoked').length;
-
-  return (
-    <>
-      {/* Top Header */}
-      <header className="command-header">
-        <div className="brand-group">
-          <div className="brand-shield">🛡️</div>
-          <div className="brand-titles">
-            <h1>BAP COMMAND CENTER</h1>
-            <p>CIO Autonomous Agent Operations & Real-Time Enforcement</p>
-          </div>
-        </div>
-
-        <div className="header-actions">
-          <div className="live-status-pill">
-            <span className="live-pulse" />
-            <span>{connected ? 'LIVE GOVERNANCE' : 'CONNECTING TO CONTROL PLANE'}</span>
-          </div>
-
-          {sensitive ? (
-            <button
-              className="primary"
-              onClick={() => {
-                setSensitive(null);
-                setRevealUntil(0);
-                setAdminToken('');
-                sessionStorage.removeItem('bap_admin_token');
-              }}
-            >
-              🔒 Lock Telemetry ({Math.max(0, Math.ceil((revealUntil - now) / 1000))}s)
-            </button>
-          ) : (
-            <button
-              onClick={() =>
-                setActionModal({
-                  title: 'Admin Telemetry Reveal',
-                  impact: 'Authorize admin visibility to inspect live user prompts and identities for 60 seconds.',
-                  path: '/admin/inspector/data',
-                  reveal: true,
-                })
-              }
-            >
-              👁️ Reveal Prompts (Admin)
-            </button>
-          )}
-
-          <button
-            className={killSwitchActive ? 'success-outline' : 'danger'}
-            onClick={() =>
-              setActionModal({
-                title: killSwitchActive ? 'Restore Fleet Governance' : 'Emergency Global Fleet Freeze',
-                impact: killSwitchActive
-                  ? 'Lift emergency lockdown. Permitted agents will resume autonomous execution.'
-                  : 'Instantly freeze all autonomous agent execution across the enterprise. All actions blocked.',
-                path: '/control/kill-switch',
-                body: { enabled: !killSwitchActive },
-                type: 'freeze',
-              })
-            }
-          >
-            {killSwitchActive ? '✓ RESTORE FLEET' : '🛑 FREEZE FLEET'}
-          </button>
-        </div>
-      </header>
-
-      {/* Global Freeze Alert Banner */}
-      {killSwitchActive && (
-        <div className="freeze-banner">
-          <span>⚠️ <strong>EMERGENCY FLEET FREEZE ACTIVE:</strong> All agent tool actions across the enterprise are blocked.</span>
-        </div>
-      )}
-
-      {/* Notice Banner */}
-      {notice && (
-        <div className="notice-bar">
-          <span>ℹ️ {notice}</span>
-          <button style={{ border: 'none', background: 'transparent', color: '#93c5fd', cursor: 'pointer' }} onClick={() => setNotice('')}>
-            ✕
-          </button>
-        </div>
-      )}
-
-      {/* Executive Metrics Strip */}
-      <section className="metrics-strip">
-        <div className="metric-card">
-          <div className="title">Active Governed Agents</div>
-          <div className="value">{totalActive}</div>
-          <div className="desc">Supervised under BAP Edge broker</div>
-        </div>
-        <div className="metric-card">
-          <div className="title">Policy Decisions</div>
-          <div className="value">
-            <span style={{ color: '#34d399' }}>{totalAllowed} ✓</span> / <span style={{ color: '#f87171' }}>{totalDenied} ✗</span>
-          </div>
-          <div className="desc">Cedar sub-millisecond evaluations</div>
-        </div>
-        <div className="metric-card">
-          <div className="title">Threat Escalations</div>
-          <div className="value" style={{ color: totalRisky > 0 ? '#f59e0b' : '#f8fafc' }}>
-            {totalRisky}
-          </div>
-          <div className="desc">Correlated repeated evasion attempts</div>
-        </div>
-        <div className="metric-card">
-          <div className="title">Quarantined / Revoked</div>
-          <div className="value" style={{ color: totalRevoked > 0 ? '#ef4444' : '#f8fafc' }}>
-            {totalRevoked}
-          </div>
-          <div className="desc">Blocked by CISO administrative override</div>
-        </div>
+    <main>
+      <section className="overview" aria-labelledby="agent-operations-heading">
+        <div className="overview-title"><p className="eyebrow">Autonomous operations</p><h1 id="agent-operations-heading">Agent operations</h1><p>Live command and containment across the enterprise fleet</p></div>
+        <div className="metric current"><span>Operating now</span><strong>{activeCount}</strong><small><i/> {currentActions} executing actions</small></div>
+        <div className="metric"><span>Incident queue</span><strong className={incidents.length ? 'warn' : ''}>{incidents.length}</strong><small>{incidents.filter((agent) => agent.risk === 'CRITICAL').length} critical · {incidents.filter((agent) => agent.risk === 'ELEVATED').length} elevated</small></div>
+        <div className="metric history"><span>Historical decisions</span><strong>{eventHistory.length}</strong><small><b>{allowedHistory} allowed</b> · {deniedHistory} denied</small></div>
+        <div className="metric history"><span>Audit integrity</span><strong className="compact">{data?.chain_status === 'corrupted' ? 'At risk' : 'Verified'}</strong><small>{data?.policy_version || 'Policy synced'} · immutable chain</small></div>
       </section>
 
-      {/* 3-Column Command Center Grid */}
-      <main className="command-grid">
-        {/* =========================================================================
-            COLUMN 1: LIVE AGENT FLEET
-            ========================================================================= */}
-        <section className="panel-col">
-          <div className="panel-head">
-            <h2>Live Agent Fleet</h2>
-            <span className="counter">{filteredAgents.length} Agents</span>
-          </div>
-
-          <div className="fleet-filters">
-            <input
-              type="search"
-              className="search-input"
-              placeholder="Search agent, owner, prompt, host…"
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-            />
-            <div className="pill-tabs">
-              {['all', 'risky', 'healthy', 'revoked'].map(p => (
-                <button
-                  key={p}
-                  className={`pill-tab ${filterPill === p ? 'active' : ''}`}
-                  onClick={() => setFilterPill(p)}
-                >
-                  {p.charAt(0).toUpperCase() + p.slice(1)}
-                </button>
-              ))}
+      <section className="workspace">
+        <div className="fleet-panel">
+          <div className="panel-toolbar">
+            <div><p className="eyebrow">Live topology</p><h2>Fleet matrix <span>{filteredFleet.length} agents</span></h2></div>
+            <div className="fleet-tools">
+              <label className="search"><Icon name="search"/><input aria-label="Search fleet" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search agent, owner, action…"/></label>
+              <div className="segments" aria-label="Filter fleet">{['ALL', 'RISK', 'HEALTHY', 'STOPPED'].map((item) => <button key={item} className={filter === item ? 'active' : ''} onClick={() => setFilter(item)}>{item === 'ALL' ? 'All' : item === 'RISK' ? 'At risk' : item === 'STOPPED' ? 'Stopped' : 'Healthy'}</button>)}</div>
+              <select aria-label="Sort fleet" value={sortMode} onChange={(event) => setSortMode(event.target.value)}><option value="RISK">Risk first</option><option value="RECENT">Most recent</option></select>
+              <div className="pager"><button aria-label="Previous fleet page" disabled={safePage === 0} onClick={() => setPage((value) => Math.max(0, value - 1))}>‹</button><span>{safePage + 1} / {pageCount}</span><button aria-label="Next fleet page" disabled={safePage >= pageCount - 1} onClick={() => setPage((value) => Math.min(pageCount - 1, value + 1))}>›</button></div>
             </div>
           </div>
-
-          <div className="fleet-list">
-            {filteredAgents.map(agent => {
-              const isSelected = activeSelectedAgent && activeSelectedAgent.id === agent.id;
-              const isStopping = stoppingIds[agent.id] === 'stopping';
-              const isStopped = stoppingIds[agent.id] === 'stopped' || agent.status === 'stopped';
-
-              return (
-                <article
-                  key={agent.id}
-                  className={`agent-card ${isSelected ? 'selected' : ''}`}
-                  onClick={() => setSelectedAgentId(agent.id)}
-                >
-                  <div className="card-top">
-                    <span className="card-user">{agent.owner}</span>
-                    <span className={`badge ${agent.riskLevel.toLowerCase()}`}>
-                      {agent.riskLevel}
-                    </span>
-                  </div>
-
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <span className="badge app-tag">{agent.name}</span>
-                    <span style={{ fontSize: '11px', color: isStopped ? '#94a3b8' : isStopping ? '#f59e0b' : '#34d399', fontWeight: 600 }}>
-                      {isStopping ? '⏳ Stopping…' : isStopped ? '🛑 Stopped' : agent.status === 'revoked' ? '🚫 Revoked' : '● Active'}
-                    </span>
-                  </div>
-
-                  <div className="card-prompt">
-                    💬 {agent.prompt || 'No active prompt captured'}
-                  </div>
-
-                  <div className="card-activity">
-                    ⚡ {formatToolDescription(null, agent.latestCmd) || 'Idle · Awaiting tool invocation'}
-                  </div>
-
-                  <div className="card-footer">
-                    <span className="card-counts">
-                      <strong>{agent.allowedCount}</strong> Allow · <strong>{agent.deniedCount}</strong> Deny
-                    </span>
-                    <span style={{ color: '#64748b' }}>{elapsed(agent.lastSeen)}</span>
-                  </div>
-                </article>
-              );
+          <div className="fleet-grid" aria-label="Active agent fleet">
+            {visibleFleet.map((agent) => {
+              const stopped = ['closed', 'stopped', 'revoked'].includes(agent.status);
+              return <button key={agent.id} className={`agent-tile risk-${agent.risk.toLowerCase()} ${selected?.id === agent.id ? 'selected' : ''}`} onClick={() => setSelectedId(agent.id)} aria-label={agent.name}>
+                <span className="tile-top"><i className={`state-dot ${stopped ? 'stopped' : killSwitch ? 'frozen' : ''}`}/><b>{agent.name}</b><em>{agent.risk}</em></span>
+                <span className="tile-owner">{agent.owner}</span>
+                <span className="tile-action"><Icon name={stopped ? 'stop' : 'pulse'} size={13}/><span>{killSwitch && !stopped ? 'Execution frozen globally' : agent.currentAction}</span></span>
+                <span className="tile-foot"><small>{agent.appId}</small><small>{stopped ? agent.status : elapsed(agent.lastSeen)}</small></span>
+              </button>;
             })}
-
-            {filteredAgents.length === 0 && (
-              <div style={{ padding: '40px 20px', textAlign: 'center', color: '#64748b', fontSize: '12px' }}>
-                No agent workloads match the active filter.
-              </div>
-            )}
+            {!visibleFleet.length && <div className="empty-fleet"><Icon name="search" size={22}/><strong>No agents match this view</strong><span>Change filters or start the demo fleet.</span></div>}
           </div>
-        </section>
+        </div>
 
-        {/* =========================================================================
-            COLUMN 2: SELECTED AGENT MISSION & TIMELINE
-            ========================================================================= */}
-        <section className="panel-col">
-          <div className="panel-head">
-            <h2>Selected Agent Mission</h2>
-            {activeSelectedAgent && (
-              <span className="badge app-tag">{activeSelectedAgent.name}</span>
-            )}
+        <aside className="incident-panel" aria-label="Incident panel">
+          <div className="incident-head"><div><p className="eyebrow">Auto-promoted</p><h2>Incident queue</h2></div><span>{incidents.length}</span></div>
+          <div className="incident-list">
+            {incidents.map((agent, index) => <button key={agent.id} className={selected?.id === agent.id ? 'active' : ''} onClick={() => setSelectedId(agent.id)}>
+              <span className="incident-rank">{String(index + 1).padStart(2, '0')}</span><span className="incident-copy"><b>{agent.name}</b><small>{agent.currentAction}</small><em>{agent.deniedCount} denied · {elapsed(agent.lastSeen)}</em></span><span className={`risk-label ${agent.risk.toLowerCase()}`}>{agent.risk}</span><Icon name="chevron" size={14}/>
+            </button>)}
+            {!incidents.length && <div className="clear-state"><span><Icon name="shield" size={23}/></span><strong>No active incidents</strong><p>Elevated and critical agents will be promoted here automatically across all {fleet.length || 0} agents.</p></div>}
           </div>
+        </aside>
+      </section>
 
-          <div className="mission-container">
-            {activeSelectedAgent ? (
-              <>
-                {/* Human Intent Card */}
-                <div className="mission-banner">
-                  <div className="banner-user-label">
-                    👤 {activeSelectedAgent.owner} REQUESTED:
-                  </div>
-                  <div className="banner-prompt-text">
-                    "{activeSelectedAgent.prompt || 'Intent telemetry pending or protected by leadership privacy lock'}"
-                  </div>
-                  <div className="banner-meta">
-                    <span>Target App: <strong>{activeSelectedAgent.appId}</strong></span>
-                    <span>Session: <strong>{activeSelectedAgent.sessionId || activeSelectedAgent.id}</strong></span>
-                    {activeSelectedAgent.clientPid ? <span>PID: <strong>{activeSelectedAgent.clientPid}</strong></span> : null}
-                    <span>Host: <strong>{activeSelectedAgent.hostname}</strong></span>
-                  </div>
-                </div>
+      <section className="detail-dock">
+        <div className="timeline-panel">
+          <div className="detail-heading"><div><p className="eyebrow">Prompt → policy → action</p><h2>{selected ? selected.name : 'Select an agent'} <span className={`risk-label ${selected?.risk?.toLowerCase() || ''}`}>{selected?.risk || 'NO SELECTION'}</span></h2></div>{selected && <div className="identity"><span>{selected.hostname}</span><code>{selected.sessionId || selected.id}</code></div>}</div>
+          {selected ? <>
+            <div className="prompt-strip"><span><Icon name={sensitive ? 'unlock' : 'lock'}/>{sensitive ? 'Operator prompt' : 'Prompt protected'}</span><p>{sensitive ? (selected.prompt || 'No prompt captured for this session.') : 'Unlock a privileged demo session to reveal prompt telemetry.'}</p></div>
+            <div className="timeline" aria-label="Prompt-to-action timeline">
+              <div className="timeline-event intent"><i/><span className="event-icon"><Icon name="command"/></span><div><b>Intent received</b><small>{selected.owner}</small></div></div>
+              {selected.events.slice(0, 4).reverse().map((event, index) => { const key = event.event_id || `${event.timestamp}-${index}`; return <button key={key} className={`timeline-event ${event.decision}`} onClick={() => setExpandedEvent(expandedEvent === key ? '' : key)}><i/><span className="event-icon"><Icon name={event.decision === 'deny' ? 'ban' : 'check'}/></span><div><b>{actionLabel(event.full_command, event.executable)}</b><small>{event.executable || 'control-plane'} · {event.decision || 'observed'} · {event.duration_ms || 1} ms</small>{expandedEvent === key && <code className="event-command">{event.full_command || event.reason}</code>}</div></button>; })}
+              {selected.status === 'revoked' && <div className="timeline-event deny"><i/><span className="event-icon"><Icon name="ban"/></span><div><b>Execution authority revoked</b><small>Restart and future execution blocked</small></div></div>}
+            </div>
+          </> : <div className="detail-empty">Select any fleet tile to inspect its prompt-to-action timeline.</div>}
+        </div>
 
-                {/* Prompt-to-Action Timeline */}
-                <h3 className="timeline-title">Prompt-to-Action Verification Timeline</h3>
+        <aside className="control-panel">
+          <div className="control-head"><div><p className="eyebrow">Closed-loop response</p><h2>Session control</h2></div><span className="zero-trust"><Icon name="shield" size={13}/> Enforced</span></div>
+          {selected ? <>
+            <div className="control-actions"><button disabled={pending || ['closed', 'stopped', 'revoked'].includes(selected.status)} onClick={() => openAction('STOP', { agent: selected, title: `Stop ${selected.name}`, detail: 'Terminate this session. The rest of the fleet will continue operating.', confirm: 'Stop session', success: `${selected.name} visibly stopped; remaining fleet is operating.` })}><Icon name="stop"/>Stop</button>{selected.status === 'revoked' ? <button className="restore" disabled={pending} onClick={() => openAction('RESTORE', { agent: selected, title: `Restore ${selected.name}`, detail: 'Permit this operator to start new governed sessions.', confirm: 'Restore authority', success: `${selected.name} authority restored.` })}><Icon name="play"/>Restore</button> : <button className="revoke" disabled={pending} onClick={() => openAction('REVOKE', { agent: selected, title: `Revoke ${selected.name}`, detail: 'Terminate this session and block restart and all future execution.', confirm: 'Revoke authority', success: `${selected.name} revoked; restart and future execution blocked.` })}><Icon name="ban"/>Revoke</button>}</div>
+            <dl className="session-facts"><div><dt>Status</dt><dd><i className={`state-dot ${selected.status !== 'active' ? 'stopped' : ''}`}/>{selected.status}</dd></div><div><dt>Current activity</dt><dd>{selected.currentAction}</dd></div><div><dt>Session totals</dt><dd>{selected.allowedCount} allow · {selected.deniedCount} deny</dd></div><div><dt>Identity</dt><dd title={selected.spiffeId}>{selected.spiffeId.replace('spiffe://bap.internal/', '')}</dd></div></dl>
+          </> : <div className="detail-empty">No session selected.</div>}
+        </aside>
+      </section>
 
-                <div className="action-timeline">
-                  {/* Root Intent Node */}
-                  <div className="timeline-node">
-                    <div className="node-header">
-                      <span className="node-tool">👤 Human Prompt Submitted</span>
-                      <span className="node-time">Initial Request</span>
-                    </div>
-                    <div className="node-summary" style={{ color: '#93c5fd', fontStyle: 'italic' }}>
-                      "{activeSelectedAgent.prompt || 'Task execution initiated by operator'}"
-                    </div>
-                  </div>
+      <section className="demo-bar"><div><span className="demo-kicker">DEMO CONTROL</span><p>Deterministic orchestration backed by control-plane telemetry</p></div><div className="demo-actions"><button onClick={() => openAction('START')}><Icon name="play"/>Start Demo</button><button className="incident-trigger" onClick={() => openAction('INCIDENT')}><Icon name="alert"/>Trigger Incident</button><button onClick={() => openAction('RESET')}><Icon name="reset"/>Reset</button><button onClick={() => openAction('CLEANUP')}><Icon name="trash"/>Cleanup</button></div></section>
+    </main>
 
-                  {/* Chronological Action Nodes */}
-                  {timelineEvents.map((ev, idx) => {
-                    const isAllow = ev.decision === 'allow';
-                    const isDeny = ev.decision === 'deny';
-                    const eventKey = ev.event_id || `${idx}`;
-                    const isExpanded = !!expandedEvents[eventKey];
-
-                    return (
-                      <div
-                        key={eventKey}
-                        className={`timeline-node ${isAllow ? 'allow' : isDeny ? 'deny' : ''}`}
-                      >
-                        <div className="node-header">
-                          <span className="node-tool">
-                            {ev.executable ? `⚙️ ${ev.executable}` : '⚡ Tool Action'}
-                          </span>
-                          <span className={`badge ${isAllow ? 'allow' : 'deny'}`}>
-                            {isAllow ? 'ALLOWED' : 'DENIED'}
-                          </span>
-                        </div>
-
-                        <div className="node-summary">
-                          {formatToolDescription(ev.executable, ev.full_command)}
-                        </div>
-
-                        <button
-                          className="node-drawer-toggle"
-                          onClick={() =>
-                            setExpandedEvents(prev => ({
-                              ...prev,
-                              [eventKey]: !prev[eventKey],
-                            }))
-                          }
-                        >
-                          {isExpanded ? '▲ Hide Command Details' : '▼ Inspect Technical Command & Policy'}
-                        </button>
-
-                        {isExpanded && (
-                          <div className="node-drawer">
-                            <div className="drawer-line">
-                              <span className="drawer-label">Command:</span>
-                              <span className="drawer-val">{ev.full_command || 'None'}</span>
-                            </div>
-                            <div className="drawer-line">
-                              <span className="drawer-label">Decision:</span>
-                              <span className="drawer-val" style={{ color: isAllow ? '#34d399' : '#f87171' }}>
-                                {ev.decision?.toUpperCase()}
-                              </span>
-                            </div>
-                            <div className="drawer-line">
-                              <span className="drawer-label">Reason:</span>
-                              <span className="drawer-val">{ev.reason || 'Authorized by Cedar policy'}</span>
-                            </div>
-                            <div className="drawer-line">
-                              <span className="drawer-label">Latency:</span>
-                              <span className="drawer-val">{ev.duration_ms || 1} ms</span>
-                            </div>
-                            <div className="drawer-line">
-                              <span className="drawer-label">Exit Status:</span>
-                              <span className="drawer-val">{ev.exit_code ?? 0}</span>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-
-                  {/* Threat Escalation Node if Critical */}
-                  {activeSelectedAgent.riskLevel === 'CRITICAL' && (
-                    <div className="risk-alert-node">
-                      <span>⚠️</span>
-                      <div>
-                        <strong>Threat Escalation Detected:</strong> Repeated alternative evasion attempts recorded for this session. Risk status escalated to CRITICAL.
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Termination node if stopped or revoked */}
-                  {(activeSelectedAgent.status === 'stopped' || stoppingIds[activeSelectedAgent.id] === 'stopped') && (
-                    <div className="timeline-node deny">
-                      <div className="node-header">
-                        <span className="node-tool">🛑 Session Terminated</span>
-                        <span className="badge stopped">STOPPED</span>
-                      </div>
-                      <div className="node-summary" style={{ color: '#f87171' }}>
-                        Closed-loop intervention executed by CISO administrator. Process PID terminated.
-                      </div>
-                    </div>
-                  )}
-
-                  {activeSelectedAgent.status === 'revoked' && (
-                    <div className="timeline-node deny">
-                      <div className="node-header">
-                        <span className="node-tool">🚫 Workload Quarantined</span>
-                        <span className="badge revoked">REVOKED</span>
-                      </div>
-                      <div className="node-summary" style={{ color: '#f87171' }}>
-                        Access revoked by CISO administrator. Workload process terminated and all future actions blocked.
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </>
-            ) : (
-              <div style={{ padding: '60px 20px', textAlign: 'center', color: '#64748b' }}>
-                Select an agent workload from the fleet to view its mission and timeline.
-              </div>
-            )}
-          </div>
-        </section>
-
-        {/* =========================================================================
-            COLUMN 3: CONTROL & EVIDENCE
-            ========================================================================= */}
-        <section className="panel-col">
-          <div className="panel-head">
-            <h2>Control & Evidence</h2>
-            <span className="badge healthy">Zero-Trust Active</span>
-          </div>
-
-          <div className="control-container">
-            {activeSelectedAgent ? (
-              <>
-                {/* Closed-Loop Control Actions */}
-                <div className="control-card">
-                  <h3 className="control-card-title">Closed-Loop Agent Controls</h3>
-
-                  <div className="control-btn-grid">
-                    {/* Stop Session Button */}
-                    {activeSelectedAgent.status !== 'stopped' && stoppingIds[activeSelectedAgent.id] !== 'stopped' && activeSelectedAgent.status !== 'revoked' && (
-                      <button
-                        className="danger-outline"
-                        disabled={pending || stoppingIds[activeSelectedAgent.id] === 'stopping'}
-                        onClick={() =>
-                          setActionModal({
-                            type: 'stop',
-                            targetId: activeSelectedAgent.sessionId || activeSelectedAgent.id,
-                            targetName: activeSelectedAgent.name,
-                            title: `Stop Session (${activeSelectedAgent.name})`,
-                            impact: `Terminate process tree for PID ${activeSelectedAgent.clientPid || 'active session'}. Non-destructive: operator may start new sessions.`,
-                            path: '/control/agent/kill',
-                            body: {
-                              target: activeSelectedAgent.sessionId || activeSelectedAgent.id,
-                              action: 'stop',
-                            },
-                          })
-                        }
-                      >
-                        {stoppingIds[activeSelectedAgent.id] === 'stopping' ? '⏳ Stopping…' : '🛑 Stop Session'}
-                      </button>
-                    )}
-
-                    {/* Revoke Access Button */}
-                    {activeSelectedAgent.status !== 'revoked' ? (
-                      <button
-                        className="danger"
-                        disabled={pending}
-                        onClick={() =>
-                          setActionModal({
-                            type: 'revoke',
-                            targetId: activeSelectedAgent.sessionId || activeSelectedAgent.id,
-                            targetName: activeSelectedAgent.owner,
-                            title: `Revoke Access (${activeSelectedAgent.owner})`,
-                            impact: `Permanently quarantine access for ${activeSelectedAgent.owner}. Running session terminated and all future requests blocked.`,
-                            path: '/control/agent/kill',
-                            body: {
-                              target: activeSelectedAgent.sessionId || activeSelectedAgent.id,
-                              action: 'revoke',
-                            },
-                          })
-                        }
-                      >
-                        🚫 Revoke Access
-                      </button>
-                    ) : (
-                      <button
-                        className="primary"
-                        disabled={pending}
-                        onClick={() =>
-                          setActionModal({
-                            type: 'restore',
-                            targetId: activeSelectedAgent.sessionId || activeSelectedAgent.id,
-                            targetName: activeSelectedAgent.owner,
-                            title: `Restore Access (${activeSelectedAgent.owner})`,
-                            impact: `Restore security authority for ${activeSelectedAgent.owner}. Future autonomous workloads will be permitted.`,
-                            path: '/control/agent/kill',
-                            body: {
-                              target: activeSelectedAgent.sessionId || activeSelectedAgent.id,
-                              action: 'restore',
-                            },
-                          })
-                        }
-                      >
-                        ✓ Restore Access
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                {/* Cryptographic Execution Receipt */}
-                <div className="control-card">
-                  <h3 className="control-card-title">Cryptographic Execution Receipt</h3>
-
-                  <div className="evidence-spec-grid">
-                    <div className="evidence-row">
-                      <span className="evidence-key">Receipt Nonce:</span>
-                      <span className="evidence-val">
-                        {latestEvent?.event_id ? `rcpt-${latestEvent.event_id.slice(-10)}` : 'rcpt-e8ecd65dad9a'}
-                      </span>
-                    </div>
-                    <div className="evidence-row">
-                      <span className="evidence-key">Workload Identity:</span>
-                      <span className="evidence-val" style={{ color: '#38bdf8' }}>
-                        {activeSelectedAgent.spiffeId.replace('spiffe://bap.internal/', 'spiffe://.../')}
-                      </span>
-                    </div>
-                    <div className="evidence-row">
-                      <span className="evidence-key">Operator Delegation:</span>
-                      <span className="evidence-val">
-                        user:{activeSelectedAgent.owner.split(' ')[0]} → agent:{activeSelectedAgent.appId}
-                      </span>
-                    </div>
-                    <div className="evidence-row">
-                      <span className="evidence-key">Cedar Policy Version:</span>
-                      <span className="evidence-val">
-                        {data?.policy_digest ? `sha256:${data.policy_digest.slice(0, 12)}…` : 'sha256:a4343eae9e69…'}
-                      </span>
-                    </div>
-                    <div className="evidence-row">
-                      <span className="evidence-key">OS Containment:</span>
-                      <span className="evidence-val" style={{ color: '#34d399' }}>
-                        windows-restricted-token
-                      </span>
-                    </div>
-                    <div className="evidence-row">
-                      <span className="evidence-key">Last Decision:</span>
-                      <span
-                        className="evidence-val"
-                        style={{ color: latestEvent?.decision === 'deny' ? '#f87171' : '#34d399' }}
-                      >
-                        {latestEvent?.decision ? `${latestEvent.decision.toUpperCase()}_EXECUTED` : 'ALLOWED_EXECUTED'}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Audit & Compliance Verification */}
-                <div className="control-card">
-                  <h3 className="control-card-title">Merkle Audit Provenance</h3>
-
-                  <div className="merkle-badge-box">
-                    <span>🔒</span>
-                    <span>100% CRYPTOGRAPHICALLY VERIFIED</span>
-                  </div>
-
-                  <div style={{ fontSize: '11px', color: '#94a3b8', lineHeight: 1.6, marginTop: '8px' }}>
-                    Every tool execution is appended to a tamper-evident SHA-256 hash-chain notarized by the BAP control plane.
-                  </div>
-
-                  <div style={{ display: 'flex', gap: '6px', marginTop: '10px' }}>
-                    <span className="badge app-tag">SOC2-TYPE-II</span>
-                    <span className="badge app-tag">ISO-27001</span>
-                    <span className="badge app-tag">FEDRAMP</span>
-                  </div>
-                </div>
-              </>
-            ) : (
-              <div style={{ padding: '60px 20px', textAlign: 'center', color: '#64748b' }}>
-                Select an agent workload to view administrative controls and cryptographic receipts.
-              </div>
-            )}
-          </div>
-        </section>
-      </main>
-
-      {/* Admin Action Authentication Modal */}
-      <dialog ref={modalRef} className="admin-modal" onClose={() => setActionModal(null)}>
-        <form onSubmit={executeAdminAction}>
-          <h3>{actionModal?.title}</h3>
-          <p>{actionModal?.impact}</p>
-
-          {!adminToken && (
-            <label style={{ display: 'block', fontSize: '12px', color: '#cbd5e1', marginTop: '10px' }}>
-              Administrative Credential:
-              <input
-                ref={tokenInputRef}
-                type="password"
-                autoComplete="off"
-                placeholder="Enter CISO admin token…"
-                value={tokenInput}
-                onChange={e => setTokenInput(e.target.value)}
-                required
-                disabled={pending}
-              />
-            </label>
-          )}
-
-          <div className="modal-actions">
-            <button type="button" onClick={closeModal} disabled={pending}>
-              Cancel
-            </button>
-            <button
-              type="submit"
-              className={actionModal?.type === 'restore' ? 'primary' : 'danger'}
-              disabled={pending || (!adminToken && !tokenInput)}
-            >
-              {pending ? 'Authorizing…' : 'Confirm Action'}
-            </button>
-          </div>
-        </form>
-      </dialog>
-    </>
-  );
+    <dialog ref={modalRef} className="action-dialog" onClose={() => setModal(null)}><form onSubmit={runAction}><div className={`dialog-icon ${['FREEZE', 'REVOKE', 'INCIDENT'].includes(modal?.type) ? 'danger' : ''}`}><Icon name={['FREEZE', 'STOP'].includes(modal?.type) ? 'stop' : modal?.type === 'REVOKE' ? 'ban' : modal?.type === 'INCIDENT' ? 'alert' : 'shield'} size={21}/></div><p className="eyebrow">Administrative confirmation</p><h2>{modal?.title}</h2><p>{modal?.detail}</p>{!adminToken && <label>Admin credential<input ref={tokenRef} aria-label="Admin credential" type="password" autoComplete="off" value={tokenInput} onChange={(event) => setTokenInput(event.target.value)} placeholder="Enter control-plane token" required/></label>}<div className="dialog-actions"><button type="button" onClick={closeModal}>Cancel</button><button className={['FREEZE', 'STOP', 'REVOKE', 'INCIDENT', 'CLEANUP'].includes(modal?.type) ? 'danger' : 'primary'} type="submit" disabled={pending || (!adminToken && !tokenInput)}>{pending ? 'Working…' : modal?.confirm || 'Confirm action'}</button></div></form></dialog>
+  </div>;
 }
 
-createRoot(document.getElementById('root')).render(<App />);
+createRoot(document.getElementById('root')).render(<App/>);

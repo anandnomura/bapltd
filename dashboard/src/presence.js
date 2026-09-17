@@ -1,5 +1,5 @@
 export const STALE_MS = 30_000;
-export const OFFLINE_MS = 60_000;
+export const OFFLINE_MS = 30_000;
 
 export function presence(agent, now) {
   const last = Date.parse(agent.last_active_at || agent.last_heartbeat_at || agent.enrolled_at || agent.created_at || agent.started_at);
@@ -10,9 +10,6 @@ export function presence(agent, now) {
   }
   if (['deregistered', 'inactive'].includes(agent.status) || age >= OFFLINE_MS) {
     return { status: 'offline', age, visible: false };
-  }
-  if (agent.status === 'active' && age >= STALE_MS) {
-    return { status: 'stale', age, visible: true };
   }
   return { status: agent.status || 'active', age, visible: true };
 }
