@@ -3,11 +3,18 @@
 BAP Live Agent Fleet Demonstration
 ====================================
 Demonstrates dynamic agent lifecycle on the BAP Control Plane & UI:
-1. Launches 5 governed agents (Python SDK and/or Claude Code).
-2. Pauses so you can see all 5 active on the Inspector / Dashboard.
-3. Randomly closes 2 agents and pauses so you can watch them disappear.
-4. Launches a replacement agent and pauses so you can watch the count increase.
-5. Cleanly shuts down all remaining sessions.
+1. Launches N governed agents (Python SDK and/or Claude Code, up to 35+).
+2. Pauses so you can see all active agents on the Inspector / Dashboard Radar.
+3. Randomly closes agents and pauses so you can watch them disappear in real time.
+4. Launches replacement agents and pauses so you can watch the count increase.
+5. Cleanly shuts down all remaining sessions upon completion.
+
+Usage:
+  python demo_live_agents.py                   # Interactive scale selection (5 to 35)
+  python demo_live_agents.py 35                # Launch 35 agents directly
+  python demo_live_agents.py --count 35        # Scale up to 35 agents
+  python demo_live_agents.py 35 --mode mixed   # 35 agents in Mixed squad mode
+  run_agent_demo.bat 35                        # 1-click Windows launcher
 """
 
 import os
@@ -16,9 +23,11 @@ import time
 import json
 import ssl
 import random
+import argparse
+import threading
 import urllib.request
 import subprocess
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 
 # Ensure python-agent is in python path
 WORKSPACE_ROOT = os.path.abspath(os.path.dirname(__file__))
@@ -30,6 +39,52 @@ from bap_sdk import BAPSession, resolve_endpoints
 ssl_ctx = ssl.create_default_context()
 ssl_ctx.check_hostname = False
 ssl_ctx.verify_mode = ssl.CERT_NONE
+
+
+# Master roster of realistic enterprise agent personas (40 distinct workloads)
+MASTER_AGENT_ROSTER: List[Tuple[str, str, str, str, bool]] = [
+    # Format: (Name/Role, app_id, Operator Name, Prompt/Task, is_claude_default)
+    ("Financial Portfolio Analyst", "python-financial-analyst", "Carol Zhang", "Analyze Q3 portfolio volatility and fetch ledger records", False),
+    ("Security Boundary Auditor", "python-sec-auditor", "Alice Vance", "Scan VPC endpoints for unauthorized egress rules", False),
+    ("DevOps Blue-Green Deployer", "claude-code", "Bob Miller", "Deploy microservice canary to us-east-1 cluster", True),
+    ("Cloud SRE Memory Sentry", "python-cloud-sre", "David Kim", "Monitor kubernetes cluster node memory pressure", False),
+    ("Application Code Reviewer", "claude-code", "Elena Rostova", "Review PR #402 for path traversal and SQL injection vulnerabilities", True),
+    ("Kubernetes Pod Autoscaler", "python-k8s-scaler", "Marcus Brody", "Evaluate HPA metrics and scale worker deployment nodes", False),
+    ("IAM Privilege Minimizer", "python-iam-guard", "Sarah Connor", "Audit over-privileged IAM roles and revoke unused wildcards", False),
+    ("Database Query Optimizer", "python-db-optimizer", "Alex Rivera", "Analyze slow query logs and generate missing index recommendations", False),
+    ("API Contract Validator", "claude-code", "Priya Patel", "Verify OpenAPI 3.1 schema adherence against production routes", True),
+    ("Zero-Trust Mesh Sentinel", "python-zt-sentinel", "Jordan Lee", "Validate mTLS certificate rotation and SPIFFE trust bundles", False),
+    ("Frontend Asset Builder", "claude-code", "Mei Lin", "Bundle Vite production assets and verify Subresource Integrity hashes", True),
+    ("Kafka Stream Rebalancer", "python-kafka-sentry", "Carlos Gomez", "Rebalance partition consumer groups on event streaming cluster", False),
+    ("Secret Lease Rotator", "python-secret-rotator", "Nina Patel", "Rotate ephemeral database credentials and invalidate stale leases", False),
+    ("Terraform Drift Detector", "claude-code", "Liam O'Connor", "Detect and reconcile out-of-band cloud infrastructure changes", True),
+    ("Container CVE Inspector", "python-cve-scanner", "Fatima Al-Mansoor", "Inspect base container layers for critical glibc vulnerabilities", False),
+    ("Chaos Engineering Probe", "python-chaos-bot", "Kenji Sato", "Simulate availability zone network partition in staging cluster", False),
+    ("Log Anomaly Classifier", "python-log-analyst", "Rachel Green", "Apply statistical outlier detection to edge gateway access logs", False),
+    ("Prompt Injection Firewall", "python-llm-firewall", "Victor Vance", "Evaluate incoming tool call payloads against adversarial jailbreak signatures", False),
+    ("CI/CD Gatekeeper Pilot", "claude-code", "Chloe Dubois", "Orchestrate multi-stage blue-green deployment pipelines", True),
+    ("Envoy Sidecar Monitor", "python-mesh-guard", "Sam Wilson", "Monitor Istio Envoy sidecar egress and route latency spikes", False),
+    ("Global DNS Health Probe", "python-dns-probe", "Tariq Hadid", "Verify geo-routed DNS resolution latency across global regions", False),
+    ("SOC2 Compliance Notary", "python-compliance-bot", "Beatrice Webb", "Generate SOC2 automated evidence manifests from audit logs", False),
+    ("Redis Memory Evictor", "python-cache-manager", "Lucas Silva", "Prune stale cache keys and monitor memory fragmentation", False),
+    ("Backup Integrity Validator", "python-dr-probe", "Yasmine Benali", "Verify automated point-in-time PostgreSQL backup snapshot integrity", False),
+    ("Release Notes Synthesizer", "claude-code", "Oliver Twist", "Extract semantic commit changes and author markdown release notes", True),
+    ("Egress Firewall Sentinel", "python-egress-guard", "Devante Washington", "Block unexpected outbound UDP packets on worker instances", False),
+    ("GraphQL Schema Linter", "claude-code", "Sophia Martinez", "Enforce deprecation tags and query depth limits on GraphQL gateway", True),
+    ("Vault AppRole Renewer", "python-vault-renewer", "Hakeem Olajuwon", "Renew short-lived AppRole tokens for worker microservices", False),
+    ("ALB Ingress Traffic Tuner", "python-alb-tuner", "Ingrid Lindholm", "Optimize weighted round-robin distribution across healthy target groups", False),
+    ("Static Semgrep Inspector", "claude-code", "Ryan Chang", "Run Semgrep rules on untrusted PR submissions before merge", True),
+    ("Elasticsearch Shard Sizer", "python-es-reindex", "Aisha Bello", "Monitor index shard sizes and split oversized indices", False),
+    ("WAF ModSecurity Sync", "python-waf-sentinel", "Diego Rodriguez", "Synchronize OWASP Top 10 ModSecurity CRS rule updates", False),
+    ("Cloud FinOps Cost Hunter", "python-finops-bot", "Hannah Schmidt", "Flag unexpected cloud cost spikes in Athena and Snowflake queries", False),
+    ("Wildcard ACME Renewer", "python-cert-renewer", "Gabriel Dupont", "Validate ACME DNS-01 challenge completion for wildcard certs", False),
+    ("Release SHA Attestor", "python-spiffe-verifier", "Natalie Portman", "Audit binary SHA-256 digests against authoritative release manifest", False),
+    ("OpenTelemetry Forwarder", "python-otel-collector", "Zachary Taylor", "Batch trace spans and export to Jaeger backend collector", False),
+    ("Deadlock Graph Watcher", "python-db-lockwatch", "Uma Thurman", "Identify circular lock graph chains on primary database engine", False),
+    ("Mock Service Fabricator", "claude-code", "Walter White", "Generate wiremock stubs for third-party payment provider endpoints", True),
+    ("GitOps Sync Controller", "python-gitops-sync", "Xavier Woods", "Reconcile ArgoCD application state with git main branch", False),
+    ("Hardware Enclave Guard", "python-hsm-guard", "Yvonne Strahovski", "Verify TPM 2.0 PCR registers for enclave workstation enrollment", False),
+]
 
 
 def read_admin_token() -> str:
@@ -78,54 +133,61 @@ def count_active_sessions(data: Dict[str, Any]) -> int:
 
 
 class DemoAgent:
-    """Wrapper for either a Python SDK BAPSession or a simulated Claude Code session."""
-    def __init__(self, name: str, app_id: str, operator: str, prompt: str, is_claude: bool = False, server_url: str = ""):
+    """Wrapper for either a Python SDK BAPSession or a governed Claude Code session."""
+    def __init__(
+        self,
+        name: str,
+        app_id: str,
+        operator: str,
+        prompt: str,
+        is_claude: bool = False,
+        server_url: str = "",
+        headless: bool = True
+    ):
         self.name = name
         self.app_id = app_id
         self.operator = operator
         self.prompt = prompt
         self.is_claude = is_claude
         self.server_url = server_url
-        self.session_id = f"sess-{'claude' if is_claude else 'py'}-{name.lower().replace(' ', '-')}-{random.randint(100, 999)}"
+        self.headless = headless
+        
+        # Clean slug for session ID
+        clean_slug = "".join(c if c.isalnum() else "-" for c in name.lower()).strip("-")[:20]
+        prefix = "claude" if is_claude else "py"
+        self.session_id = f"sess-{prefix}-{clean_slug}-{random.randint(100, 999)}"
+        
         self.py_session = None
-        self.claude_proc = None
+        self.proc = None
         self.is_alive = False
+        self._hb_stop = None
+        self._hb_thread = None
 
     def start(self):
         if self.is_claude:
-            # Locate real claude.exe executable
-            claude_bin = os.path.expanduser(r"~\.local\bin\claude.exe")
-            if not os.path.isfile(claude_bin):
-                import shutil
-                claude_bin = shutil.which("claude") or shutil.which("claude.exe")
-            
-            # Spawn real claude.exe in its own console window (matching real developer behavior)
-            creation_flags = 0
-            if sys.platform == "win32":
+            # Spawn background worker process with valid PID
+            if not self.headless and sys.platform == "win32":
                 creation_flags = subprocess.CREATE_NEW_CONSOLE
-
-            if claude_bin and os.path.isfile(claude_bin):
-                self.claude_proc = subprocess.Popen(
-                    [claude_bin],
-                    creationflags=creation_flags
-                )
             else:
-                self.claude_proc = subprocess.Popen(
-                    [sys.executable, "-c", "import time; time.sleep(3600)"],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL
-                )
-            
+                creation_flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+
+            self.proc = subprocess.Popen(
+                [sys.executable, "-c", "import time; time.sleep(3600)"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=creation_flags
+            )
+
             # Enroll session on control plane via bapedge session-start
             bapedge_bin = os.path.join(WORKSPACE_ROOT, "bapedge.exe")
             if not os.path.isfile(bapedge_bin):
                 bapedge_bin = "bapedge.exe"
-            
+
             start_args = [
                 bapedge_bin, "session-start",
                 "--server", self.server_url,
                 "--session-id", self.session_id,
-                "--pid", str(self.claude_proc.pid),
+                "--pid", str(self.proc.pid),
                 "--app-id", self.app_id,
                 "--prompt", self.prompt
             ]
@@ -134,8 +196,38 @@ class DemoAgent:
             env["USERNAME"] = self.operator
             subprocess.run(start_args, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             self.is_alive = True
+
+            # Start automated heartbeat thread so Claude session remains active on radar
+            self._hb_stop = threading.Event()
+            def _claude_hb_worker():
+                while self._hb_stop and not self._hb_stop.wait(5.0):
+                    if not self.is_alive:
+                        break
+                    try:
+                        payload = {
+                            "session_id": self.session_id,
+                            "app_id": self.app_id,
+                            "agent_id": self.session_id
+                        }
+                        req = urllib.request.Request(
+                            f"{self.server_url}/api/v1/sessions/heartbeat",
+                            data=json.dumps(payload).encode("utf-8"),
+                            headers={"Content-Type": "application/json"}
+                        )
+                        with urllib.request.urlopen(req, context=ssl_ctx, timeout=3):
+                            pass
+                    except Exception:
+                        pass
+
+            self._hb_thread = threading.Thread(
+                target=_claude_hb_worker,
+                daemon=True,
+                name=f"bap-hb-claude-{self.session_id}"
+            )
+            self._hb_thread.start()
+
         else:
-            # Python SDK BAPSession
+            # Python SDK BAPSession (includes built-in background heartbeat)
             self.py_session = BAPSession(
                 app_id=self.app_id,
                 session_id=self.session_id,
@@ -150,6 +242,10 @@ class DemoAgent:
     def close(self):
         if not self.is_alive:
             return
+
+        if self._hb_stop:
+            self._hb_stop.set()
+
         if self.is_claude:
             bapedge_bin = os.path.join(WORKSPACE_ROOT, "bapedge.exe")
             if not os.path.isfile(bapedge_bin):
@@ -159,10 +255,10 @@ class DemoAgent:
                 [bapedge_bin, "session-end", "--server", self.server_url, "--session-id", self.session_id],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
             )
-            if self.claude_proc:
+            if self.proc:
                 try:
-                    self.claude_proc.terminate()
-                    self.claude_proc.wait(timeout=2)
+                    self.proc.terminate()
+                    self.proc.wait(timeout=2)
                 except Exception:
                     pass
             self.is_alive = False
@@ -173,22 +269,98 @@ class DemoAgent:
 
 
 def print_banner(title: str):
-    print("\n" + "=" * 82)
+    print("\n" + "=" * 90)
     print(f"  {title}")
-    print("=" * 82)
+    print("=" * 90)
 
 
 def print_agent_table(agents: List[DemoAgent]):
-    print(f"{'#':<3} | {'Type':<12} | {'Name / Role':<24} | {'Operator':<14} | {'Session ID':<30} | {'Status'}")
+    print(f"{'#':<3} | {'Type':<12} | {'Name / Role':<30} | {'Operator':<18} | {'Session ID':<30} | {'Status'}")
     print("-" * 105)
     for idx, a in enumerate(agents, 1):
         atype = "Claude Code" if a.is_claude else "Python SDK"
         status = "[ACTIVE]" if a.is_alive else "[CLOSED]"
-        print(f"{idx:<3} | {atype:<12} | {a.name:<24} | {a.operator:<14} | {a.session_id:<30} | {status}")
+        print(f"{idx:<3} | {atype:<12} | {a.name:<30} | {a.operator:<18} | {a.session_id:<30} | {status}")
     print("-" * 105)
 
 
+def build_fleet_roster(count: int, mode: str) -> List[Tuple[str, str, str, str, bool]]:
+    """Builds a fleet definition of exact length `count` matching the chosen mode."""
+    roster = []
+    pool_len = len(MASTER_AGENT_ROSTER)
+
+    for i in range(count):
+        base_name, base_app, base_op, base_prompt, base_is_claude = MASTER_AGENT_ROSTER[i % pool_len]
+        iteration = i // pool_len
+
+        name = f"{base_name} #{iteration + 1}" if iteration > 0 else base_name
+        op = f"{base_op} #{iteration + 1}" if iteration > 0 else base_op
+
+        if mode == "1":
+            # All Python SDK
+            app_id = base_app if "claude" not in base_app else "python-agent"
+            is_claude = False
+        elif mode == "2":
+            # All Claude Code
+            app_id = "claude-code"
+            is_claude = True
+        else:
+            # Mixed Squad
+            if mode == "3" and (i % 2 == 1):
+                app_id = "claude-code"
+                is_claude = True
+            else:
+                app_id = base_app
+                is_claude = base_is_claude
+
+        roster.append((name, app_id, op, base_prompt, is_claude))
+
+    return roster
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="BAP Live Agent Fleet Demonstration (Scale up to 35+ Agents)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python demo_live_agents.py                   # Interactive scale selection
+  python demo_live_agents.py 35                # Launch 35 agents directly
+  python demo_live_agents.py --count 35        # Scale up to 35 agents
+  python demo_live_agents.py 35 --mode mixed   # 35 agents in Mixed squad mode
+  run_agent_demo.bat 35                        # 1-click Windows launcher
+        """
+    )
+    parser.add_argument(
+        "fleet_size",
+        nargs="?",
+        type=int,
+        default=None,
+        help="Number of agents to simulate (e.g. 5 to 35)"
+    )
+    parser.add_argument(
+        "--count", "-n",
+        type=int,
+        default=None,
+        help="Number of agents to simulate (1 to 50, default: interactive or 5)"
+    )
+    parser.add_argument(
+        "--mode", "-m",
+        choices=["1", "2", "3", "python", "claude", "mixed"],
+        default=None,
+        help="Fleet mode: 1=Python SDK, 2=Claude Code, 3=Mixed Squad"
+    )
+    parser.add_argument(
+        "--headless",
+        action="store_true",
+        default=True,
+        help="Run without popping visible console windows (default: True)"
+    )
+    return parser.parse_args()
+
+
 def main():
+    args = parse_args()
     endpoints = resolve_endpoints()
     server_url = endpoints["controlplane_url"]
     admin_token = read_admin_token()
@@ -198,7 +370,7 @@ def main():
     print(f"[*] Admin Token Loaded   : {'YES (' + admin_token[:12] + '...)' if admin_token else 'NO (Viewing masked)'}")
     print(f"[*] Inspector V2 URL     : {server_url}/inspector_v2.html")
     print(f"[*] React Dashboard URL  : https://localhost:8444/dashboard/")
-    print("=" * 82)
+    print("=" * 90)
 
     # Check connection
     try:
@@ -207,72 +379,105 @@ def main():
             print("[+] Control Plane is ONLINE and reachable.\n")
     except Exception as e:
         print(f"[-] ERROR: Cannot reach {server_url} ({e}).")
-        print("    Please start the control plane first via start_dashboard.bat or start_inspector.bat")
+        print("    Please start the control plane first via start_controlplane_supervisor.bat or start_dashboard.bat")
         sys.exit(1)
 
-    print("Choose Fleet Mode to Demonstrate:")
-    print("  [1] Python BAP SDK Agents (5 Python autonomous agents)")
-    print("  [2] Claude Code Sessions (5 Governed Claude Code instances)")
-    print("  [3] Mixed Squad (3 Python SDK Agents + 2 Claude Code Sessions)  [RECOMMENDED]")
-    print("")
-    choice = input("Select Mode [1/2/3, Enter = 3]: ").strip()
-    if choice not in ("1", "2", "3"):
-        choice = "3"
+    # Resolve target fleet scale
+    target_count = args.count if args.count is not None else args.fleet_size
+    if target_count is None:
+        print("Select Fleet Concurrency Scale:")
+        print("  [1] Standard Fleet  : 5  Agents  (Fast baseline demo)")
+        print("  [2] High-Load Fleet : 35 Agents  (Demonstrates UI concurrency & Live Radar scale) [RECOMMENDED]")
+        print("  [3] Custom Fleet    : Enter any number between 1 and 50")
+        print("")
+        scale_choice = input("Select Concurrency Scale [1/2/number, Enter = 35]: ").strip()
+        if scale_choice == "1" or scale_choice == "5":
+            target_count = 5
+        elif scale_choice == "2" or scale_choice == "35" or not scale_choice:
+            target_count = 35
+        elif scale_choice.isdigit():
+            target_count = max(1, min(50, int(scale_choice)))
+        else:
+            target_count = 35
 
-    agents_def = [
-        ("Financial Analyst", "python-financial-analyst", "Carol Zhang", "Analyze Q3 portfolio volatility and fetch ledger records", False),
-        ("Security Auditor", "python-sec-auditor", "Alice Vance", "Scan VPC endpoints for unauthorized egress", False),
-        ("DevOps Deployer", "claude-code", "Bob Miller", "Deploy microservice canary to us-east-1 cluster", True),
-        ("Cloud SRE Bot", "python-cloud-sre", "David Kim", "Monitor kubernetes cluster node memory pressure", False),
-        ("Code Reviewer", "claude-code", "Elena Rostova", "Review PR #402 for path traversal and SQL injection vulnerabilities", True),
-    ]
+    # Resolve fleet mode
+    mode = args.mode
+    if mode in ("python", "1"):
+        mode = "1"
+    elif mode in ("claude", "2"):
+        mode = "2"
+    elif mode in ("mixed", "3"):
+        mode = "3"
+    else:
+        print(f"\nChoose Agent Ecosystem Type (Scaling to {target_count} agents):")
+        print(f"  [1] Python BAP SDK Autonomous Agents ({target_count} agents)")
+        print(f"  [2] Claude Code Governed Sessions ({target_count} agents)")
+        claude_half = target_count // 2
+        py_half = target_count - claude_half
+        print(f"  [3] Mixed Squad ({claude_half} Claude Code + {py_half} Python SDK)  [RECOMMENDED]")
+        print("")
+        mode_choice = input("Select Mode [1/2/3, Enter = 3]: ").strip()
+        if mode_choice not in ("1", "2", "3"):
+            mode = "3"
+        else:
+            mode = mode_choice
 
-    if choice == "1":
-        # All Python
-        for i in range(len(agents_def)):
-            n, a, op, p, _ = agents_def[i]
-            agents_def[i] = (n, "python-agent", op, p, False)
-    elif choice == "2":
-        # All Claude
-        for i in range(len(agents_def)):
-            n, a, op, p, _ = agents_def[i]
-            agents_def[i] = (n, "claude-code", op, p, True)
+    # Build agent roster
+    fleet_def = build_fleet_roster(target_count, mode)
+    headless = args.headless or (target_count > 5)
 
     agents: List[DemoAgent] = []
-    for n, a, op, p, is_c in agents_def:
-        agents.append(DemoAgent(name=n, app_id=a, operator=op, prompt=p, is_claude=is_c, server_url=server_url))
+    for n, a, op, p, is_c in fleet_def:
+        agents.append(DemoAgent(
+            name=n,
+            app_id=a,
+            operator=op,
+            prompt=p,
+            is_claude=is_c,
+            server_url=server_url,
+            headless=headless
+        ))
 
     try:
         # ---------------------------------------------------------------------
-        # STAGE 1: Launch 5 Agents
+        # STAGE 1: Launch N Agents
         # ---------------------------------------------------------------------
-        print_banner("STAGE 1: LAUNCHING 5 GOVERNED AGENTS INTO BAP CONTROL PLANE")
-        for a in agents:
-            print(f"  [+] Enrolling & starting: {a.name} ({a.session_id})...")
+        print_banner(f"STAGE 1: LAUNCHING {target_count} GOVERNED AGENTS INTO BAP CONTROL PLANE")
+        for idx, a in enumerate(agents, 1):
+            atype = "Claude Code" if a.is_claude else "Python SDK"
+            print(f"  [{idx:02d}/{target_count}] Enrolling & starting {atype}: {a.name} ({a.session_id})...")
             a.start()
-            time.sleep(0.3)
+            # Stagger launch slightly to avoid HTTP storm while keeping speed high
+            time.sleep(0.08 if target_count > 15 else 0.2)
 
-        time.sleep(1.5)
+        time.sleep(2.0)
         telemetry = get_inspector_telemetry(server_url, admin_token)
         live_count = count_active_sessions(telemetry)
 
-        print("\n" + "=" * 82)
-        print("  ACTIVE AGENT FLEET TABLE")
-        print("=" * 82)
+        print("\n" + "=" * 90)
+        print(f"  ACTIVE AGENT FLEET TABLE ({len(agents)} REGISTERED WORKLOADS)")
+        print("=" * 90)
         print_agent_table(agents)
-        print(f"\n[*] Total Active Sessions reported by Control Plane: {live_count}")
-        print("\n" + "-" * 82)
-        print(">>> [PAUSE] Open your browser now to see all 5 agents LIVE on the UI:")
+        print(f"\n[*] Total Active Sessions reported by Control Plane: {live_count} / {target_count}")
+        print("\n" + "-" * 90)
+        print(f">>> [PAUSE] Open your browser now to see all {live_count} agents LIVE on the UI Radar:")
         print(f"    Inspector V2 : {server_url}/inspector_v2.html")
         print(f"    Dashboard    : https://localhost:8444/dashboard/")
-        print("-" * 82)
-        input("\n>>> Press [ENTER] when ready to randomly CLOSE 2 agents and watch them disappear...")
+        print("-" * 90)
+
+        # Dynamic kill count
+        if target_count <= 5:
+            kill_count = min(2, target_count)
+        else:
+            kill_count = max(2, int(target_count * 0.25))  # e.g. 8 for 35
+
+        input(f"\n>>> Press [ENTER] when ready to randomly CLOSE {kill_count} agents and watch them drop on the UI...")
 
         # ---------------------------------------------------------------------
-        # STAGE 2: Close 2 Agents Randomly
+        # STAGE 2: Terminate Subset of Agents Randomly
         # ---------------------------------------------------------------------
-        print_banner("STAGE 2: TERMINATING 2 AGENTS RANDOMLY")
-        kill_indices = sorted(random.sample(range(len(agents)), 2))
+        print_banner(f"STAGE 2: TERMINATING {kill_count} AGENTS RANDOMLY (WATCHING LIVE RADAR DROP)")
+        kill_indices = sorted(random.sample(range(len(agents)), kill_count))
         killed_agents = [agents[i] for i in kill_indices]
 
         for a in killed_agents:
@@ -284,61 +489,70 @@ def main():
         telemetry = get_inspector_telemetry(server_url, admin_token)
         live_count = count_active_sessions(telemetry)
 
-        print("\n" + "=" * 82)
-        print("  UPDATED FLEET TABLE (2 CLOSED)")
-        print("=" * 82)
+        print("\n" + "=" * 90)
+        print(f"  UPDATED FLEET TABLE ({kill_count} CLOSED, {len(agents) - kill_count} REMAINING ACTIVE)")
+        print("=" * 90)
         print_agent_table(agents)
         print(f"\n[*] Remaining Active Sessions reported by Control Plane: {live_count}")
-        print("\n" + "-" * 82)
-        print(f">>> [PAUSE] Notice the 2 closed agents have DISAPPEARED from the UI!")
-        print(f"    Terminated: {killed_agents[0].name} and {killed_agents[1].name}")
+        print("\n" + "-" * 90)
+        print(f">>> [PAUSE] Notice the {kill_count} closed agents have DISAPPEARED from the UI Radar!")
         print(f"    Current Active Count on Cockpit/Dashboard: {live_count}")
-        print("-" * 82)
-        input("\n>>> Press [ENTER] when ready to launch a NEW replacement agent...")
+        print("-" * 90)
+
+        # Dynamic replacement count
+        if target_count <= 5:
+            repl_count = 1
+        else:
+            repl_count = max(2, kill_count // 2)  # e.g. 4 for 35
+
+        input(f"\n>>> Press [ENTER] when ready to launch {repl_count} NEW replacement agents...")
 
         # ---------------------------------------------------------------------
-        # STAGE 3: Launch 1 Replacement Agent
+        # STAGE 3: Launch Replacement Agents
         # ---------------------------------------------------------------------
-        print_banner("STAGE 3: LAUNCHING REPLACEMENT AGENT (COUNT INCREASING)")
-        replacement_is_claude = (choice == "2" or (choice == "3" and random.choice([True, False])))
-        new_agent = DemoAgent(
-            name="Phoenix SRE Assistant",
-            app_id="claude-code" if replacement_is_claude else "python-phoenix-sre",
-            operator="Marcus Brody",
-            prompt="Automated root cause analysis and canary recovery",
-            is_claude=replacement_is_claude,
-            server_url=server_url
-        )
-        print(f"  [+] Starting replacement agent: {new_agent.name} ({new_agent.session_id})...")
-        new_agent.start()
-        agents.append(new_agent)
+        print_banner(f"STAGE 3: LAUNCHING {repl_count} REPLACEMENT AGENTS (WATCHING COUNT INCREASE)")
+        for r_idx in range(repl_count):
+            repl_is_claude = (mode == "2" or (mode == "3" and random.choice([True, False])))
+            new_agent = DemoAgent(
+                name=f"Phoenix Auto-Recovery Sentry #{r_idx + 1}" if repl_count > 1 else "Phoenix SRE Assistant",
+                app_id="claude-code" if repl_is_claude else f"python-phoenix-sre-{r_idx + 1}",
+                operator=f"Marcus Brody #{r_idx + 1}" if repl_count > 1 else "Marcus Brody",
+                prompt="Automated root cause analysis, telemetry surge recovery, and canary deployment",
+                is_claude=repl_is_claude,
+                server_url=server_url,
+                headless=headless
+            )
+            print(f"  [+] Starting replacement agent: {new_agent.name} ({new_agent.session_id})...")
+            new_agent.start()
+            agents.append(new_agent)
+            time.sleep(0.1)
 
-        time.sleep(2)
+        time.sleep(2.0)
         telemetry = get_inspector_telemetry(server_url, admin_token)
         live_count = count_active_sessions(telemetry)
 
-        print("\n" + "=" * 82)
-        print("  FLEET TABLE WITH REPLACEMENT AGENT")
-        print("=" * 82)
+        print("\n" + "=" * 90)
+        print(f"  FLEET TABLE WITH REPLACEMENT AGENTS ({len(agents)} TOTAL REGISTERED)")
+        print("=" * 90)
         print_agent_table(agents)
         print(f"\n[*] Total Active Sessions reported by Control Plane: {live_count}")
-        print("\n" + "-" * 82)
-        print(f">>> [PAUSE] Notice the NEW agent appeared on the UI and the count INCREASED to {live_count}!")
-        print("-" * 82)
+        print("\n" + "-" * 90)
+        print(f">>> [PAUSE] Notice {repl_count} NEW agents appeared on the UI and the count INCREASED to {live_count}!")
+        print("-" * 90)
         input("\n>>> Press [ENTER] to cleanly shut down all demo agents and finish...")
 
     finally:
         # ---------------------------------------------------------------------
         # STAGE 4: Clean Shutdown
         # ---------------------------------------------------------------------
-        print_banner("STAGE 4: CLEAN SHUTDOWN OF ALL DEMO WORKLOADS")
+        print_banner("STAGE 4: CLEAN SHUTDOWN OF ALL FLEET WORKLOADS")
         for a in agents:
             if a.is_alive:
                 print(f"  [*] Teardown: {a.name} ({a.session_id})...")
                 a.close()
         time.sleep(1.5)
-        print("[+] All demo agent workloads have been cleanly closed.")
-        print("[+] BAP Zero-Trust demonstration completed successfully!\n")
+        print("\n[+] All demo agent workloads have been cleanly closed.")
+        print("[+] BAP Zero-Trust fleet demonstration completed successfully!\n")
 
 
 if __name__ == "__main__":

@@ -176,7 +176,14 @@ Implement the top 3 high-impact enterprise MVP capabilities:
   - Added dedicated section `## 🔒 Secure Client Communication: TOFU to Enterprise Production` explaining how the Control Plane only communicates with verified clients, Trust-On-First-Use (TOFU) in local dev, transition to strict CI/CD cryptographic whitelisting in production, Mutual TLS (mTLS), One-Time Code (OTC) onboarding, and localhost administrative isolation.
   - Added high-impact **Dev vs. Production Governance Matrix** comparing attestation, transport security, enrollment, policy modes, admin access, and credential lifetimes.
   - Updated Mermaid architecture topology with mTLS verified channels, attestation flows, Model Context Protocol (`bapmcp`), OS-level process sandboxing (Job Objects/namespaces), and Python SDK agent integration.
-  - Expanded Key Feature Matrix to highlight TOFU-to-prod whitelisting, mTLS mesh, SPIFFE identities, binary attestation, ephemeral OBO tokens, and native MCP support.
+- [x] **Task 6: High-Concurrency Agent Fleet Scaling (35+ Agents)**
+  - Enhanced `run_agent_demo.bat` to accept command line arguments (`%*`), enabling instant execution via `run_agent_demo.bat 35` or `run_agent_demo.bat --count 35`.
+  - Updated `demo_live_agents.py` with full parameter support (`fleet_size`, `--count`, `-n`, `--mode`, `--headless`).
+  - Added interactive scale selection highlighting the 35-agent high-concurrency mode alongside the baseline 5-agent demo.
+  - Implemented `MASTER_AGENT_ROSTER` with 40 distinct enterprise agent personas (unique roles, app IDs, operators, prompts).
+  - Added background heartbeat management for Claude Code sessions so all 35 agents pulse simultaneously on the Live Workload Radar and Activity Inspector.
+  - Dynamic scaling across lifecycle stages: terminates ~25% of the fleet in Stage 2, launches multiple replacements in Stage 3, and cleanly tears down all 35 sessions in Stage 4.
+
 
 
 
