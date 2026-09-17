@@ -27,6 +27,7 @@ if errorlevel 10 (
 echo [*] Restarting the control plane and dashboard with the current cockpit...
 set "BAP_DEMO_NO_BROWSER=%BAP_NO_BROWSER%"
 set "BAP_NO_BROWSER=1"
+set "BAP_DEMO_MODE=1"
 set "CP_BIN=%~dp0bapcontrolplane.exe"
 set "DASHBOARD_BIN=%~dp0bapdashboard.exe"
 call start_dashboard.bat

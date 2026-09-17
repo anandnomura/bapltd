@@ -32,11 +32,25 @@ test('privileged prompt reveal and closed-loop revoke use real telemetry', async
   await page.getByRole('button', { name: 'Unlock telemetry' }).click();
   await expect(page.getByText('Review the payment changes for mistakes.', { exact: true })).toBeVisible();
   await expect(page.getByText('alice@example.test', { exact: true }).first()).toBeVisible();
+  expect(await page.evaluate(() => [localStorage.length, sessionStorage.length, document.cookie])).toEqual([0, 0, '']);
 
   await page.getByRole('button', { name: 'Revoke', exact: true }).click();
   await page.getByRole('button', { name: 'Revoke authority' }).click();
   await expect(page.getByRole('button', { name: 'Restore', exact: true })).toBeVisible();
   expect((await (await request.get('/api/v1/sessions/sess-browser')).json()).status).toBe('revoked');
+});
+
+test('production mode hides destructive demo controls and fails closed on unknown audit state', async ({ page }) => {
+  await page.route('**/dashboard-config', (route) => route.fulfill({ json: { environment: 'production', demo_mode: false } }));
+  await page.route('**/api/v1/inspector/data', (route) => route.fulfill({ json: {
+    agents: [], sessions: [], central_events: [], kill_switch: false, server_time: new Date().toISOString(),
+  } }));
+  await page.goto('/dashboard/');
+  await expect(page.getByText('PRODUCTION', { exact: true })).toBeVisible();
+  await expect(page.getByText('Unverified', { exact: true })).toBeVisible();
+  await expect(page.getByText('tamper-evident chain', { exact: false })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Start Demo' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Trigger Incident' })).toHaveCount(0);
 });
 
 test('25-agent orchestration, incident promotion, stop isolation, and Global Freeze', async ({ page }) => {

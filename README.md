@@ -230,6 +230,10 @@ To run the local control-plane supervisor:
 start_controlplane_supervisor.bat
 ```
 
+The synthetic fleet and incident endpoints are disabled by default. Use
+`run_executive_demo.bat`, which starts the isolated demo with
+`BAP_DEMO_MODE=1`. Do not enable demo mode against a production registry.
+
 To run the resource-PEP demonstration, follow [`envoy/ENVOY_PODMAN_GUIDE.md`](envoy/ENVOY_PODMAN_GUIDE.md) or the gateway tests under `tests/`.
 
 > The supplied scripts and certificates are intended for local development and demonstration. Review configuration, keys, authentication, network exposure, and platform controls before using them outside an isolated environment.

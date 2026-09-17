@@ -47,6 +47,7 @@ type Server struct {
 	allowedOrigins   map[string]bool
 	adminToken       string
 	allowRemoteAdmin bool
+	demoMode         bool
 	lastDemoMu       sync.RWMutex
 	lastDemoAction   *DemoActionRecord
 }
@@ -80,6 +81,22 @@ func NewServer(reg *registry.Store, otcStore *otc.Store, minter *authz.TokenMint
 func (s *Server) SetAdminSecurity(token string, allowRemote bool) {
 	s.adminToken = strings.TrimSpace(token)
 	s.allowRemoteAdmin = allowRemote
+}
+
+// SetDemoMode enables destructive synthetic-data endpoints. It is disabled by
+// default so a normal control plane can never reset live state through /demo.
+func (s *Server) SetDemoMode(enabled bool) {
+	s.demoMode = enabled
+}
+
+func (s *Server) requireDemoMode(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.demoMode {
+			http.NotFound(w, r)
+			return
+		}
+		next(w, r)
+	}
 }
 
 // SetAllowedOrigins configures exact browser origins; wildcard and null origins
@@ -167,12 +184,12 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/v1/control/agent/kill", s.requireAdminAuth(s.handleTargetedKillAgent))
 	s.mux.HandleFunc("/api/v1/control/agent/revoke", s.requireAdminAuth(s.handleTargetedKillAgent))
 	s.mux.HandleFunc("/api/v1/sessions/revoke", s.requireAdminAuth(s.handleTargetedKillAgent))
-	s.mux.HandleFunc("/api/v1/sessions/reset", s.requireAdminAuth(s.handleResetSessions))
+	s.mux.HandleFunc("/api/v1/sessions/reset", s.requireDemoMode(s.requireAdminAuth(s.handleResetSessions)))
 	s.mux.HandleFunc("/api/v1/agents/revoke", s.requireAdminAuth(s.handleRevoke))
 	s.mux.HandleFunc("/api/v1/apps/revoke", s.requireAdminAuth(s.handleRevokeApp))
-	s.mux.HandleFunc("/api/v1/demo/exec-safe", s.requireAdminAuth(s.handleDemoExecSafe))
-	s.mux.HandleFunc("/api/v1/demo/exec-attack", s.requireAdminAuth(s.handleDemoExecAttack))
-	s.mux.HandleFunc("/api/v1/demo/fleet-scale", s.requireAdminAuth(s.handleDemoFleetScale))
+	s.mux.HandleFunc("/api/v1/demo/exec-safe", s.requireDemoMode(s.requireAdminAuth(s.handleDemoExecSafe)))
+	s.mux.HandleFunc("/api/v1/demo/exec-attack", s.requireDemoMode(s.requireAdminAuth(s.handleDemoExecAttack)))
+	s.mux.HandleFunc("/api/v1/demo/fleet-scale", s.requireDemoMode(s.requireAdminAuth(s.handleDemoFleetScale)))
 }
 
 func writeJSON(w http.ResponseWriter, status int, data any) {
