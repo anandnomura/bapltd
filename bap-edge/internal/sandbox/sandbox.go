@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -222,7 +223,10 @@ func RunSandboxedCommandWithExitCode(cmdStr string) (string, int, error) {
 	cmd := BuildExecCmd(cmdStr)
 
 	// Apply platform-specific sandbox attributes
-	ConfigureSandbox(cmd)
+	cleanup := ConfigureSandbox(cmd)
+	if cleanup != nil {
+		defer cleanup()
+	}
 
 	// Prepare environment
 	env := os.Environ()
@@ -242,17 +246,31 @@ func RunSandboxedCommandWithExitCode(cmdStr string) (string, int, error) {
 	// Inject CORP_OBO_TOKEN environment variable
 	cmd.Env = append(env, fmt.Sprintf("CORP_OBO_TOKEN=%s", InjectedOBOToken))
 
-	output, err := cmd.CombinedOutput()
-	cleaned := CleanOutput(string(output))
-	exitCode := 0
+	var b bytes.Buffer
+	cmd.Stdout = &b
+	cmd.Stderr = &b
+
+	err := cmd.Start()
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
+		return "", 1, err
+	}
+
+	postCleanup := PostStartProcess(cmd)
+	if postCleanup != nil {
+		defer postCleanup()
+	}
+
+	waitErr := cmd.Wait()
+	cleaned := CleanOutput(b.String())
+	exitCode := 0
+	if waitErr != nil {
+		if exitErr, ok := waitErr.(*exec.ExitError); ok {
 			exitCode = exitErr.ExitCode()
 		} else {
 			exitCode = 1
 		}
 	}
-	return cleaned, exitCode, err
+	return cleaned, exitCode, waitErr
 }
 
 // RunSandboxedCommand executes the shell command in an isolated sandbox,

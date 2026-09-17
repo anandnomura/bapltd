@@ -261,14 +261,14 @@ if !ERRORLEVEL! neq 0 (
 :: Step 7d: Test BAP-200 Sole Executor & Cryptographic Receipts [python tests\test_bap200_sole_executor.py]
 :: -----------------------------------------------------------------------------
 echo.
-echo [7d/12] Testing BAP-200 Sole Executor, Tamper Resistance, and Receipts [tests\test_bap200_sole_executor.py]...
+echo [7d/12] Testing BAP-200 / BAP-200A Sole Executor, Windows Containment, and Receipts [tests\test_bap200_sole_executor.py]...
 cd /d "%ROOT_DIR%"
 python tests\test_bap200_sole_executor.py
 if !ERRORLEVEL! neq 0 (
     echo [FAIL] test_bap200_sole_executor.py failed!
     set /a FAIL_COUNT+=1
 ) else (
-    echo [PASS] BAP-200: Exactly-once execution, zero side effects on deny, receipts, and tamper resistance verified.
+    echo [PASS] BAP-200 / BAP-200A: Safe broker handoff [--cmd-b64], Windows restricted token containment, shell operators, and receipts verified.
     set /a PASS_COUNT+=1
 )
 

@@ -6,9 +6,16 @@ import (
 	"os/exec"
 )
 
-// ConfigureSandbox configures sandbox attributes for Darwin (macOS).
-// Linux namespaces are not available on Darwin; process isolation is applied.
-func ConfigureSandbox(cmd *exec.Cmd) {
-	// Darwin process attributes
+func GetActiveProfile() string {
+	return "darwin-posix"
 }
 
+// ConfigureSandbox configures sandbox attributes for Darwin (macOS).
+func ConfigureSandbox(cmd *exec.Cmd) func() {
+	return func() {}
+}
+
+// PostStartProcess is a no-op on Darwin.
+func PostStartProcess(cmd *exec.Cmd) func() {
+	return func() {}
+}

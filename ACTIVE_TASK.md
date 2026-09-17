@@ -192,3 +192,11 @@ Implement the top 3 high-impact enterprise MVP capabilities:
   - Implemented **Correlated Risk Events**: sequential evasion attempts within a session are tracked in `.bap/risk_state.json`, escalating session threat level (`LOW` -> `ELEVATED` -> `CRITICAL`) and transmitting correlated risk warnings.
   - Authored comprehensive test suite `tests/test_bap200_sole_executor.py` verifying all 9 acceptance criteria (100% pass).
   - Created architectural specification `docs/EXECUTION_MODEL.md`.
+- [x] **Task 8: BAP-200A — Safe Broker Handoff and Windows Containment Boundary (P0) — COMPLETE**
+  - **Structured Base64 Command Handoff**: Interceptor encodes commands using `--cmd-b64 <base64>` during both `bapedge check` and `updatedInput` rewrite. Completely eliminates shell quote-stripping, backslash mangling, and host shell argument parsing issues.
+  - **Windows Restricted Token Containment**: Implemented `CreateRestrictedProcessToken()` using `CreateRestrictedToken` (`DISABLE_MAX_PRIVILEGE`), stripping all administrative, debug, and high-privilege tokens (`SeDebugPrivilege`, `SeTakeOwnershipPrivilege`, `SeSecurityPrivilege`, etc.) down to standard traverse check rights (`SeChangeNotifyPrivilege`).
+  - **Windows Job Object Process Sealing**: Implemented `CreateRestrictedJob()` and `AssignProcessToJob()` with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` and `JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION`, guaranteeing that process trees cannot leave orphaned child processes.
+  - **Complex Shell Operator Validation**: Tested output redirection (`>`, `>>`, `2>&1`), pipelines (`|`), command chaining (`&&`, `||`, `;`), and substitution (`$(...)`) across safe developer executions and malicious evasion/traversal blocks.
+  - **Full Test Suite & Cryptographic Receipts**: Expanded `tests/test_bap200_sole_executor.py` to 15 comprehensive automated tests (100% pass). Cryptographic receipt reflects `sandbox_profile: "windows-restricted-token"`.
+  - **Master Suite Regression**: Full regression in `run_all_tests.bat` passed cleanly (32/32 tests passed, Exit Code 0).
+

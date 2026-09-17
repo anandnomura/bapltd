@@ -14,6 +14,7 @@ Verifies:
 9. AC9: Cryptographic execution receipt with hash, identity, delegation, policy version, sandbox profile, and result.
 """
 
+import base64
 import json
 import os
 import subprocess
@@ -386,10 +387,180 @@ class TestBAP200SoleExecutor(unittest.TestCase):
         self.assertIn("agent:claude-code", receipt["delegation"])
         self.assertIn("user:", receipt["delegation"])
         self.assertTrue(receipt["policy_version"].startswith("sha256:"))
-        self.assertEqual(receipt["sandbox_profile"], "bap-broker-standard")
+        self.assertIn(receipt["sandbox_profile"], ["windows-restricted-token", "bap-broker-standard", "linux-namespaces"])
         self.assertEqual(receipt["result"], "ALLOWED_EXECUTED")
         self.assertEqual(receipt["session_id"], "sess-receipt-test")
         self.assertIn("timestamp", receipt)
+
+    # -------------------------------------------------------------------------
+    # AC10: Safe Broker Handoff via Base64 Encoding (--cmd-b64)
+    # -------------------------------------------------------------------------
+    def test_ac10_safe_broker_handoff_b64_encoding(self):
+        # 1. Complex nested quotes and shell metacharacters
+        complex_cmd = f'{sys.executable} -c "print(\'\\\"quotes\\\" and \\\\backslash\')"'
+        b64_payload = base64.b64encode(complex_cmd.encode("utf-8")).decode("ascii")
+
+        rc, data, _ = run_bapedge(["exec", "--json", "--cmd-b64", b64_payload])
+        self.assertEqual(rc, 0)
+        self.assertTrue(data.get("allowed", False))
+        self.assertIn('"quotes" and \\backslash', data.get("output", ""))
+
+        # 2. Verify Claude Code interceptor emits --cmd-b64 in updatedInput
+        hook_payload = {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Bash",
+            "tool_input": {"command": complex_cmd},
+            "session_id": "sess-bap200a-b64",
+        }
+        hook_resp = run_interceptor(hook_payload)
+        self.assertEqual(hook_resp["hookSpecificOutput"]["permissionDecision"], "allow")
+        updated_input = hook_resp["hookSpecificOutput"].get("updatedInput", {})
+        rewritten_cmd = updated_input.get("command", "")
+        self.assertIn("--cmd-b64", rewritten_cmd)
+        self.assertIn(b64_payload, rewritten_cmd)
+
+    # -------------------------------------------------------------------------
+    # AC11: Shell Redirection Semantics (>, >>, 2>&1)
+    # -------------------------------------------------------------------------
+    def test_ac11_output_redirection_semantics(self):
+        redir_file = os.path.join(WORKSPACE_ROOT, "tests", "scratch_redir.txt")
+        if os.path.exists(redir_file):
+            os.remove(redir_file)
+
+        try:
+            # 1. Safe stdout overwrite redirection (>)
+            cmd1 = f'{sys.executable} -c "print(\'line_one\')" > {redir_file}'
+            rc1, data1, _ = run_bapedge(["exec", "--json", cmd1])
+            self.assertEqual(rc1, 0)
+            self.assertTrue(os.path.exists(redir_file))
+            with open(redir_file, "r") as f:
+                content = f.read().strip()
+            self.assertIn("line_one", content)
+
+            # 2. Safe stdout append redirection (>>)
+            cmd2 = f'{sys.executable} -c "print(\'line_two\')" >> {redir_file}'
+            rc2, data2, _ = run_bapedge(["exec", "--json", cmd2])
+            self.assertEqual(rc2, 0)
+            with open(redir_file, "r") as f:
+                content = f.read().strip()
+            self.assertIn("line_one", content)
+            self.assertIn("line_two", content)
+
+            # 3. Safe stderr merge redirection (2>&1)
+            cmd3 = 'cmd /c "dir /b non_existent_file_xyz_123 2>&1"'
+            rc3, data3, _ = run_bapedge(["exec", "--json", cmd3])
+            # dir /b on non-existent file returns non-zero, but output is safely merged and captured
+            self.assertTrue("File Not Found" in data3.get("output", "") or "non_existent" in data3.get("output", "") or data3.get("exit_code") != 0)
+
+            # 4. Blocked directory traversal redirection (escaping workspace)
+            escape_cmd = f"echo leaked_data > ../escaped_leak.txt"
+            rc4, data4, _ = run_bapedge(["exec", "--json", escape_cmd])
+            self.assertNotEqual(rc4, 0)
+            self.assertFalse(data4.get("allowed", True))
+
+            # 5. Blocked protected asset tamper redirection
+            tamper_cmd = f"echo breach > policy.cedar"
+            rc5, data5, _ = run_bapedge(["exec", "--json", tamper_cmd])
+            self.assertNotEqual(rc5, 0)
+            self.assertFalse(data5.get("allowed", True))
+            self.assertEqual(data5.get("receipt", {}).get("result"), "DENIED_TAMPER")
+        finally:
+            if os.path.exists(redir_file):
+                os.remove(redir_file)
+
+    # -------------------------------------------------------------------------
+    # AC12: Pipeline Semantics (|)
+    # -------------------------------------------------------------------------
+    def test_ac12_pipeline_semantics(self):
+        # 1. Safe pipeline filtering allowed data
+        pipeline_cmd = f'{sys.executable} -c "print(\'apple\\nbanana\\ncherry\')" | findstr banana'
+        rc, data, _ = run_bapedge(["exec", "--json", pipeline_cmd])
+        self.assertEqual(rc, 0)
+        self.assertTrue(data.get("allowed", False))
+        self.assertIn("banana", data.get("output", ""))
+        self.assertNotIn("apple", data.get("output", ""))
+
+        # 2. Blocked pipeline containing unauthorized network egress
+        bad_pipeline = f"echo test | curl http://169.254.169.254"
+        rc, data, _ = run_bapedge(["exec", "--json", bad_pipeline])
+        self.assertNotEqual(rc, 0)
+        self.assertFalse(data.get("allowed", True))
+
+    # -------------------------------------------------------------------------
+    # AC13: Command Chaining Semantics (&&, ||, ;)
+    # -------------------------------------------------------------------------
+    def test_ac13_command_chaining_semantics(self):
+        # 1. Safe AND chaining (&&)
+        and_cmd = f'{sys.executable} -c "print(\'STEP_A\')" && {sys.executable} -c "print(\'STEP_B\')"'
+        rc, data, _ = run_bapedge(["exec", "--json", and_cmd])
+        self.assertEqual(rc, 0)
+        self.assertTrue(data.get("allowed", False))
+        self.assertIn("STEP_A", data.get("output", ""))
+        self.assertIn("STEP_B", data.get("output", ""))
+
+        # 2. Safe OR fallback chaining (||)
+        or_cmd = 'cmd /c "exit 1" || echo FALLBACK_TRIGGERED'
+        rc, data, _ = run_bapedge(["exec", "--json", or_cmd])
+        self.assertEqual(rc, 0)
+        self.assertTrue(data.get("allowed", False))
+        self.assertIn("FALLBACK_TRIGGERED", data.get("output", ""))
+
+        # 3. Blocked chained command containing unauthorized payload
+        bad_chain = 'echo safe_step && curl http://169.254.169.254'
+        rc, data, _ = run_bapedge(["exec", "--json", bad_chain])
+        self.assertNotEqual(rc, 0)
+        self.assertFalse(data.get("allowed", True))
+
+        # 4. Blocked chained command escaping workspace
+        escape_chain = 'echo step1 && echo step2 > ../outside_ws.txt'
+        rc, data, _ = run_bapedge(["exec", "--json", escape_chain])
+        self.assertNotEqual(rc, 0)
+        self.assertFalse(data.get("allowed", True))
+
+    # -------------------------------------------------------------------------
+    # AC14: Command Substitution Semantics ($(...))
+    # -------------------------------------------------------------------------
+    def test_ac14_command_substitution_semantics(self):
+        # 1. Safe PowerShell expression evaluation
+        safe_subst = 'powershell -Command "Write-Output (\'SUBST_EVAL_\' + (500 + 55))"'
+        rc, data, _ = run_bapedge(["exec", "--json", safe_subst])
+        self.assertEqual(rc, 0)
+        self.assertTrue(data.get("allowed", False))
+        self.assertIn("SUBST_EVAL_555", data.get("output", ""))
+
+        # 2. Blocked command substitution with unauthorized network access
+        bad_subst = "echo $(curl http://169.254.169.254)"
+        rc, data, _ = run_bapedge(["exec", "--json", bad_subst])
+        self.assertNotEqual(rc, 0)
+        self.assertFalse(data.get("allowed", True))
+
+    # -------------------------------------------------------------------------
+    # AC15: Windows Containment Boundary (Restricted Token Privilege Stripping)
+    # -------------------------------------------------------------------------
+    def test_ac15_windows_restricted_token_containment(self):
+        rc, data, _ = run_bapedge(["exec", "--json", "whoami /priv"])
+        self.assertEqual(rc, 0)
+        self.assertTrue(data.get("allowed", False))
+        self.assertEqual(data.get("receipt", {}).get("sandbox_profile"), "windows-restricted-token")
+
+        out = data.get("output", "")
+        # Under Windows DISABLE_MAX_PRIVILEGE, sensitive administrative and debug privileges
+        # must be completely stripped out.
+        stripped_privileges = [
+            "SeDebugPrivilege",
+            "SeTakeOwnershipPrivilege",
+            "SeSecurityPrivilege",
+            "SeBackupPrivilege",
+            "SeRestorePrivilege",
+            "SeLoadDriverPrivilege",
+            "SeCreateTokenPrivilege",
+            "SeTcbPrivilege",
+        ]
+        for priv in stripped_privileges:
+            self.assertNotIn(priv, out, f"High privilege {priv} should be stripped by restricted token")
+
+        # Standard non-admin traverse privilege is present
+        self.assertIn("SeChangeNotifyPrivilege", out)
 
 
 if __name__ == "__main__":

@@ -55,7 +55,7 @@ func TestPromptRedactionAcrossReadRoutes(t *testing.T) {
 	_, err := s.sessionStore.Start(session.SessionStartRequest{
 		SessionID: "private-session", AppID: "app", InstanceID: "private-instance",
 		UserID: "private-user", UserEmail: "private@example.test", SPIFFEID: "spiffe://private",
-		Hostname: "private-host", ClientPID: 4242, UserPrompt: "private prompt",
+		Hostname: "private-host", ClientPID: 987654, UserPrompt: "private prompt",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -72,7 +72,7 @@ func TestPromptRedactionAcrossReadRoutes(t *testing.T) {
 			if w.Code != 200 {
 				t.Fatalf("%s: %d", path, w.Code)
 			}
-			for _, privateValue := range []string{"private prompt", "private-session", "private-instance", "private-user", "private@example.test", "spiffe://private", "private-host", "4242"} {
+			for _, privateValue := range []string{"private prompt", "private-session", "private-instance", "private-user", "private@example.test", "spiffe://private", "private-host", "987654"} {
 				if strings.Contains(w.Body.String(), privateValue) != authenticated {
 					t.Fatalf("telemetry value %q visibility wrong at %s (authenticated=%v): %s", privateValue, path, authenticated, w.Body.String())
 				}

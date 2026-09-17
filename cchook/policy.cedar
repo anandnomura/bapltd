@@ -16,8 +16,8 @@ permit (
         "go", "npm", "npx", "yarn", "pnpm", "node",
         "mvn", "gradle", "cargo", "git",
         "java", "javac",
-        "ls", "dir", "mkdir", "echo", "pwd", "cat", "type", "printenv",
-        "cd", "chdir", "pushd", "popd",
+        "ls", "dir", "mkdir", "echo", "pwd", "cat", "type", "printenv", "whoami",
+        "cd", "chdir", "pushd", "popd", "exit",
         "cmd", "powershell", "pwsh", "bash", "sh", "zsh",
         "grep", "findstr", "head", "tail", "wc", "sort", "uniq", "more",
         "taskkill", "kill", "pkill", "killall"

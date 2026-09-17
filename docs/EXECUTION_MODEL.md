@@ -67,14 +67,24 @@ flowchart TD
 ### 2.1 Claude Code Integration Contract
 - **Enforcement Mode (`enforce`)**:
   - The `PreToolUse` hook intercepts command actions (`Bash`).
-  - The hook validates Cedar policy via `bapedge check`.
+  - The hook validates Cedar policy via `bapedge check --cmd-b64 <b64>`.
   - If allowed: The hook uses Claude Code's native **`updatedInput`** capability to rewrite the command into:
-    `bapedge.exe exec --source claude-code --session-id <sessionID> -- <original-command>`
+    `bapedge.exe exec --source claude-code --session-id <sessionID> --cmd-b64 <base64-encoded-command>`
+  - Passing the command as an encoded argument (`--cmd-b64`) completely eliminates quote-stripping, shell metacharacter mangling, and host subshell injection during broker handoff.
   - Claude Code natively spawns `bapedge.exe` as its execution child. BAPEdge is the **sole executor**, executing the command **once** inside the sandbox, capturing output, exit code, and generating the cryptographic receipt.
   - If denied: The hook returns `permissionDecision: "deny"`. Claude Code halts execution immediately with **zero side effects**.
   - Direct file inspection/modification tools (`Read`, `View`, `Write`, `Edit`) are checked for directory traversal, sensitive credential files (`.env`, `.aws`, `.ssh`), and BAP protected assets.
 - **Audit / Shadow Mode (`audit` / `shadow`)**:
   - The hook calls `bapedge check` (`--decision-only`), records telemetry to the Control Plane, and returns `permissionDecision: "allow"` with the original un-rewritten command for passive observation.
+
+### 2.1.1 OS Containment Boundaries
+- **Windows (BAP-200A)**:
+  - **Restricted Process Tokens**: Injected child processes are bound to a restricted primary token generated via `CreateRestrictedToken` with `DISABLE_MAX_PRIVILEGE`. All administrative, debug, and high-privilege rights (`SeDebugPrivilege`, `SeTakeOwnershipPrivilege`, `SeSecurityPrivilege`, etc.) are stripped, leaving only non-privileged traverse checking.
+  - **Process Tree Sealing via Job Objects**: Child processes are assigned to a Windows Job Object configured with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` and `JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION`, guaranteeing that lingering or orphaned subprocesses are terminated immediately when the broker finishes.
+- **Linux**:
+  - Unprivileged user, PID, mount, and network namespaces (`CLONE_NEWUSER`, `CLONE_NEWPID`, `CLONE_NEWNS`, `CLONE_NEWNET`).
+- **macOS / Darwin**:
+  - POSIX group isolation and sandboxed environment variables.
 
 ### 2.2 GitHub Copilot CLI Integration Contract
 - GitHub Copilot CLI executes commands through `copilot-interceptor.exe`.
@@ -161,7 +171,7 @@ Every execution (whether allowed, denied, or audit-evaluated) issues an immutabl
 - **`identity`**: SPIFFE workload identity or enrolled agent identity (`spiffe://bap.internal/...`).
 - **`delegation`**: On-behalf-of provenance chain (`user:<user>->agent:<agent>`).
 - **`policy_version`**: SHA-256 digest of active Cedar policy.
-- **`sandbox_profile`**: Active containment profile (`bap-broker-standard`, `bap-decision-only`).
+- **`sandbox_profile`**: Active containment profile (`windows-restricted-token`, `linux-namespaces`, `darwin-posix`, `bap-broker-standard`, `bap-decision-only`).
 - **`result`**:
   - `ALLOWED_EXECUTED`: Action authorized and executed once inside BAP broker sandbox.
   - `DENIED_POLICY`: Action blocked by Cedar authorization policy.

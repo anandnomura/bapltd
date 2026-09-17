@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	_ "embed"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -667,7 +668,7 @@ func main() {
 
 	// If command is already a bapedge exec wrapper, allow it directly without recursive re-wrapping
 	cmdLower := strings.ToLower(command)
-	if strings.HasPrefix(cmdLower, "bapedge") || strings.HasPrefix(cmdLower, ".\\bapedge") || strings.HasPrefix(cmdLower, "./bapedge") || strings.HasPrefix(cmdLower, "ltd-agent") {
+	if strings.Contains(cmdLower, "--cmd-b64") || strings.HasPrefix(cmdLower, "bapedge") || strings.HasPrefix(cmdLower, ".\\bapedge") || strings.HasPrefix(cmdLower, "./bapedge") || strings.HasPrefix(cmdLower, "ltd-agent") {
 		outputDecision("allow", "", "Pre-wrapped BAPEdge execution permitted")
 		return
 	}
@@ -759,13 +760,13 @@ func main() {
 		ltdBin = findBinary(fallbackName)
 	}
 
-	// 6. Execute bapedge check --source claude-code --session-id <sessionID> --json "$command"
+	// 6. Execute bapedge check --source claude-code --session-id <sessionID> --json --cmd-b64 <b64>
 	// BAP-200: Interceptor uses Decision-Only check so the action executes exactly once natively.
-	execArgs := []string{"check", "--source", "claude-code", "--json"}
+	cmdB64 := base64.StdEncoding.EncodeToString([]byte(command))
+	execArgs := []string{"check", "--source", "claude-code", "--json", "--cmd-b64", cmdB64}
 	if sessionID != "" {
-		execArgs = append(execArgs, "--session-id", sessionID)
+		execArgs = append([]string{"check", "--source", "claude-code", "--session-id", sessionID, "--json", "--cmd-b64", cmdB64})
 	}
-	execArgs = append(execArgs, command)
 
 	cmd := exec.Command(ltdBin, execArgs...)
 	cmd.Env = os.Environ()
@@ -809,18 +810,18 @@ func main() {
 	}
 
 	// 7. Format decision matching Claude Code PreToolUse schema
-	// Broker-Owned Execution (BAP-200):
-	// In enforcement mode, BAP wraps the command via updatedInput so Claude Code natively
-	// spawns bapedge exec. BAPEdge is the sole executor inside the sandbox boundary.
-	// The original command is never executed outside BAPEdge, guaranteeing exactly-once execution.
+	// Broker-Owned Execution (BAP-200 / BAP-200A):
+	// In enforcement mode, BAP wraps the command via updatedInput with base64 encoded payload
+	// so Claude Code natively spawns bapedge exec. BAPEdge is the sole executor inside the sandbox boundary.
+	// Passing the command via --cmd-b64 completely prevents quote stripping and shell injection.
 	if execResp.Allowed {
 		mode := resolveEnforcementMode()
 		if mode == "audit" || mode == "shadow" {
 			outputDecision("allow", "", "Command authorized in audit mode")
 			return
 		}
-		// Rewrite tool input command to route through bapedge exec
-		rewritten := fmt.Sprintf(`%s exec --source claude-code --session-id %s -- %s`, ltdBin, sessionID, command)
+		// Rewrite tool input command to route through bapedge exec using safe structured --cmd-b64
+		rewritten := fmt.Sprintf(`%s exec --source claude-code --session-id %s --cmd-b64 %s`, ltdBin, sessionID, cmdB64)
 		outputDecisionWithUpdatedInput("allow", "", "Command authorized by BAP Cedar policy - routed to BAP broker sandbox", &ToolInput{Command: rewritten})
 	} else {
 		reason := execResp.Reason

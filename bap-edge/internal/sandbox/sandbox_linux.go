@@ -8,10 +8,14 @@ import (
 	"syscall"
 )
 
+func GetActiveProfile() string {
+	return "linux-namespaces"
+}
+
 // ConfigureSandbox configures Linux kernel namespaces:
 // syscall.CLONE_NEWUSER | syscall.CLONE_NEWPID | syscall.CLONE_NEWNS | syscall.CLONE_NEWNET
 // and maps the current UID and GID so the child process has file read permissions.
-func ConfigureSandbox(cmd *exec.Cmd) {
+func ConfigureSandbox(cmd *exec.Cmd) func() {
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Cloneflags: syscall.CLONE_NEWUSER | syscall.CLONE_NEWPID | syscall.CLONE_NEWNS | syscall.CLONE_NEWNET,
 		UidMappings: []syscall.SysProcIDMap{
@@ -30,5 +34,10 @@ func ConfigureSandbox(cmd *exec.Cmd) {
 		},
 		GidMappingsEnableSetgroups: false,
 	}
+	return func() {}
 }
 
+// PostStartProcess is a no-op on Linux.
+func PostStartProcess(cmd *exec.Cmd) func() {
+	return func() {}
+}

@@ -3,6 +3,7 @@ package cmd
 import (
 	"bap-edge/internal/httptransport"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -166,7 +167,7 @@ func generateExecutionReceipt(ec *execContext, result string, exitCode int) *typ
 	}
 	delegation := fmt.Sprintf("user:%s->agent:%s", userStr, ec.source)
 
-	sandboxProfile := "bap-broker-standard"
+	sandboxProfile := sandbox.GetActiveProfile()
 	if ec.decisionOnly {
 		sandboxProfile = "bap-decision-only"
 	}
@@ -285,6 +286,7 @@ func RunExec(args []string) {
 	modeFlag := fs.String("mode", epCfg.EnforcementMode, "Enforcement mode: 'enforce' (default) or 'audit'/'shadow'")
 	decisionOnlyFlag := fs.Bool("decision-only", false, "Evaluate policy and log audit decision without executing the command")
 	checkOnlyFlag := fs.Bool("check-only", false, "Alias for --decision-only")
+	cmdB64Flag := fs.String("cmd-b64", "", "Base64-encoded command string (safe broker handoff)")
 
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintf(os.Stderr, "Error parsing arguments: %v\n", err)
@@ -305,25 +307,41 @@ func RunExec(args []string) {
 	}
 
 	cmdArgs := fs.Args()
-	if len(cmdArgs) == 0 {
-		resp := types.ExecResponse{
-			Allowed: false,
-			Reason:  "No command provided to exec. Usage: ltd-agent exec <shell_command>",
-			Mode:    ec.enforcementMode,
-		}
-		ec.exit(resp, 1)
-	}
-
-	// Join all remaining args as the shell command string, preserving quotes for arguments with spaces
 	var fullCommand string
-	if len(cmdArgs) == 1 {
-		fullCommand = strings.TrimSpace(cmdArgs[0])
-	} else {
-		var parts []string
-		for _, arg := range cmdArgs {
-			parts = append(parts, quoteArg(arg))
+
+	if *cmdB64Flag != "" {
+		decoded, err := base64.StdEncoding.DecodeString(*cmdB64Flag)
+		if err != nil {
+			resp := types.ExecResponse{
+				Allowed: false,
+				Reason:  fmt.Sprintf("Failed to decode base64 command payload (--cmd-b64): %v", err),
+				Mode:    ec.enforcementMode,
+			}
+			ec.exit(resp, 1)
+			return
 		}
-		fullCommand = strings.Join(parts, " ")
+		fullCommand = string(decoded)
+	} else {
+		if len(cmdArgs) == 0 {
+			resp := types.ExecResponse{
+				Allowed: false,
+				Reason:  "No command provided to exec. Usage: ltd-agent exec <shell_command>",
+				Mode:    ec.enforcementMode,
+			}
+			ec.exit(resp, 1)
+			return
+		}
+
+		// Join all remaining args as the shell command string, preserving quotes for arguments with spaces
+		if len(cmdArgs) == 1 {
+			fullCommand = strings.TrimSpace(cmdArgs[0])
+		} else {
+			var parts []string
+			for _, arg := range cmdArgs {
+				parts = append(parts, quoteArg(arg))
+			}
+			fullCommand = strings.Join(parts, " ")
+		}
 	}
 	fullCommand = sandbox.CleanCommandString(fullCommand)
 	ec.fullCommand = fullCommand

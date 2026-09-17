@@ -101,6 +101,19 @@ This document represents the complete functional and non-functional requirements
   - `Given` any command execution,
   - `Then` BAPEdge returns the actual output, exit status, and a cryptographic `ExecutionReceipt` recording request hash, identity, delegation, policy version, sandbox profile, and result.
 
+#### Story BAP-200A: Safe Broker Handoff and Windows Containment Boundary
+- **Type**: Story | **Points**: 8 | **Priority**: Highest (P0) | **Status**: `DONE`
+- **Description**: Implement bulletproof command handoff from the agent interceptor to BAPEdge using structured Base64 encoding (`--cmd-b64`), eliminating shell quote-stripping and host parser vulnerabilities. Establish a real Windows OS containment boundary using Windows Restricted Tokens (`DISABLE_MAX_PRIVILEGE` stripping administrative and debug privileges) and Windows Job Objects (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` preventing orphaned processes). Validate complex shell operators including output redirection (`>`, `>>`, `2>&1`), pipelines (`|`), command chaining (`&&`, `||`, `;`), and command substitution (`$(...)`).
+- **Acceptance Criteria**:
+  - `Given` commands with complex nested quotes, backslashes, and shell metacharacters,
+  - `When` rewritten by the hook interceptor via `updatedInput`,
+  - `Then` the command is passed using `--cmd-b64` with byte-for-byte fidelity and zero host shell escaping bugs.
+  - `Given` shell output redirection (`>`, `>>`, `2>&1`), pipelines (`|`), command chaining (`&&`, `||`, `;`), and command substitution (`$(...)`),
+  - `When` safe operations are evaluated,
+  - `Then` operations execute cleanly within the workspace boundary; malicious evasions (traversal, egress, tampering) remain strictly blocked.
+  - `Given` Windows execution of `bapedge exec`,
+  - `Then` the child process runs under a Windows Restricted Token (`DISABLE_MAX_PRIVILEGE`) with administrative rights stripped, bound to a Job Object (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`), and records `sandbox_profile: "windows-restricted-token"` on the cryptographic receipt.
+
 #### Story BAP-201: Claude Code PreToolUse Lifecycle Hook Interceptor
 - **Type**: Story | **Points**: 8 | **Priority**: Highest | **Status**: `DONE`
 - **Description**: Implement `interceptor.exe` implementing Anthropic's Claude Code hook schema. Intercept `Bash`, `FileEdit`, and `View` operations via standard input/output JSON streams.
