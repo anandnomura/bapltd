@@ -83,7 +83,7 @@ class TestExecutiveDemo(unittest.TestCase):
             if not cp_bin:
                 raise unittest.SkipTest(f"bapcontrolplane.exe not found at {cp_candidates[0]}")
 
-            cmd = [cp_bin, "-port", "8443", "-https", "-allow-remote-admin"]
+            cmd = [cp_bin, "-port", "8443", "-https", "-allow-remote-admin", "-demo-mode"]
             if cls.admin_token:
                 cmd.extend(["-admin-token", cls.admin_token])
             cls._spawned_server = subprocess.Popen(
@@ -238,6 +238,15 @@ class TestExecutiveDemo(unittest.TestCase):
 
         # Check hash-chain integrity
         self.assertEqual(data.get("chain_status"), "valid")
+
+        # 5. Intent Telemetry & Classification (Zero UNKNOWN)
+        self.assertEqual(carol.get("intent", {}).get("primary"), "INVESTIGATION")
+        self.assertIn(bob.get("intent", {}).get("primary"), ["DEPLOYMENT_RELEASE", "SECURITY_REMEDIATION"])
+        self.assertEqual(eve.get("intent", {}).get("primary"), "SECURITY_REMEDIATION")
+        intent_counts = data.get("intent_counts", {})
+        self.assertEqual(intent_counts.get("UNKNOWN", 0), 0, f"Expected 0 UNKNOWN intents, found: {intent_counts}")
+        self.assertGreaterEqual(intent_counts.get("INVESTIGATION", 0), 1)
+        self.assertGreaterEqual(intent_counts.get("SECURITY_REMEDIATION", 0), 1)
 
     # -------------------------------------------------------------------------
     # BAP-213: Closed-Loop Controls (Stop, Revoke, Restore)

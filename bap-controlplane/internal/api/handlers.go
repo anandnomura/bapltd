@@ -832,6 +832,16 @@ func (s *Server) handleInspectorData(w http.ResponseWriter, r *http.Request) {
 		centralEvents = maskedCentral
 	}
 
+	var intentCounts map[string]int
+	var totalPrompts int
+	var intentWindows session.IntentWindows
+	if s.sessionStore != nil {
+		intentCounts, totalPrompts = s.sessionStore.GetIntentStats()
+		intentWindows = s.sessionStore.GetIntentWindows()
+	} else {
+		intentCounts = make(map[string]int)
+	}
+
 	resp := map[string]any{
 		"service":                "bapcontrolplane",
 		"trust_domain":           s.registry.TrustDomain(),
@@ -843,6 +853,9 @@ func (s *Server) handleInspectorData(w http.ResponseWriter, r *http.Request) {
 		"central_events":         centralEvents,
 		"edge_events":            edgeLogs,
 		"last_demo_action":       lastAct,
+		"intent_counts":          intentCounts,
+		"total_prompts":          totalPrompts,
+		"intent_windows":         intentWindows,
 		"policy_version":         bundle.Version,
 		"policy_digest":          bundle.Digest,
 		"policy_cedar":           bundle.PolicyCedar,
@@ -989,8 +1002,14 @@ func (s *Server) handleSessionPrompt(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "session_id is required")
 		return
 	}
-	if req.Producer != "claude-lifecycle-hook" {
-		writeError(w, http.StatusBadRequest, "prompt telemetry must come from the lifecycle hook")
+	validProducers := map[string]bool{
+		"claude-lifecycle-hook": true,
+		"bap-python-sdk":        true,
+		"demo-executive":        true,
+		"bap-agent":             true,
+	}
+	if !validProducers[req.Producer] {
+		writeError(w, http.StatusBadRequest, "prompt telemetry must come from an authorized agent producer")
 		return
 	}
 	req.Intent.Primary = strings.ToUpper(strings.TrimSpace(req.Intent.Primary))
@@ -1000,7 +1019,14 @@ func (s *Server) handleSessionPrompt(w http.ResponseWriter, r *http.Request) {
 	for i := range req.Intent.Tags {
 		req.Intent.Tags[i] = strings.ToUpper(strings.TrimSpace(req.Intent.Tags[i]))
 	}
-	if !validIntentCategory(req.Intent.Primary) || req.Intent.ClassifierVersion == "" || req.Intent.Source != "claude-user-prompt-submit" {
+	validSources := map[string]bool{
+		"claude-user-prompt-submit": true,
+		"bap-python-sdk":            true,
+		"demo-executive":            true,
+		"bap-agent":                 true,
+		"bap-server-classifier":     true,
+	}
+	if !validIntentCategory(req.Intent.Primary) || req.Intent.ClassifierVersion == "" || !validSources[req.Intent.Source] {
 		writeError(w, http.StatusBadRequest, "a valid edge-classified intent is required")
 		return
 	}
@@ -1093,6 +1119,7 @@ func (s *Server) handleResetSessions(w http.ResponseWriter, r *http.Request) {
 	closedSess := 0
 	if s.sessionStore != nil {
 		closedSess = s.sessionStore.Reset()
+		s.sessionStore.ResetIntentStats()
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"message":         "All sessions reset cleanly; enrolled agent identities were preserved",
@@ -1402,6 +1429,7 @@ func (s *Server) handleDemoFleetScale(w http.ResponseWriter, r *http.Request) {
 	// Always clear previous fleet
 	if s.sessionStore != nil {
 		s.sessionStore.Reset()
+		s.sessionStore.ResetIntentStats()
 		for _, revokedUser := range s.sessionStore.ListRevokedUsers() {
 			s.sessionStore.RestoreUser(revokedUser)
 		}

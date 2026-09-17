@@ -359,4 +359,12 @@ func TestAPIFullLifecycle(t *testing.T) {
 	if !ok || len(sessionsArr) == 0 {
 		t.Fatalf("expected sessions array in inspector data, got: %v", inspData["sessions"])
 	}
+	intentCounts, ok := inspData["intent_counts"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected intent_counts map in inspector data, got: %v", inspData["intent_counts"])
+	}
+	if _, ok := inspData["total_prompts"]; !ok {
+		t.Fatalf("expected total_prompts in inspector data")
+	}
+	_ = intentCounts
 }

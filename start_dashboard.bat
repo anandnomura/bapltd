@@ -67,7 +67,7 @@ if errorlevel 1 exit /b 1
 rem Force the control plane to generate a fresh token for this launch.
 set "BAP_ADMIN_TOKEN="
 echo [*] Starting HTTPS control plane...
-start "BAP Control Plane !CP_PORT!" /min "!CP_BIN!" -port !CP_PORT! -https -tls-cert "!BAP_TLS_CERT!" -tls-key "!BAP_TLS_KEY!" -db "!BAP_DB_PATH!"
+start "BAP Control Plane !CP_PORT!" /min "!CP_BIN!" -port !CP_PORT! -https -tls-cert "!BAP_TLS_CERT!" -tls-key "!BAP_TLS_KEY!" -db "!BAP_DB_PATH!" -demo-mode
 call :wait_for_url "!CP_URL!/api/v1/health" 30
 if errorlevel 1 (
     echo [-] Control plane did not become healthy at !CP_URL!.

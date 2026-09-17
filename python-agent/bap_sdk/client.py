@@ -4,6 +4,7 @@ Lightweight, zero-dependency Python client for governing AI agent tool execution
 via BAP Edge (PEP broker) and BAP Control Plane.
 """
 
+import hashlib
 import json
 import ssl
 import os
@@ -73,6 +74,183 @@ class BAPExecResult:
 
     def __repr__(self) -> str:
         return f"<BAPExecResult decision={self.decision} code={self.exit_code} latency={self.duration_ms}ms>"
+
+
+INTENT_CLASSIFIER_VERSION = "bap-intent-rules-v1"
+
+CANONICAL_INTENT_CATEGORIES = [
+    "BUG_FIX",
+    "FEATURE_ENHANCEMENT",
+    "DATABASE_CHANGE",
+    "INVESTIGATION",
+    "REFACTOR",
+    "TEST_VERIFICATION",
+    "DOCUMENTATION",
+    "MIGRATION",
+    "DEPLOYMENT_RELEASE",
+    "WORK_MANAGEMENT",
+    "SECURITY_REMEDIATION",
+    "UNKNOWN",
+]
+
+_INTENT_RULES = [
+    ("BUG_FIX", [
+        (" fix bug ", "fix bug", 8), (" bug fix ", "bug fix", 8),
+        (" fix the bug ", "fix the bug", 8), (" bugfix ", "bugfix", 8),
+        (" regression ", "regression", 5), (" broken ", "broken", 4),
+        (" defect ", "defect", 4), (" bug ", "bug", 4),
+        (" failing ", "failing", 3), (" error ", "error", 2),
+        (" fix ", "fix", 2)
+    ]),
+    ("DATABASE_CHANGE", [
+        (" update db ", "update db", 7), (" update database ", "update database", 7),
+        (" database migration ", "database migration", 7), (" migrate database ", "migrate database", 7),
+        (" schema change ", "schema change", 6), (" alter table ", "alter table", 6),
+        (" database ", "database", 3), (" db ", "db", 3), (" sql ", "sql", 2)
+    ]),
+    ("FEATURE_ENHANCEMENT", [
+        (" new feature ", "new feature", 7), (" add feature ", "add feature", 6),
+        (" enhance ui ", "enhance ui", 6), (" ui enhancement ", "ui enhancement", 6),
+        (" enhancement ", "enhancement", 4), (" enhance ", "enhance", 4),
+        (" improve ", "improve", 3), (" implement ", "implement", 3),
+        (" add ", "add", 2), (" build ", "build", 2), (" create ", "create", 2)
+    ]),
+    ("INVESTIGATION", [
+        (" root cause ", "root cause", 7), (" investigate ", "investigate", 6),
+        (" analyze ", "analyze", 5), (" diagnose ", "diagnose", 5),
+        (" find out ", "find out", 4), (" understand ", "understand", 3),
+        (" inspect ", "inspect", 2), (" review ", "review", 2),
+        (" reconcile ", "reconcile", 4), (" audit ", "audit", 3)
+    ]),
+    ("REFACTOR", [
+        (" refactor ", "refactor", 7), (" clean up code ", "clean up code", 5),
+        (" restructure ", "restructure", 5), (" simplify code ", "simplify code", 4),
+        (" optimize ", "optimize", 3)
+    ]),
+    ("TEST_VERIFICATION", [
+        (" write tests ", "write tests", 7), (" add tests ", "add tests", 7),
+        (" test coverage ", "test coverage", 6), (" verify ", "verify", 4),
+        (" validate ", "validate", 4), (" test ", "test", 3)
+    ]),
+    ("DOCUMENTATION", [
+        (" update readme ", "update readme", 7), (" write docs ", "write docs", 7),
+        (" documentation ", "documentation", 6), (" document ", "document", 5),
+        (" readme ", "readme", 4)
+    ]),
+    ("MIGRATION", [
+        (" dependency update ", "dependency update", 7), (" upgrade dependency ", "upgrade dependency", 7),
+        (" upgrade framework ", "upgrade framework", 7), (" migration ", "migration", 5),
+        (" migrate ", "migrate", 5), (" modernize ", "modernize", 4)
+    ]),
+    ("DEPLOYMENT_RELEASE", [
+        (" deploy to production ", "deploy to production", 8), (" production deployment ", "production deployment", 8),
+        (" deployment ", "deployment", 5), (" release ", "release", 5),
+        (" deploy ", "deploy", 5), (" rollout ", "rollout", 4),
+        (" build pipeline ", "build pipeline", 3)
+    ]),
+    ("WORK_MANAGEMENT", [
+        (" jira ", "jira", 6), (" create ticket ", "create ticket", 6),
+        (" update ticket ", "update ticket", 6), (" pull request ", "pull request", 5),
+        (" open pr ", "open pr", 5), (" create pr ", "create pr", 5),
+        (" work item ", "work item", 4)
+    ]),
+    ("SECURITY_REMEDIATION", [
+        (" security fix ", "security fix", 8), (" remediate vulnerability ", "remediate vulnerability", 8),
+        (" vulnerability ", "vulnerability", 6), (" cve ", "cve", 6),
+        (" security ", "security", 3), (" permission ", "permission", 2),
+        (" probe ", "probe", 3), (" credential ", "credential", 3)
+    ]),
+]
+
+_INTENT_TAG_RULES = [
+    ("API", [" api ", " endpoint ", " rest ", " graphql "]),
+    ("CUSTOMER_FACING", [" customer ", " client facing ", " user facing "]),
+    ("DATABASE", [" db ", " database ", " schema ", " sql ", " table "]),
+    ("INFRASTRUCTURE", [" terraform ", " kubernetes ", " k8s ", " cloud ", " infrastructure "]),
+    ("PRODUCTION", [" production ", " prod ", " release ", " deploy "]),
+    ("SECURITY", [" security ", " vulnerability ", " cve ", " credential ", " permission ", " secret "]),
+    ("UI", [" ui ", " frontend ", " dashboard ", " screen ", " css ", " ux "]),
+]
+
+
+def normalize_intent_text(prompt: str) -> str:
+    """Normalizes prompt text for deterministic keyword intent matching."""
+    lower = prompt.lower()
+    chars = []
+    last_space = True
+    for ch in lower:
+        if ('a' <= ch <= 'z') or ('0' <= ch <= '9'):
+            chars.append(ch)
+            last_space = False
+        elif not last_space:
+            chars.append(' ')
+            last_space = True
+    if not last_space:
+        chars.append(' ')
+    return ' ' + ''.join(chars)
+
+
+def classify_intent(prompt: str) -> dict:
+    """
+    Deterministically classifies a user prompt into canonical mission categories.
+    Matches BAP Edge cchook rules and control plane schema.
+    """
+    result = {
+        "primary": "UNKNOWN",
+        "confidence": 0.0,
+        "classifier_version": INTENT_CLASSIFIER_VERSION,
+        "source": "bap-python-sdk",
+        "evidence": []
+    }
+    normalized = normalize_intent_text(prompt)
+    if not normalized.strip():
+        result["evidence"] = ["empty-or-unavailable-prompt"]
+        return result
+
+    scored = []
+    for order, (category, phrases) in enumerate(_INTENT_RULES):
+        score = 0
+        for phrase_text, label, weight in phrases:
+            if phrase_text in normalized:
+                score += weight
+                result["evidence"].append(f"{category}:{label}")
+        if category == "BUG_FIX" and " fix " in normalized and " bug " in normalized:
+            score += 8
+            result["evidence"].append("BUG_FIX:fix+bug")
+        if score > 0:
+            scored.append({"category": category, "score": score, "order": order})
+
+    # Sort descending by score, ascending by declaration order
+    scored.sort(key=lambda item: (-item["score"], item["order"]))
+
+    if scored:
+        result["primary"] = scored[0]["category"]
+        confidence = 0.62 + scored[0]["score"] * 0.04
+        if confidence > 0.98:
+            confidence = 0.98
+        if len(scored) > 1 and (scored[0]["score"] - scored[1]["score"] <= 1) and confidence > 0.72:
+            confidence = 0.72
+        result["confidence"] = round(confidence, 2)
+
+        secondaries = []
+        for item in scored[1:]:
+            if item["score"] >= 2 and len(secondaries) < 3:
+                secondaries.append(item["category"])
+        if secondaries:
+            result["secondary"] = secondaries
+    else:
+        result["evidence"].append("no-rule-match")
+
+    tags = []
+    for tag, phrases in _INTENT_TAG_RULES:
+        for phrase in phrases:
+            if phrase in normalized:
+                tags.append(tag)
+                break
+    if tags:
+        result["tags"] = tags
+
+    return result
 
 
 def resolve_endpoints() -> dict:
@@ -156,10 +334,17 @@ class BAPSession:
         instance_id: Optional[str] = None,
         bapedge_path: Optional[str] = None,
         user_prompt: Optional[str] = None,
+        intent: Optional[dict] = None,
     ):
         ep = resolve_endpoints()
         self.app_id = app_id
         self.user_prompt = user_prompt if user_prompt is not None else os.getenv("BAP_USER_PROMPT", "")
+        if intent is not None:
+            self.intent = intent
+        elif self.user_prompt:
+            self.intent = classify_intent(self.user_prompt)
+        else:
+            self.intent = {"primary": "UNKNOWN", "source": "bap-python-sdk"}
         self.server_url = (server_url or ep["controlplane_url"]).rstrip("/")
         self.gateway_url = (gateway_url or ep["gateway_url"]).rstrip("/")
         self.envoy_url = ep["envoy_url"].rstrip("/")
@@ -177,6 +362,40 @@ class BAPSession:
         self._heartbeat_thread = None
         self._heartbeat_stop_event = None
         self._heartbeat_interval = 3.0
+
+    def set_prompt(self, prompt: str, category: Optional[str] = None) -> dict:
+        """Updates user prompt and classified mission intent with control plane."""
+        self.user_prompt = prompt
+        if category:
+            self.intent = {
+                "primary": category.upper(),
+                "confidence": 1.0,
+                "classifier_version": INTENT_CLASSIFIER_VERSION,
+                "source": "bap-python-sdk",
+            }
+        else:
+            self.intent = classify_intent(prompt)
+
+        prompt_hash = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+        payload = {
+            "session_id": self.session_id,
+            "user_prompt": self.user_prompt,
+            "producer": "bap-python-sdk",
+            "prompt_hash": prompt_hash,
+            "prompt_capture_enabled": True,
+            "intent": self.intent,
+        }
+        url = f"{self.server_url}/api/v1/sessions/prompt"
+        try:
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"}
+            )
+            with _urlopen(req, timeout=3) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except Exception as e:
+            return {"error": str(e)}
 
     def _find_bapedge(self) -> str:
         """Locates bapedge binary across workspace root and system PATH."""
@@ -226,6 +445,7 @@ class BAPSession:
         payload = {
             "session_id": self.session_id,
             "user_prompt": self.user_prompt,
+            "intent": self.intent,
             "app_id": self.app_id,
             "instance_id": self.instance_id,
             "user_id": self.user_id,

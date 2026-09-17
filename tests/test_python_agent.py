@@ -75,3 +75,42 @@ def test_bap_python_sdk_lifecycle():
         assert any(a.get("status") == "deregistered" for a in matching), "Agent was not marked deregistered in registry"
 
 
+def test_bap_python_sdk_intent_classification():
+    from bap_sdk import classify_intent, CANONICAL_INTENT_CATEGORIES
+
+    # 1. Test canonical classifications
+    test_cases = [
+        ("Analyze Q3 portfolio volatility and generate quarterly risk metrics", "INVESTIGATION"),
+        ("Deploy microservice canary to us-east-1 production cluster", "DEPLOYMENT_RELEASE"),
+        ("Audit security perimeter and probe credential boundaries", "SECURITY_REMEDIATION"),
+        ("Fix the login bug and update the database schema", "BUG_FIX"),
+        ("Please handle BAP-412", "UNKNOWN"),
+    ]
+    for prompt, expected_primary in test_cases:
+        res = classify_intent(prompt)
+        assert res["primary"] == expected_primary, f"Failed for {prompt}: got {res['primary']}, want {expected_primary}"
+        assert res["classifier_version"] == "bap-intent-rules-v1"
+        assert res["primary"] in CANONICAL_INTENT_CATEGORIES
+
+    # 2. Test BAPSession auto-attaches classified intent
+    prompt = "Analyze Q3 portfolio volatility and generate quarterly risk metrics"
+    session = BAPSession(app_id="test-analyst", user_prompt=prompt, server_url=CP_URL)
+    assert session.intent["primary"] == "INVESTIGATION"
+    assert session.intent["confidence"] > 0.7
+
+    # 3. Test BAPSession context lifecycle with intent registered on control plane
+    with session:
+        assert session.is_active is True
+        # Verify session telemetry has intent on control plane
+        import urllib.request, json
+        req = urllib.request.Request(f"{CP_URL}/api/v1/sessions/{session.session_id}")
+        with _urlopen(req, timeout=2) as resp:
+            data = json.loads(resp.read().decode())
+            assert data.get("intent", {}).get("primary") == "INVESTIGATION"
+
+        # 4. Test set_prompt mid-session
+        resp = session.set_prompt("Deploy microservice canary to us-east-1 production cluster")
+        assert session.intent["primary"] == "DEPLOYMENT_RELEASE"
+        assert resp.get("status") == "updated" or resp.get("message")
+
+

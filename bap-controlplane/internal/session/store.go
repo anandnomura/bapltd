@@ -17,26 +17,28 @@ import (
 
 // Session represents an active or historical agent execution session (e.g., a Claude Code or Copilot run).
 type Session struct {
-	SessionID    string        `json:"session_id"`
-	AppID        string        `json:"app_id"`
-	InstanceID   string        `json:"instance_id,omitempty"`
-	AgentName    string        `json:"agent_name,omitempty"`
-	UserID       string        `json:"user_id,omitempty"`
-	UserEmail    string        `json:"user_email,omitempty"`
-	SPIFFEID     string        `json:"spiffe_id,omitempty"`
-	Status       string        `json:"status"` // "active", "closed", or "revoked"
-	StartedAt    time.Time     `json:"started_at"`
-	EndedAt      *time.Time    `json:"ended_at,omitempty"`
-	LastActiveAt time.Time     `json:"last_active_at"`
-	ClientPID    int           `json:"client_pid,omitempty"`
-	Hostname     string        `json:"hostname,omitempty"`
-	TotalEvents  int           `json:"total_events"`
-	AllowedCount int           `json:"allowed_count"`
-	DeniedCount  int           `json:"denied_count"`
-	CloseReason  string        `json:"close_reason,omitempty"`
-	UserPrompt   string        `json:"user_prompt,omitempty"`
-	Intent       IntentContext `json:"intent"`
-	Events       []audit.Event `json:"events,omitempty"`
+	SessionID     string        `json:"session_id"`
+	AppID         string        `json:"app_id"`
+	InstanceID    string        `json:"instance_id,omitempty"`
+	AgentName     string        `json:"agent_name,omitempty"`
+	UserID        string        `json:"user_id,omitempty"`
+	UserEmail     string        `json:"user_email,omitempty"`
+	SPIFFEID      string        `json:"spiffe_id,omitempty"`
+	Status        string        `json:"status"` // "active", "closed", or "revoked"
+	StartedAt     time.Time     `json:"started_at"`
+	EndedAt       *time.Time    `json:"ended_at,omitempty"`
+	LastActiveAt  time.Time     `json:"last_active_at"`
+	ClientPID     int           `json:"client_pid,omitempty"`
+	Hostname      string        `json:"hostname,omitempty"`
+	TotalEvents   int           `json:"total_events"`
+	AllowedCount  int           `json:"allowed_count"`
+	DeniedCount   int           `json:"denied_count"`
+	CloseReason   string        `json:"close_reason,omitempty"`
+	UserPrompt    string        `json:"user_prompt,omitempty"`
+	Intent        IntentContext `json:"intent"`
+	IntentHistory []string      `json:"intent_history,omitempty"`
+	PromptCount   int           `json:"prompt_count,omitempty"`
+	Events        []audit.Event `json:"events,omitempty"`
 }
 
 // IntentContext is mission context produced deterministically at BAP Edge.
@@ -68,12 +70,60 @@ type SessionStartRequest struct {
 	Intent     IntentContext `json:"intent,omitempty"`
 }
 
+// CanonicalIntentCategories lists all recognized mission categories.
+var CanonicalIntentCategories = []string{
+	"BUG_FIX",
+	"FEATURE_ENHANCEMENT",
+	"DATABASE_CHANGE",
+	"INVESTIGATION",
+	"REFACTOR",
+	"TEST_VERIFICATION",
+	"DOCUMENTATION",
+	"MIGRATION",
+	"DEPLOYMENT_RELEASE",
+	"WORK_MANAGEMENT",
+	"SECURITY_REMEDIATION",
+	"UNKNOWN",
+}
+
+func initIntentMap() map[string]int {
+	m := make(map[string]int, len(CanonicalIntentCategories))
+	for _, c := range CanonicalIntentCategories {
+		m[c] = 0
+	}
+	return m
+}
+
+// PromptRecord stores a timestamped prompt submission for time-windowed analytics.
+type PromptRecord struct {
+	SessionID string    `json:"session_id"`
+	Category  string    `json:"category"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
+// IntentStatsSummary contains total prompts and category counts for a timeframe.
+type IntentStatsSummary struct {
+	Total  int            `json:"total"`
+	Counts map[string]int `json:"counts"`
+}
+
+// IntentWindows represents time-windowed intent captures across Live, Day, Week, and Month.
+type IntentWindows struct {
+	Live  IntentStatsSummary `json:"live"`
+	Day   IntentStatsSummary `json:"day"`
+	Week  IntentStatsSummary `json:"week"`
+	Month IntentStatsSummary `json:"month"`
+}
+
 // Store manages sessions in memory with thread safety and optional SQLite durability.
 type Store struct {
 	mu           sync.RWMutex
 	sessions     map[string]*Session
 	order        []string // chronological order of session IDs
 	revokedUsers map[string]bool
+	intentCounts map[string]int
+	totalPrompts int
+	prompts      []PromptRecord
 	db           *sql.DB // persistent SQLite storage
 }
 
@@ -83,6 +133,8 @@ func NewStore() *Store {
 		sessions:     make(map[string]*Session),
 		order:        make([]string, 0),
 		revokedUsers: make(map[string]bool),
+		intentCounts: initIntentMap(),
+		prompts:      make([]PromptRecord, 0),
 	}
 }
 
@@ -123,6 +175,16 @@ func NewStoreWithDB(dbPath string) (*Store, error) {
 		username TEXT PRIMARY KEY,
 		revoked_at TEXT NOT NULL,
 		reason TEXT
+	);
+	CREATE TABLE IF NOT EXISTS intent_stats (
+		category TEXT PRIMARY KEY,
+		count INTEGER NOT NULL DEFAULT 0
+	);
+	CREATE TABLE IF NOT EXISTS prompt_history (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		session_id TEXT,
+		category TEXT NOT NULL,
+		timestamp TEXT NOT NULL
 	);`
 	if _, err := db.Exec(createTableSQL); err != nil {
 		_ = db.Close()
@@ -136,6 +198,8 @@ func NewStoreWithDB(dbPath string) (*Store, error) {
 		sessions:     make(map[string]*Session),
 		order:        make([]string, 0),
 		revokedUsers: make(map[string]bool),
+		intentCounts: initIntentMap(),
+		prompts:      make([]PromptRecord, 0),
 		db:           db,
 	}
 
@@ -157,8 +221,14 @@ func GenerateSessionID(prefix string) string {
 	return fmt.Sprintf("%s-%s-%s", prefix, time.Now().Format("150405"), hex.EncodeToString(b))
 }
 
-func normalizeIntent(intent IntentContext) IntentContext {
+func normalizeIntent(intent IntentContext, prompt ...string) IntentContext {
 	intent.Primary = strings.ToUpper(strings.TrimSpace(intent.Primary))
+	if (intent.Primary == "" || intent.Primary == "UNKNOWN") && len(prompt) > 0 && strings.TrimSpace(prompt[0]) != "" {
+		classified := ClassifyIntent(prompt[0])
+		if classified.Primary != "UNKNOWN" || intent.Primary == "" {
+			intent = classified
+		}
+	}
 	if intent.Primary == "" {
 		intent.Primary = "UNKNOWN"
 	}
@@ -218,8 +288,12 @@ func (s *Store) Start(req SessionStartRequest) (*Session, error) {
 		if req.UserEmail != "" {
 			existing.UserEmail = req.UserEmail
 		}
-		if req.SPIFFEID != "" {
-			existing.SPIFFEID = req.SPIFFEID
+		if req.UserPrompt != "" || req.Intent.Primary != "" {
+			existing.UserPrompt = req.UserPrompt
+			existing.Intent = normalizeIntent(req.Intent, req.UserPrompt)
+			existing.IntentHistory = append(existing.IntentHistory, existing.Intent.Primary)
+			existing.PromptCount++
+			s.recordIntentLocked(existing.SessionID, existing.Intent.Primary, now)
 		}
 		s.saveSessionToDB(existing)
 		return existing, nil
@@ -247,25 +321,36 @@ func (s *Store) Start(req SessionStartRequest) (*Session, error) {
 		agentName = appID
 	}
 
+	normIntent := normalizeIntent(req.Intent, req.UserPrompt)
+	var hist []string
+	promptCount := 0
+	if req.Intent.Primary != "" || req.UserPrompt != "" {
+		hist = []string{normIntent.Primary}
+		promptCount = 1
+		s.recordIntentLocked(sessionID, normIntent.Primary, now)
+	}
+
 	sess := &Session{
-		SessionID:    sessionID,
-		AppID:        appID,
-		InstanceID:   req.InstanceID,
-		AgentName:    agentName,
-		UserID:       userID,
-		UserEmail:    userEmail,
-		SPIFFEID:     spiffeID,
-		Status:       "active",
-		StartedAt:    now,
-		LastActiveAt: now,
-		ClientPID:    req.ClientPID,
-		Hostname:     req.Hostname,
-		TotalEvents:  0,
-		AllowedCount: 0,
-		DeniedCount:  0,
-		Events:       make([]audit.Event, 0),
-		UserPrompt:   req.UserPrompt,
-		Intent:       normalizeIntent(req.Intent),
+		SessionID:     sessionID,
+		AppID:         appID,
+		InstanceID:    req.InstanceID,
+		AgentName:     agentName,
+		UserID:        userID,
+		UserEmail:     userEmail,
+		SPIFFEID:      spiffeID,
+		Status:        "active",
+		StartedAt:     now,
+		LastActiveAt:  now,
+		ClientPID:     req.ClientPID,
+		Hostname:      req.Hostname,
+		TotalEvents:   0,
+		AllowedCount:  0,
+		DeniedCount:   0,
+		Events:        make([]audit.Event, 0),
+		UserPrompt:    req.UserPrompt,
+		Intent:        normIntent,
+		IntentHistory: hist,
+		PromptCount:   promptCount,
 	}
 
 	s.sessions[sessionID] = sess
@@ -620,7 +705,7 @@ func (s *Store) Heartbeat(sessionID string) (*Session, error) {
 }
 
 // SetPromptAndIntent updates the optional raw prompt and mandatory normalized
-// mission intent for a session.
+// mission intent for a session, and increments cumulative category counts.
 func (s *Store) SetPromptAndIntent(sessionID, prompt string, intent IntentContext) (*Session, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -632,7 +717,10 @@ func (s *Store) SetPromptAndIntent(sessionID, prompt string, intent IntentContex
 
 	now := time.Now().UTC()
 	sess.UserPrompt = prompt
-	sess.Intent = normalizeIntent(intent)
+	sess.Intent = normalizeIntent(intent, prompt)
+	sess.IntentHistory = append(sess.IntentHistory, sess.Intent.Primary)
+	sess.PromptCount++
+	s.recordIntentLocked(sessionID, sess.Intent.Primary, now)
 	sess.LastActiveAt = now
 	if sess.Status == "closed" && sess.CloseReason == "idle_timeout" {
 		sess.Status = "active"
@@ -644,10 +732,134 @@ func (s *Store) SetPromptAndIntent(sessionID, prompt string, intent IntentContex
 	return &cp, nil
 }
 
+func (s *Store) recordIntentLocked(sessionID, category string, ts time.Time) {
+	cat := strings.ToUpper(strings.TrimSpace(category))
+	if cat == "" {
+		cat = "UNKNOWN"
+	}
+	if s.intentCounts == nil {
+		s.intentCounts = initIntentMap()
+	}
+	s.intentCounts[cat]++
+	s.totalPrompts++
+
+	if ts.IsZero() {
+		ts = time.Now().UTC()
+	}
+	rec := PromptRecord{
+		SessionID: sessionID,
+		Category:  cat,
+		Timestamp: ts,
+	}
+	s.prompts = append(s.prompts, rec)
+
+	if s.db != nil {
+		_, _ = s.db.Exec(`
+		INSERT INTO intent_stats (category, count) VALUES (?, 1)
+		ON CONFLICT(category) DO UPDATE SET count = count + 1`, cat)
+		_, _ = s.db.Exec(`
+		INSERT INTO prompt_history (session_id, category, timestamp) VALUES (?, ?, ?)`,
+			sessionID, cat, ts.Format(time.RFC3339Nano))
+	}
+}
+
+// RecordIntent records an observed intent submission.
+func (s *Store) RecordIntent(category string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.recordIntentLocked("", category, time.Now().UTC())
+}
+
+// GetIntentStats returns a snapshot of cumulative prompt missions by category and total count.
+func (s *Store) GetIntentStats() (map[string]int, int) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	cp := initIntentMap()
+	for k, v := range s.intentCounts {
+		cp[k] = v
+	}
+	return cp, s.totalPrompts
+}
+
+// GetIntentWindows returns time-windowed intent captures across Live, Day, Week, and Month.
+func (s *Store) GetIntentWindows() IntentWindows {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	now := time.Now().UTC()
+	liveMap := initIntentMap()
+	dayMap := initIntentMap()
+	weekMap := initIntentMap()
+	monthMap := initIntentMap()
+	var liveTotal, dayTotal, weekTotal, monthTotal int
+
+	for _, rec := range s.prompts {
+		diff := now.Sub(rec.Timestamp)
+		if diff < 0 {
+			diff = 0
+		}
+		// Live window: last 1 hour
+		if diff <= time.Hour {
+			liveMap[rec.Category]++
+			liveTotal++
+		}
+		// Day window: last 24 hours
+		if diff <= 24*time.Hour {
+			dayMap[rec.Category]++
+			dayTotal++
+		}
+		// Week window: last 7 days
+		if diff <= 7*24*time.Hour {
+			weekMap[rec.Category]++
+			weekTotal++
+		}
+		// Month window: last 30 days
+		if diff <= 30*24*time.Hour {
+			monthMap[rec.Category]++
+			monthTotal++
+		}
+	}
+
+	// Fallback if prompts has fewer events than totalPrompts (e.g. from legacy DB)
+	if monthTotal == 0 && s.totalPrompts > 0 {
+		monthMap = s.intentCounts
+		monthTotal = s.totalPrompts
+		weekMap = s.intentCounts
+		weekTotal = s.totalPrompts
+		dayMap = s.intentCounts
+		dayTotal = s.totalPrompts
+		liveMap = s.intentCounts
+		liveTotal = s.totalPrompts
+	}
+
+	return IntentWindows{
+		Live:  IntentStatsSummary{Total: liveTotal, Counts: liveMap},
+		Day:   IntentStatsSummary{Total: dayTotal, Counts: dayMap},
+		Week:  IntentStatsSummary{Total: weekTotal, Counts: weekMap},
+		Month: IntentStatsSummary{Total: monthTotal, Counts: monthMap},
+	}
+}
+
+// ResetIntentStats zeroes out intent counts and removes persisted records.
+func (s *Store) ResetIntentStats() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.intentCounts = initIntentMap()
+	s.totalPrompts = 0
+	s.prompts = make([]PromptRecord, 0)
+
+	if s.db != nil {
+		_, _ = s.db.Exec(`DELETE FROM intent_stats`)
+		_, _ = s.db.Exec(`DELETE FROM prompt_history`)
+	}
+}
+
 // SetPrompt remains for compatibility with callers that do not yet provide
-// intent. UNKNOWN is explicit rather than silently inferring authority.
+// intent. It classifies the prompt using canonical rules.
 func (s *Store) SetPrompt(sessionID, prompt string) (*Session, error) {
-	return s.SetPromptAndIntent(sessionID, prompt, IntentContext{Primary: "UNKNOWN", Source: "legacy-caller"})
+	return s.SetPromptAndIntent(sessionID, prompt, ClassifyIntent(prompt))
 }
 
 // PurgeStale marks any active sessions that have been idle for longer than maxIdle as closed.
@@ -701,7 +913,7 @@ func (s *Store) loadFromDB() error {
 	for rows.Next() {
 		var (
 			sessID, appID, instID, uID, uEmail, spiffeID, status, startedAtStr, endedAtStr, lastActiveStr, hostname, closeReason, intentJSON sql.NullString
-			clientPID, totalEv, allowCnt, denyCnt                                                                                sql.NullInt64
+			clientPID, totalEv, allowCnt, denyCnt                                                                                            sql.NullInt64
 		)
 		if err := rows.Scan(&sessID, &appID, &instID, &uID, &uEmail, &spiffeID, &status, &startedAtStr, &endedAtStr, &lastActiveStr, &clientPID, &hostname, &totalEv, &allowCnt, &denyCnt, &closeReason, &intentJSON); err != nil {
 			continue
@@ -750,6 +962,48 @@ func (s *Store) loadFromDB() error {
 			var u string
 			if uRows.Scan(&u) == nil && u != "" {
 				s.revokedUsers[strings.ToLower(u)] = true
+			}
+		}
+	}
+
+	statRows, err := s.db.Query(`SELECT category, count FROM intent_stats`)
+	if err == nil {
+		defer statRows.Close()
+		for statRows.Next() {
+			var cat string
+			var cnt int
+			if statRows.Scan(&cat, &cnt) == nil {
+				cat = strings.ToUpper(strings.TrimSpace(cat))
+				s.intentCounts[cat] = cnt
+				s.totalPrompts += cnt
+			}
+		}
+	}
+
+	pRows, err := s.db.Query(`SELECT session_id, category, timestamp FROM prompt_history ORDER BY timestamp ASC`)
+	if err == nil {
+		defer pRows.Close()
+		for pRows.Next() {
+			var sessID, cat, tsStr string
+			if pRows.Scan(&sessID, &cat, &tsStr) == nil {
+				ts, _ := time.Parse(time.RFC3339Nano, tsStr)
+				if ts.IsZero() {
+					ts, _ = time.Parse(time.RFC3339, tsStr)
+				}
+				s.prompts = append(s.prompts, PromptRecord{
+					SessionID: sessID,
+					Category:  strings.ToUpper(strings.TrimSpace(cat)),
+					Timestamp: ts,
+				})
+			}
+		}
+	}
+
+	if s.totalPrompts == 0 {
+		for _, sess := range s.sessions {
+			if sess.Intent.Primary != "" && sess.Intent.Primary != "UNKNOWN" {
+				s.intentCounts[sess.Intent.Primary]++
+				s.totalPrompts++
 			}
 		}
 	}

@@ -174,3 +174,151 @@ func TestSessionStore_Lifecycle(t *testing.T) {
 		t.Errorf("expected reset session to be closed, got %s", r1.Status)
 	}
 }
+
+func TestIntentCumulativeTrackingAndPersistence(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "intent_stats.db")
+	store, err := NewStoreWithDB(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. Initial counts are zero
+	counts, total := store.GetIntentStats()
+	if total != 0 {
+		t.Fatalf("expected total 0, got %d", total)
+	}
+	if counts["BUG_FIX"] != 0 {
+		t.Fatalf("expected BUG_FIX 0, got %d", counts["BUG_FIX"])
+	}
+
+	// 2. Start session with intent
+	sess, err := store.Start(SessionStartRequest{
+		SessionID: "sess-agent-1",
+		AppID:     "claude-code",
+		Intent:    IntentContext{Primary: "TEST_VERIFICATION"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.Intent.Primary != "TEST_VERIFICATION" || sess.PromptCount != 1 || len(sess.IntentHistory) != 1 {
+		t.Fatalf("unexpected initial session intent state: %#v", sess)
+	}
+
+	// Verify counts
+	counts, total = store.GetIntentStats()
+	if total != 1 || counts["TEST_VERIFICATION"] != 1 {
+		t.Fatalf("expected 1 TEST_VERIFICATION, got total=%d, counts=%v", total, counts)
+	}
+
+	// 3. Submit second prompt with different intent on the same agent
+	_, err = store.SetPromptAndIntent("sess-agent-1", "Fix login bug", IntentContext{Primary: "BUG_FIX"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	counts, total = store.GetIntentStats()
+	// Both TEST_VERIFICATION and BUG_FIX must exist! TEST_VERIFICATION must not disappear!
+	if total != 2 {
+		t.Fatalf("expected total 2, got %d", total)
+	}
+	if counts["TEST_VERIFICATION"] != 1 {
+		t.Fatalf("expected TEST_VERIFICATION to remain 1, got %d", counts["TEST_VERIFICATION"])
+	}
+	if counts["BUG_FIX"] != 1 {
+		t.Fatalf("expected BUG_FIX 1, got %d", counts["BUG_FIX"])
+	}
+
+	// 4. Submit third prompt with BUG_FIX again
+	_, err = store.SetPromptAndIntent("sess-agent-1", "Fix database null pointer", IntentContext{Primary: "BUG_FIX"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	counts, total = store.GetIntentStats()
+	if total != 3 || counts["BUG_FIX"] != 2 || counts["TEST_VERIFICATION"] != 1 {
+		t.Fatalf("expected total=3, BUG_FIX=2, TEST_VERIFICATION=1; got total=%d, counts=%v", total, counts)
+	}
+
+	// Check agent's history
+	agentSess, err := store.Get("sess-agent-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agentSess.PromptCount != 3 || len(agentSess.IntentHistory) != 3 {
+		t.Fatalf("expected 3 prompt history entries, got %#v", agentSess.IntentHistory)
+	}
+
+	// 5. Close and reload from SQLite DB to test persistence
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := NewStoreWithDB(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+
+	counts2, total2 := reopened.GetIntentStats()
+	if total2 != 3 || counts2["BUG_FIX"] != 2 || counts2["TEST_VERIFICATION"] != 1 {
+		t.Fatalf("reopened store intent stats mismatch: total=%d, counts=%v", total2, counts2)
+	}
+
+	// 6. Test ResetIntentStats
+	reopened.ResetIntentStats()
+	counts3, total3 := reopened.GetIntentStats()
+	if total3 != 0 || counts3["BUG_FIX"] != 0 || counts3["TEST_VERIFICATION"] != 0 {
+		t.Fatalf("expected 0 after reset, got total=%d, counts=%v", total3, counts3)
+	}
+}
+
+func TestIntentAutoClassificationOnSessionStart(t *testing.T) {
+	store := NewStore()
+
+	// 1. Session start with prompt but omitted intent
+	sess1, err := store.Start(SessionStartRequest{
+		SessionID:  "sess-auto-1",
+		AppID:      "test-agent",
+		UserPrompt: "Analyze Q3 portfolio volatility and generate quarterly risk metrics",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess1.Intent.Primary != "INVESTIGATION" {
+		t.Fatalf("expected INVESTIGATION, got %q", sess1.Intent.Primary)
+	}
+
+	// 2. Session start with deploy prompt
+	sess2, err := store.Start(SessionStartRequest{
+		SessionID:  "sess-auto-2",
+		AppID:      "test-agent",
+		UserPrompt: "Deploy microservice canary to us-east-1 production cluster",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess2.Intent.Primary != "DEPLOYMENT_RELEASE" {
+		t.Fatalf("expected DEPLOYMENT_RELEASE, got %q", sess2.Intent.Primary)
+	}
+
+	// 3. Session start with security prompt
+	sess3, err := store.Start(SessionStartRequest{
+		SessionID:  "sess-auto-3",
+		AppID:      "test-agent",
+		UserPrompt: "Audit security perimeter and probe credential boundaries",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess3.Intent.Primary != "SECURITY_REMEDIATION" {
+		t.Fatalf("expected SECURITY_REMEDIATION, got %q", sess3.Intent.Primary)
+	}
+
+	// 4. Verify cumulative stats
+	counts, total := store.GetIntentStats()
+	if total != 3 {
+		t.Fatalf("expected 3 total prompts, got %d", total)
+	}
+	if counts["INVESTIGATION"] != 1 || counts["DEPLOYMENT_RELEASE"] != 1 || counts["SECURITY_REMEDIATION"] != 1 {
+		t.Fatalf("unexpected counts: %v", counts)
+	}
+}

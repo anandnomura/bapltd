@@ -11,7 +11,8 @@ This document represents the complete functional and non-functional requirements
 | `BAP-200` | BAPEdge owns protected command execution | **VERIFIED PROTOTYPE** | Broker-owned execution and exactly-once tests exist. Production sandbox coverage remains platform dependent. |
 | `BAP-200A` | Safe Base64 handoff and Windows restricted execution | **VERIFIED PROTOTYPE** | Checked into `main`; command fidelity and containment tests exist. Independent Windows adversarial testing remains. |
 | `BAP-210`–`BAP-215` | Unified CIO Fleet Command cockpit | **VERIFIED PROTOTYPE** | Live fleet, incident, stop, revoke, restore and freeze flows are implemented. Production identity/RBAC and durable operations remain. |
-| `BAP-216` | Real Claude Code prompt-to-intent mission telemetry | **IMPLEMENTED / IN REVIEW** | `UserPromptSubmit` is classified locally, including mixed intents and mandatory `UNKNOWN`; raw prompt capture is optional. Merge and real-Claude acceptance remain. |
+| `BAP-216` | Real Claude Code prompt-to-intent mission telemetry | **VERIFIED PROTOTYPE** | `UserPromptSubmit` is classified locally, including mixed intents and mandatory `UNKNOWN`; raw prompt capture is optional. |
+| `BAP-216A` | Cumulative intent accumulation & temporal analytics | **VERIFIED PROTOTYPE** | Fixes single-agent intent overwrite; adds persistent Live/Day/Week/Month telemetry windows & uncluttered Live (Healthy) default fleet filter. |
 | `BAP-217` | Real Claude Code end-to-end pilot | **NEXT — OPEN** | Run the managed hook against an actual Claude Code session on Windows and macOS; prove prompt → intent → action → decision → cockpit. |
 | `BAP-218` | Intent quality baseline | **OPEN** | Label a consented/sanitized corpus of real prompts and measure precision, coverage, `UNKNOWN` rate and confusion. |
 | `BAP-219` | Managed enterprise endpoint rollout | **OPEN** | Signed hook/config deployment, tamper protection, health reporting, upgrade/rollback and fleet policy distribution. |
@@ -529,6 +530,30 @@ This document represents the complete functional and non-functional requirements
   - `capture_user_prompt=false` prevents local raw-prompt persistence and central raw-prompt transmission while still sending the normalized intent and SHA-256 prompt hash.
   - The control plane rejects missing, malformed or unsupported intent contracts.
   - The CIO cockpit displays live intent mix, per-agent primary/secondary intent and confidence while keeping raw prompts protected.
+
+#### Story BAP-216A: Cumulative Multi-Category Intent Accumulation & Temporal Analytics
+
+- **Type**: Story | **Points**: 5 | **Priority**: Highest (P0) | **Status**: `DONE`
+- **Description**: Prevent intent categories from vanishing when agents change tasks or submit sequential prompts. Maintain server-authoritative, cumulative category counters and temporal analytics windows (`Live` / 1h, `Day` / 24h, `Week` / 7d, `Month` / 30d) in the control plane and CIO Cockpit. Default the fleet matrix to `Live (Healthy)` agents to eliminate visual clutter.
+- **Acceptance Criteria**:
+  - Sequential prompt submissions across different categories increment their respective categories without overwriting or clearing previous categories.
+  - SQLite persistence preserves cumulative intent counts and timestamped prompt history across server restarts.
+  - Control plane exposes `intent_counts`, `total_prompts`, and `intent_windows` (`live`, `day`, `week`, `month`) in `/api/v1/inspector/data`.
+  - CIO Cockpit renders an interactive timeframe selector (`Live`, `Day`, `Week`, `Month`) updating mission mix and declared mission count dynamically.
+  - Fleet matrix defaults to `Live (Healthy)` view, decluttering the initial cockpit while preserving immediate one-click access to `At risk`, `Stopped`, and `All` segments.
+  - Integration test suite `tests/test_intent_telemetry.py` passes 100%.
+
+#### Story BAP-216B: Python Agent SDK Intent Classification & Executive Demo Integration
+
+- **Type**: Story | **Points**: 5 | **Priority**: Highest (P0) | **Status**: `DONE`
+- **Description**: Add deterministic intent classification to `bap_sdk` and integrate with `BAPSession` and `demo_executive.py`. Eliminates `UNKNOWN` classifications when Python agents enroll and execute prompts. Implements server-side prompt classification fallback on the control plane as defense-in-depth so any client sending meaningful prompts receives canonical mission classification (`INVESTIGATION`, `DEPLOYMENT_RELEASE`, `SECURITY_REMEDIATION`, etc.).
+- **Acceptance Criteria**:
+  - `bap_sdk` exports `classify_intent` matching the canonical 11 categories and scoring rules.
+  - `BAPSession` automatically classifies `user_prompt` into `session.intent` upon initialization and transmits it upon session start and prompt update (`set_prompt`).
+  - `demo_executive.py` enrolls Carol as `INVESTIGATION`, Bob as `DEPLOYMENT_RELEASE`, Eve as `SECURITY_REMEDIATION`, and submits live action prompts dynamically incrementing category counters.
+  - Zero `UNKNOWN` intent counts when executing `demo_executive.py`.
+  - Server-side defense-in-depth classification fallback in `bapcontrolplane` for non-SDK callers.
+  - Automated tests in `tests/test_python_agent.py` and `tests/test_executive_demo.py` pass 100%.
 
 #### Story BAP-217: Real Claude Code Acceptance Pilot
 

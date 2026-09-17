@@ -60,6 +60,7 @@ $argsList = @("-port", $Port, "-ttl", $TTL, "-trust-domain", $TrustDomain)
 if (-not $Http) {
     $argsList += "-https"
 }
+$argsList += "-demo-mode"
 
 Write-Host "===============================================================================" -ForegroundColor Cyan
 Write-Host "          BAP CONTROL PLANE - HIGH-AVAILABILITY SUPERVISOR                     " -ForegroundColor Cyan
@@ -76,7 +77,7 @@ Set-Content -Path $pidFile -Value $PID -Force
 $global:ServerProc = $null
 
 # Register graceful exit handler for Ctrl+C
-[Console]::TreatControlCAsInput = $false
+try { [Console]::TreatControlCAsInput = $false } catch {}
 Register-EngineEvent -SourceIdentifier ([System.Management.Automation.PsEngineEvent]::Exiting) -Action {
     if (Test-Path $pidFile) { Remove-Item -Force $pidFile -ErrorAction SilentlyContinue }
     if ($global:ServerProc -and -not $global:ServerProc.HasExited) {

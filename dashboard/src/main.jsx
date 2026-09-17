@@ -159,7 +159,8 @@ function App() {
   const [connected, setConnected] = useState(false);
   const [lastRefresh, setLastRefresh] = useState(0);
   const [query, setQuery] = useState('');
-  const [filter, setFilter] = useState('ALL');
+  const [filter, setFilter] = useState('HEALTHY');
+  const [intentWindow, setIntentWindow] = useState('live');
   const [sortMode, setSortMode] = useState('RISK');
   const [page, setPage] = useState(0);
   const [selectedId, setSelectedId] = useState('');
@@ -229,9 +230,44 @@ function App() {
   const currentActions = fleet.filter((agent) => agent.status === 'active' && agent.latest).length;
   const intentMix = useMemo(() => {
     const counts = new Map();
-    fleet.forEach((agent) => counts.set(agent.primaryIntent || 'UNKNOWN', (counts.get(agent.primaryIntent || 'UNKNOWN') || 0) + 1));
-    return [...counts.entries()].map(([intent, count]) => ({ intent, count })).sort((a, b) => b.count - a.count || a.intent.localeCompare(b.intent));
-  }, [fleet]);
+    const windowData = (sensitive || data)?.intent_windows?.[intentWindow];
+    const serverCounts = windowData?.counts || (sensitive || data)?.intent_counts;
+    if (serverCounts && typeof serverCounts === 'object') {
+      Object.entries(serverCounts).forEach(([intent, count]) => {
+        if (typeof count === 'number' && count > 0) {
+          counts.set(intent, count);
+        }
+      });
+    }
+
+    if (counts.size === 0) {
+      const events = (sensitive || data)?.central_events || [];
+      events.forEach((ev) => {
+        const intent = ev.primary_intent || ev.primaryIntent;
+        if (intent && (ev.decision === 'intent' || ev.executable === 'user_prompt')) {
+          counts.set(intent, (counts.get(intent) || 0) + 1);
+        }
+      });
+      if (counts.size === 0) {
+        fleet.forEach((agent) => {
+          if (agent.primaryIntent && agent.primaryIntent !== 'UNKNOWN') {
+            counts.set(agent.primaryIntent, (counts.get(agent.primaryIntent) || 0) + 1);
+          }
+        });
+      }
+    }
+
+    return [...counts.entries()]
+      .map(([intent, count]) => ({ intent, count }))
+      .sort((a, b) => b.count - a.count || a.intent.localeCompare(b.intent));
+  }, [data, sensitive, fleet, intentWindow]);
+
+  const totalPrompts = useMemo(() => {
+    const windowData = (sensitive || data)?.intent_windows?.[intentWindow];
+    const serverTotal = windowData?.total ?? (sensitive || data)?.total_prompts;
+    if (typeof serverTotal === 'number' && serverTotal >= 0) return serverTotal;
+    return intentMix.reduce((acc, item) => acc + item.count, 0);
+  }, [data, sensitive, intentMix, intentWindow]);
   const eventHistory = (sensitive || data)?.central_events || [];
   const allowedHistory = eventHistory.filter((event) => event.decision === 'allow').length;
   const deniedHistory = eventHistory.filter((event) => event.decision === 'deny').length;
@@ -311,8 +347,40 @@ function App() {
       </section>
 
       <section className="intent-overview" aria-label="Live mission intent mix">
-        <div><p className="eyebrow">Declared work</p><strong>Live mission mix</strong><span>Classified locally at BAP Edge</span></div>
-        <div className="intent-mix">{intentMix.slice(0, 6).map(({ intent, count }) => <span key={intent} className={intent === 'UNKNOWN' ? 'unknown' : ''}><b>{count}</b>{intentLabel(intent)}</span>)}{!intentMix.length && <span className="empty"><b>0</b>No active missions</span>}</div>
+        <div className="intent-meta">
+          <p className="eyebrow">Declared work</p>
+          <div className="intent-title-row">
+            <strong>Mission mix</strong>
+            <div className="time-pills" role="tablist" aria-label="Select timeframe">
+              {[
+                { id: 'live', label: 'Live' },
+                { id: 'day', label: 'Day' },
+                { id: 'week', label: 'Week' },
+                { id: 'month', label: 'Month' },
+              ].map((w) => (
+                <button
+                  key={w.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={intentWindow === w.id}
+                  className={intentWindow === w.id ? 'active' : ''}
+                  onClick={() => setIntentWindow(w.id)}
+                >
+                  {w.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <span>Classified at BAP Edge · {totalPrompts} declared mission{totalPrompts === 1 ? '' : 's'}</span>
+        </div>
+        <div className="intent-mix">
+          {intentMix.map(({ intent, count }) => (
+            <span key={intent} className={`${intent === 'UNKNOWN' ? 'unknown' : ''} active`}>
+              <b>{count}</b>{intentLabel(intent)}
+            </span>
+          ))}
+          {!intentMix.length && <span className="empty"><b>0</b>No prompt missions recorded</span>}
+        </div>
       </section>
 
       <section className="workspace">
@@ -321,7 +389,7 @@ function App() {
             <div><p className="eyebrow">Live topology</p><h2>Fleet matrix <span>{filteredFleet.length} agents</span></h2></div>
             <div className="fleet-tools">
               <label className="search"><Icon name="search"/><input aria-label="Search fleet" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search agent, owner, action…"/></label>
-              <div className="segments" aria-label="Filter fleet">{['ALL', 'RISK', 'HEALTHY', 'STOPPED'].map((item) => <button key={item} className={filter === item ? 'active' : ''} onClick={() => setFilter(item)}>{item === 'ALL' ? 'All' : item === 'RISK' ? 'At risk' : item === 'STOPPED' ? 'Stopped' : 'Healthy'}</button>)}</div>
+              <div className="segments" aria-label="Filter fleet">{['HEALTHY', 'RISK', 'STOPPED', 'ALL'].map((item) => <button key={item} className={filter === item ? 'active' : ''} onClick={() => setFilter(item)}>{item === 'HEALTHY' ? 'Live (Healthy)' : item === 'RISK' ? 'At risk' : item === 'STOPPED' ? 'Stopped' : 'All'}</button>)}</div>
               <select aria-label="Sort fleet" value={sortMode} onChange={(event) => setSortMode(event.target.value)}><option value="RISK">Risk first</option><option value="RECENT">Most recent</option></select>
               <div className="pager"><button aria-label="Previous fleet page" disabled={safePage === 0} onClick={() => setPage((value) => Math.max(0, value - 1))}>‹</button><span>{safePage + 1} / {pageCount}</span><button aria-label="Next fleet page" disabled={safePage >= pageCount - 1} onClick={() => setPage((value) => Math.min(pageCount - 1, value + 1))}>›</button></div>
             </div>

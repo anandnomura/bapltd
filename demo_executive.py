@@ -37,6 +37,7 @@ import base64
 import atexit
 import argparse
 import threading
+import hashlib
 import urllib.request
 import subprocess
 from typing import Dict, Any, Optional
@@ -79,6 +80,12 @@ def resolve_server_url() -> str:
         return ep.get("controlplane_url", "https://localhost:8443").rstrip("/")
     except Exception:
         return os.getenv("BAP_CONTROL_PLANE_URL", "https://localhost:8443").rstrip("/")
+
+
+try:
+    from bap_sdk import classify_intent
+except Exception:
+    classify_intent = None
 
 
 def api_post(server_url: str, endpoint: str, payload: dict, admin_token: str = "") -> tuple[int, dict]:
@@ -171,6 +178,35 @@ class ManagedAgent:
         self.is_alive = False
         self._hb_stop = threading.Event()
         self._hb_thread: Optional[threading.Thread] = None
+        if classify_intent:
+            self.intent = classify_intent(self.prompt)
+        else:
+            self.intent = {"primary": "UNKNOWN", "source": "demo-executive"}
+
+    def submit_prompt(self, new_prompt: str, category: Optional[str] = None) -> tuple[int, dict]:
+        """Submits a new prompt and classified intent to the live session."""
+        self.prompt = new_prompt
+        if category:
+            self.intent = {
+                "primary": category.upper(),
+                "confidence": 1.0,
+                "classifier_version": "bap-intent-rules-v1",
+                "source": "demo-executive"
+            }
+        elif classify_intent:
+            self.intent = classify_intent(new_prompt)
+        else:
+            self.intent = {"primary": "UNKNOWN", "source": "demo-executive"}
+        prompt_hash = hashlib.sha256(new_prompt.encode("utf-8")).hexdigest()
+        payload = {
+            "session_id": self.session_id,
+            "user_prompt": new_prompt,
+            "producer": "demo-executive",
+            "prompt_hash": prompt_hash,
+            "prompt_capture_enabled": True,
+            "intent": self.intent
+        }
+        return api_post(self.server_url, "/api/v1/sessions/prompt", payload)
 
     def start(self):
         payload = {
@@ -184,6 +220,7 @@ class ManagedAgent:
             "client_pid": os.getpid(),
             "hostname": os.getenv("COMPUTERNAME", "DEVHOST-EXEC"),
             "user_prompt": self.prompt,
+            "intent": self.intent,
         }
         status, _ = api_post(self.server_url, "/api/v1/sessions/start", payload)
         self.is_alive = (status == 200)
@@ -232,7 +269,18 @@ atexit.register(cleanup_all)
 
 def reset_control_plane(server_url: str, admin_token: str):
     """Cleanly resets all active sessions on the control plane."""
-    api_post(server_url, "/api/v1/sessions/reset", {}, admin_token=admin_token)
+    st, _ = api_post(server_url, "/api/v1/sessions/reset", {}, admin_token=admin_token)
+    if st != 200:
+        # Fallback if reset route is protected by demoMode or returns non-200:
+        # End each active session to preserve zero stale state
+        st_insp, insp_data = api_get(server_url, "/api/v1/admin/inspector/data", admin_token=admin_token)
+        if st_insp != 200:
+            st_insp, insp_data = api_get(server_url, "/api/v1/inspector/data", admin_token=admin_token)
+        if st_insp == 200:
+            for s in insp_data.get("sessions", []):
+                sid = s.get("session_id")
+                if sid and not sid.startswith("[") and s.get("status") == "active":
+                    api_post(server_url, "/api/v1/sessions/end", {"session_id": sid, "reason": "demo_reset"}, admin_token=admin_token)
 
 
 def print_banner(server_url: str):
@@ -310,6 +358,7 @@ def run_scenario(server_url: str, admin_token: str, delay: float = 0.8, interact
     print_step(carol, 1, "Calculate Sharpe ratio (Allowed)", "ALLOWED" if d1.get("allowed") else "DENIED", "HEALTHY", r1)
     time.sleep(delay)
 
+    carol.submit_prompt("Reconcile and verify ledger summary records")
     cmd2 = 'echo Fetching ledger summary: 450 records verified'
     rc2, d2 = run_bapedge_exec(carol.session_id, carol.app_id, cmd2)
     r2 = d2.get("receipt", {}).get("receipt_id", "")
@@ -326,6 +375,7 @@ def run_scenario(server_url: str, admin_token: str, delay: float = 0.8, interact
     print_step(bob, 1, "Container canary health (Allowed)", "ALLOWED" if d3.get("allowed") else "DENIED", "HEALTHY", r3)
     time.sleep(delay)
 
+    bob.submit_prompt("Inspect credential configuration in .env")
     cmd4 = 'cat .env'
     rc4, d4 = run_bapedge_exec(bob.session_id, bob.app_id, cmd4)
     r4 = d4.get("receipt", {}).get("receipt_id", "")
@@ -342,18 +392,21 @@ def run_scenario(server_url: str, admin_token: str, delay: float = 0.8, interact
     print_step(eve, 1, "Network gateway probe (Allowed)", "ALLOWED" if d5.get("allowed") else "DENIED", "HEALTHY", r5)
     time.sleep(delay)
 
+    eve.submit_prompt("Probe access to environment credentials")
     cmd6 = 'cat .env'
     rc6, d6 = run_bapedge_exec(eve.session_id, eve.app_id, cmd6)
     r6 = d6.get("receipt", {}).get("receipt_id", "")
     print_step(eve, 2, "Probe 1: Direct .env read", "ALLOWED" if d6.get("allowed") else "DENIED", "ELEVATED", r6)
     time.sleep(delay)
 
+    eve.submit_prompt("Probe python file read boundary to bypass credential protection")
     cmd7 = 'python -c "open(\'.env\').read()"'
     rc7, d7 = run_bapedge_exec(eve.session_id, eve.app_id, cmd7)
     r7 = d7.get("receipt", {}).get("receipt_id", "")
     print_step(eve, 3, "Probe 2: Python file read bypass", "ALLOWED" if d7.get("allowed") else "DENIED", "CRITICAL", r7)
     time.sleep(delay)
 
+    eve.submit_prompt("Probe PowerShell command line boundary to access secrets")
     cmd8 = 'powershell -Command "Get-Content .env"'
     rc8, d8 = run_bapedge_exec(eve.session_id, eve.app_id, cmd8)
     r8 = d8.get("receipt", {}).get("receipt_id", "")
