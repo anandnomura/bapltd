@@ -166,4 +166,8 @@ Implement the top 3 high-impact enterprise MVP capabilities:
     8. Enterprise Audit/Shadow mode operable offline (permitted with shadow warning, `ExitCode: 0`).
     9. Service reconnection and telemetry resumption verified.
     10. JSON telemetry output mode (`-Json`) fully operational for headless CI/CD.
+- [x] **Task 4: JIRA Stories & Central MVP Deployment Documentation**
+  - Created `JIRA_STORIES.md`: Comprehensive product backlog covering 9 completed agile epics (23 user stories/bugs with acceptance criteria and security rationales) plus 5 future enhancement epics (10 backlog stories spanning visual policy authoring, SPIRE hardware attestation, eBPF/Landlock kernel sandboxing, Cloud KMS notarization, and LLM prompt injection detection).
+  - Created `MVP_DEPLOYMENT.md`: Central, production-grade enterprise deployment guide with step-by-step instructions for Windows/Linux supervisors, systemd units, 1-click onboarding, pre-flight diagnostics, phased rollout strategy (Shadow vs Enforce), and emergency incident response.
+  - Synchronized `PROJECT_MAP.md`.
 

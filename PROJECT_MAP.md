@@ -6,6 +6,8 @@
 - `DEPLOYMENT_START_HERE.md` — supported deployment choices and first-run path.
 - `ENDPOINT_CONFIGURATION.md` — endpoint precedence and fleet configuration contract.
 - `ACTIVE_TASK.md` — current sprint scope, status, and completion criteria.
+- `JIRA_STORIES.md` — canonical JIRA product backlog, user stories, acceptance criteria, and future enhancement roadmap.
+- `MVP_DEPLOYMENT.md` — central enterprise deployment, seat onboarding, and operator guide.
 - `bap-config.json` — shared runtime endpoint configuration.
 - `policy.cedar` / `schema.json` — root authorization policy and Cedar schema.
 - `bap-edge/` — local trusted daemon, policy enforcement, sandboxing, identity, audit, and MCP serving.
