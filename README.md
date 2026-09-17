@@ -77,7 +77,7 @@ graph TD
         CLAUDE -->|PreToolUse JSON| HOOK
         COPILOT -->|CLI Intercept| COPSHIM
         MCP_IDE -->|JSON-RPC stdio| MCP_SRV
-        PY_AGENT -->|SDK Client / REST| BAP_Edge
+        PY_AGENT -->|SDK Client or REST| BAP_Edge
 
         HOOK --> BAP_Edge
         COPSHIM --> BAP_Edge
@@ -90,8 +90,8 @@ graph TD
     end
 
     BAP_Edge -.->|Async Telemetry Stream| CP
-    BAP_Edge -.->|Remote Policy Sync & Kill-Switch| CP
-    BAP_Edge -.->|mTLS Verified Channel & Attestation (TOFU / Whitelist)| CP
+    BAP_Edge -.->|Remote Policy Sync and Kill-Switch| CP
+    BAP_Edge -.->|mTLS Channel and Attestation| CP
 ```
 
 ### Core Components
