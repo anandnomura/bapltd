@@ -1,5 +1,6 @@
 # BAP Project Map
 
+- `README.md` — overview, architecture, zero-trust security posture (ZSP), and quickstart guide.
 - `CLAUDE.md` — mandatory repository security invariants for automated agents.
 - `ARCHITECTURE.md` — canonical system topology, trust boundaries, identity, offline behavior, and storage design.
 - `API_GUIDE.md` — canonical control-plane API and edge CLI contract.
